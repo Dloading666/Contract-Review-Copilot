@@ -158,5 +158,26 @@ def get_user_from_token(token: str) -> Optional[dict]:
     payload = decode_token(token)
     if not payload:
         return None
+
     user_id = payload.get("sub")
-    return _user_store.get(user_id)
+    email = payload.get("email")
+    if not user_id or not email:
+        return None
+
+    existing_user = _user_store.get(user_id)
+    if existing_user:
+        return {
+            "id": user_id,
+            "email": existing_user.get("email", email),
+            "created_at": existing_user.get("created_at"),
+        }
+
+    # Recover the user from the JWT payload so persisted tokens remain usable
+    # after a backend restart clears the in-memory store.
+    recovered_user = {
+        "id": user_id,
+        "email": email,
+        "created_at": datetime.now().isoformat(),
+    }
+    _user_store[user_id] = recovered_user
+    return recovered_user

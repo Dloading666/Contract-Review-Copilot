@@ -5,8 +5,7 @@ Generates the streamed final report.
 import os
 import json
 from datetime import datetime
-from openai import OpenAI
-from .entity_extraction import get_llm_client, extract_entities
+from .entity_extraction import create_chat_completion, extract_entities
 from .routing import decide_routing
 from .logic_review import review_clauses
 
@@ -47,6 +46,10 @@ REPORT_PROMPT = """你是一个专业的法律文档撰写助手。请根据以�
 
 def generate_report(contract_text: str, issues: list[dict] | None = None) -> list[str]:
     """Use LLM to generate the final report, returned as paragraphs."""
+    # Skip LLM if environment variable is set
+    if os.getenv("SKIP_LLM_REPORT", "").lower() in ("1", "true", "yes"):
+        return _template_report(contract_text, issues)
+
     try:
         entities = extract_entities(contract_text)
         # Issues are passed from the review phase — do not re-call review agents
@@ -89,7 +92,7 @@ def generate_report(contract_text: str, issues: list[dict] | None = None) -> lis
         legal_refs = list(set([i.get("legal_reference", "") for i in issues if i.get("legal_reference")]))
         legal_basis = "\n".join([f"- {ref}" for ref in legal_refs[:5]]) if legal_refs else "《民法典》合同编通则"
 
-        response = get_llm_client().chat.completions.create(
+        response = create_chat_completion(
             model=os.getenv("OPENAI_MODEL", "glm-5"),
             messages=[
                 {"role": "system", "content": "你是一个专业的法律文档撰写助手，擅长将复杂的法律分析转化为清晰易懂的报告。"},
@@ -107,6 +110,7 @@ def generate_report(contract_text: str, issues: list[dict] | None = None) -> lis
             ],
             temperature=0.3,
             max_tokens=3072,
+            timeout=15.0,
         )
 
         report_text = response.choices[0].message.content.strip()

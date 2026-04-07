@@ -4,6 +4,8 @@ DuckDuckGo Search — free, no API key required.
 import re
 from duckduckgo_search import DDGS
 
+from ..cache import build_cache_key, get_json, get_ttl_seconds, set_json
+
 
 def search_web(query: str, max_results: int = 5) -> list[dict]:
     """
@@ -16,6 +18,18 @@ def search_web(query: str, max_results: int = 5) -> list[dict]:
     Returns:
         List of dicts with keys: title, url, description
     """
+    cache_key = build_cache_key(
+        "search",
+        {
+            "provider": "duckduckgo",
+            "query": query,
+            "max_results": max_results,
+        },
+    )
+    cached_results = get_json(cache_key)
+    if isinstance(cached_results, list):
+        return cached_results
+
     try:
         results = []
         with DDGS() as ddgs:
@@ -25,6 +39,7 @@ def search_web(query: str, max_results: int = 5) -> list[dict]:
                     "url": r.get("href", ""),
                     "description": r.get("body", ""),
                 })
+        set_json(cache_key, results, get_ttl_seconds("search"))
         return results
     except Exception as e:
         print(f"[DuckDuckGo] Search failed for '{query}': {e}")

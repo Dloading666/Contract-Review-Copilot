@@ -59,7 +59,11 @@ export function ReviewStream({ sessionId, contractText, onReset }: ReviewStreamP
 
       {issues.length > 0 && issues.map((issue, i) => (
         <AgentCard key={i} title={`风险条款 ${i + 1}`} eventType="logic_review" status="done">
-          <p><strong className={`risk-badge risk-badge--${issue.severity}`}>{issue.severity.toUpperCase()}</strong></p>
+          <p>
+            <strong className={`risk-badge risk-badge--${issue.level}`}>
+              {issue.level.toUpperCase()}
+            </strong>
+          </p>
           <p><strong>条款:</strong> {issue.clause}</p>
           <p><strong>问题:</strong> {issue.issue}</p>
           <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>法律依据: {issue.legal_reference}</p>

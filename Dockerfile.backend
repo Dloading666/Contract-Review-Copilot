@@ -5,18 +5,15 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install uv
-RUN pip install uv
+RUN pip install --upgrade pip && pip install --no-cache-dir uv
 
-# Copy dependency file and install
+# Copy application source before install so editable packaging works in Docker
 COPY pyproject.toml .
-RUN uv pip install --system -e .
-
-# Copy application source
 COPY src/ ./src/
+RUN uv pip install --system --no-cache -e .
 
-# Copy .env (fallback, docker-compose provides env vars)
-COPY .env.example .env
+# .env is provided via env_file in docker-compose
 
 EXPOSE 8000
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "src.startup"]

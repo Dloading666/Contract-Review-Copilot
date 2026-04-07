@@ -6,16 +6,19 @@ export interface ExtractedEntity {
   property: { address: string; area: string }
   rent: { monthly: number; currency: string; payment_cycle: string }
   deposit: { amount: number; conditions: string }
-  lease_term: { start: string; end: string; duration_months: number }
+  lease_term: { start: string; end: string; duration_text?: string; duration_months?: number }
   penalty_clause: string
 }
 
 export interface ClauseIssue {
   clause: string
   issue: string
-  severity: 'critical' | 'high' | 'medium' | 'low'
+  level: 'critical' | 'high' | 'medium' | 'low'
+  severity?: 'critical' | 'high' | 'medium' | 'low'
   risk_level: number
+  suggestion?: string
   legal_reference: string
+  matched_text?: string
 }
 
 export interface RoutingDecision {

@@ -1,5 +1,17 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
-import type { ReviewPhase, ExtractedEntity, RoutingDecision, ClauseIssue, BreakpointQuestion } from '../types'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createSSEClient } from '../lib/sseClient'
+import type {
+  BreakpointQuestion,
+  ClauseIssue,
+  ExtractedEntity,
+  ReviewPhase,
+  RoutingDecision,
+} from '../types'
+
+interface UseStreamingReviewOptions {
+  enabled?: boolean
+  token?: string | null
+}
 
 interface UseStreamingReviewReturn {
   phase: ReviewPhase
@@ -15,10 +27,20 @@ interface UseStreamingReviewReturn {
 
 const API_BASE = '/api'
 
+function buildHeaders(token?: string | null) {
+  const headers: Record<string, string> = {}
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+  return headers
+}
+
 export function useStreamingReview(
   sessionId: string,
-  contractText: string
+  contractText: string,
+  options: UseStreamingReviewOptions = {},
 ): UseStreamingReviewReturn {
+  const { enabled = true, token = null } = options
   const [phase, setPhase] = useState<ReviewPhase>('idle')
   const [extractedEntities, setExtractedEntities] = useState<ExtractedEntity | null>(null)
   const [routingDecision, setRoutingDecision] = useState<RoutingDecision | null>(null)
@@ -27,127 +49,145 @@ export function useStreamingReview(
   const [reportParagraphs, setReportParagraphs] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
-  const abortControllerRef = useRef<AbortController | null>(null)
+  const clientRef = useRef<{ abort: () => void } | null>(null)
   const sessionIdRef = useRef(sessionId)
+  const tokenRef = useRef(token)
+  const startedRequestRef = useRef<string | null>(null)
 
   useEffect(() => {
     sessionIdRef.current = sessionId
   }, [sessionId])
 
-  const confirm = useCallback(() => {
-    // Will POST /api/review/confirm/{sessionId} to resume stream
-    fetch(`${API_BASE}/review/confirm/${sessionIdRef.current}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirmed: true }),
-    }).catch(console.error)
+  useEffect(() => {
+    tokenRef.current = token
+  }, [token])
+
+  const resetStreamingState = useCallback(() => {
+    setPhase('idle')
+    setExtractedEntities(null)
+    setRoutingDecision(null)
+    setIssues([])
+    setBreakpointData(null)
+    setReportParagraphs([])
+    setError(null)
+    setIsStreaming(false)
   }, [])
 
-  useEffect(() => {
-    if (!contractText) return
-
-    const controller = new AbortController()
-    abortControllerRef.current = controller
-    setIsStreaming(true)
-    setPhase('started')
-    setError(null)
-
-    let buffer = ''
-
-    fetch(`${API_BASE}/review`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contract_text: contractText, session_id: sessionId }),
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const reader = res.body!.getReader()
-        const decoder = new TextDecoder()
-
-        function read() {
-          reader.read().then(({ done, value }) => {
-            if (done) return
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() ?? ''
-
-            let currentEventType = 'message'
-            for (const rawLine of lines) {
-              const line = rawLine.trim()
-              if (!line) continue
-              if (line.startsWith('event:')) {
-                currentEventType = line.slice(6).trim()
-                continue
-              }
-              if (line.startsWith('data:')) {
-                const jsonStr = line.slice(5).trim()
-                try {
-                  const data = JSON.parse(jsonStr)
-                  handleEvent(currentEventType, data)
-                } catch {
-                  // ignore parse errors for now
-                }
-              }
-            }
-            read()
-          })
-        }
-
-        read()
-      })
-      .catch((err) => {
-        if (err.name === 'AbortError') return
-        setError(err.message)
-        setIsStreaming(false)
-        setPhase('error')
-      })
-
-    function handleEvent(eventType: string, data: unknown) {
+  const handleSSEEvent = useCallback((eventType: string, data: unknown) => {
+    try {
       switch (eventType) {
         case 'review_started':
           setPhase('started')
+          setIsStreaming(true)
           break
-        case 'entity_extraction':
-          setExtractedEntities(data as ExtractedEntity)
+        case 'entity_extraction': {
+          const payload = data as { entities?: ExtractedEntity }
+          setExtractedEntities(payload.entities ?? null)
           setPhase('extraction')
           break
-        case 'routing':
-          setRoutingDecision(data as RoutingDecision)
+        }
+        case 'routing': {
+          const payload = data as { routing?: RoutingDecision }
+          setRoutingDecision(payload.routing ?? null)
           setPhase('routing')
           break
-        case 'logic_review':
-          setIssues((prev) => [...prev, data as ClauseIssue])
+        }
+        case 'logic_review': {
+          const payload = data as { issue?: ClauseIssue }
+          if (payload.issue) {
+            setIssues((prev) => [...prev, payload.issue as ClauseIssue])
+          }
           setPhase('logic_review')
           break
-        case 'breakpoint':
-          setBreakpointData(data as BreakpointQuestion)
+        }
+        case 'breakpoint': {
+          const payload = data as { breakpoint?: BreakpointQuestion; issues?: ClauseIssue[] }
+          setBreakpointData(payload.breakpoint ?? null)
+          if (payload.issues) {
+            setIssues(payload.issues)
+          }
           setPhase('breakpoint')
           setIsStreaming(false)
           break
+        }
         case 'stream_resume':
           setIsStreaming(true)
           break
-        case 'final_report':
-          setReportParagraphs((prev) => [...prev, (data as { paragraph: string }).paragraph])
+        case 'final_report': {
+          const payload = data as { paragraph?: string }
+          if (payload.paragraph) {
+            setReportParagraphs((prev) => {
+              const next = [...prev, payload.paragraph as string]
+              try {
+                sessionStorage.setItem('lastReport', next.join('\n\n'))
+              } catch {
+                // Ignore storage errors in private browsing or tests.
+              }
+              return next
+            })
+          }
           setPhase('aggregation')
           break
+        }
         case 'review_complete':
           setPhase('complete')
           setIsStreaming(false)
           break
-        case 'error':
-          setError((data as { message: string }).message)
+        case 'error': {
+          const payload = data as { message?: string }
+          setError(payload.message ?? 'Unknown error')
           setPhase('error')
           setIsStreaming(false)
           break
+        }
       }
+    } catch (streamError) {
+      console.error('[useStreamingReview] handleEvent error:', eventType, streamError)
     }
+  }, [])
+
+  const startStream = useCallback((url: string, body: object) => {
+    clientRef.current?.abort()
+    clientRef.current = createSSEClient(
+      url,
+      body,
+      { headers: buildHeaders(tokenRef.current) },
+      {
+        onEvent: ({ event, data }) => handleSSEEvent(event, data),
+        onError: (streamError) => {
+          setError(streamError.message)
+          setPhase('error')
+          setIsStreaming(false)
+        },
+      },
+    )
+  }, [handleSSEEvent])
+
+  const confirm = useCallback(() => {
+    setError(null)
+    setIsStreaming(true)
+    startStream(`${API_BASE}/review/confirm/${sessionIdRef.current}`, { confirmed: true })
+  }, [startStream])
+
+  useEffect(() => {
+    if (!enabled || !contractText) return
+
+    const requestKey = `${sessionId}:${contractText}`
+    if (startedRequestRef.current === requestKey) return
+    startedRequestRef.current = requestKey
+
+    resetStreamingState()
+    setIsStreaming(true)
+    setPhase('started')
+    startStream(`${API_BASE}/review`, {
+      contract_text: contractText,
+      session_id: sessionId,
+    })
 
     return () => {
-      controller.abort()
+      clientRef.current?.abort()
     }
-  }, [contractText, sessionId])
+  }, [contractText, enabled, resetStreamingState, sessionId, startStream])
 
   return {
     phase,

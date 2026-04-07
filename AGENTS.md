@@ -1,6 +1,6 @@
-# CLAUDE.md — Contract Review Copilot
+# AGENTS.md — Contract Review Copilot
 
-> This project follows the Everything Claude Code (ECC) development conventions.
+> This project follows the Everything Codex (ECC) development conventions.
 
 ## Project Overview
 
@@ -21,7 +21,49 @@
 | Web Search | DuckDuckGo (free, no API key) |
 | Caching | Redis |
 | Auth | JWT + Email verification code |
-| Containerization | Docker Compose (PostgreSQL + Backend + Frontend) |
+
+## Agent Pipeline (LangGraph StateGraph)
+
+```
+contract_text
+    ↓
+[entity_extraction] → extracted_entities (LLM or regex fallback)
+    ↓
+[routing] → routing_decision (pgvector vs DuckDuckGo)
+    ↓
+[logic_review] → logic_review_results (risk issues per clause)
+    ↓
+[breakpoint] → needs_human_review (pause for confirmation)
+    ↓
+[PAUSE] — waiting for /api/review/confirm/{session_id}
+    ↓
+[aggregation] → final_report (SSE streamed)
+```
+
+### Agent Nodes
+
+| Agent | Input | Output | Fallback |
+|-------|-------|--------|----------|
+| `entity_extraction` | contract text | extracted_entities dict | regex extraction |
+| `routing` | extracted_entities | routing_decision | default (住宅→pgvector, 商业→DDG) |
+| `logic_review` | contract + entities | logic_review_results | rule-based keyword matching |
+| `breakpoint` | review_results | needs_human_review | always pause for high-severity |
+| `aggregation` | all results | final_report | template-based report |
+
+### SSE Event Types
+
+| Event | Direction | Purpose |
+|-------|-----------|---------|
+| `review_started` | → Frontend | Review began |
+| `entity_extraction` | → Frontend | Variables extracted |
+| `routing` | → Frontend | Search strategy decided |
+| `logic_review` | → Frontend | Per-clause risk found |
+| `rag_retrieval` | → Frontend | Legal documents retrieved |
+| `breakpoint` | → Frontend | Awaiting human confirmation |
+| `stream_resume` | → Frontend | User confirmed, resume |
+| `final_report` | → Frontend | Streaming report paragraphs |
+| `review_complete` | → Frontend | Done |
+| `error` | → Frontend | Error occurred |
 
 ## Key Conventions
 
@@ -30,10 +72,21 @@
 - Python: `snake_case` for files and functions
 - Components: `PascalCase`
 
+### LLM Integration Pattern
+```python
+# Primary LLM call with fallback chain
+try:
+    result = call_primary_llm(params)
+except LLMError:
+    result = call_fallback_llm(params)
+except LLMError:
+    result = rule_based_fallback(params)  # or skip step
+```
+
 ### Testing
 - Frontend: Vitest (`*.test.ts`, `*.test.tsx`)
 - Backend: pytest (`test_*.py`)
-- E2E: Playwright (root `package.json`)
+- E2E: Playwright
 - Target: 80%+ coverage
 
 ### Commit Format (Conventional Commits)
@@ -61,57 +114,7 @@ uvicorn src.main:app --reload --port 8000
 
 # Docker (full stack)
 docker compose up --build
-
-# Generate sample contracts
-python generate_samples.py
 ```
-
-## Architecture
-
-### Agent Pipeline (LangGraph StateGraph)
-
-```
-contract_text
-    ↓
-[entity_extraction] → extracted_entities (LLM or regex fallback)
-    ↓
-[routing] → routing_decision (pgvector vs DuckDuckGo)
-    ↓
-[logic_review] → logic_review_results (risk issues per clause)
-    ↓
-[breakpoint] → needs_human_review (pause for confirmation)
-    ↓
-[PAUSE — waiting for user confirmation via /api/review/confirm/{session_id}]
-    ↓
-[aggregation] → final_report (SSE streamed)
-```
-
-### SSE Event Types
-
-| Event | Direction | Purpose |
-|-------|-----------|---------|
-| `review_started` | → Frontend | Review began |
-| `entity_extraction` | → Frontend | Variables extracted |
-| `routing` | → Frontend | Search strategy decided |
-| `logic_review` | → Frontend | Per-clause risk found |
-| `rag_retrieval` | → Frontend | Legal documents retrieved |
-| `breakpoint` | → Frontend | Awaiting human confirmation |
-| `stream_resume` | → Frontend | User confirmed, resume |
-| `final_report` | → Frontend | Streaming report paragraphs |
-| `review_complete` | → Frontend | Done |
-| `error` | → Frontend | Error occurred |
-
-### API Endpoints
-
-| Endpoint | Method | Auth | Purpose |
-|----------|--------|------|---------|
-| `/health` | GET | No | Health check |
-| `/api/auth/send-code` | POST | No | Send 6-digit verification code |
-| `/api/auth/login` | POST | No | Verify code, return JWT |
-| `/api/auth/me` | GET | Yes | Get current user info |
-| `/api/review` | POST | Yes | Start contract review (SSE stream) |
-| `/api/review/confirm/{session_id}` | POST | Yes | Resume paused review |
-| `/api/autofix` | POST | Yes | Generate clause revision |
 
 ## Files Quick Reference
 
@@ -180,8 +183,9 @@ frontend/src/
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
 | `JWT_SECRET` | `contract-review-copilot-secret-2024` | JWT signing |
 | `SMTP_*` | - | Email sending config |
+| `SKIP_LLM_*` | - | Skip LLM for testing (EXTRACTION/REVIEW/REPORT/ROUTING) |
 
-## Key Features
+## Core Features
 
 1. **Contract Review**: Analyzes rental/consumer contracts for unfair clauses
 2. **Entity Extraction**: Extracts parties, rent, deposit, term, penalties via LLM

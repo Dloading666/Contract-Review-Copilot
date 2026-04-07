@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     # DuckDuckGo Search (free, no API key needed)
     # PostgreSQL / pgvector (for Phase 2+)
     database_url: str | None = None
+    redis_enabled: bool = True
+    redis_url: str = "redis://localhost:6379/0"
+    redis_session_ttl_seconds: int = 7200
+    redis_search_ttl_seconds: int = 1800
+    redis_llm_ttl_seconds: int = 3600
 
     class Config:
         env_file = ".env"

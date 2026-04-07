@@ -50,3 +50,13 @@ frontend/node_modules/
 backend/src/__pycache__/
 backend/*.pyc
 backend/__pycache__/
+
+# Test artifacts
+test-results/
+frontend/public/
+
+# Local database
+backend/db/
+
+# Claude memory/plans (local only)
+.claude/

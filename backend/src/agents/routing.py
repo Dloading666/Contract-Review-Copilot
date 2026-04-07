@@ -4,8 +4,7 @@ Decides search strategy: pgvector RAG vs DuckDuckGo web search.
 """
 import os
 import json
-from openai import OpenAI
-from .entity_extraction import get_llm_client
+from .entity_extraction import create_chat_completion
 
 # pgvector imports
 try:
@@ -54,14 +53,16 @@ ROUTING_PROMPT = """你是一个智能法律检索系统。请分析以下合同
 
 def decide_routing(contract_text: str, entities: dict) -> dict:
     """Use LLM to decide retrieval strategy."""
-    try:
-        client = get_llm_client()
+    # Skip LLM if environment variable is set
+    if os.getenv("SKIP_LLM_ROUTING", "").lower() in ("1", "true", "yes"):
+        return _default_routing(contract_text, entities)
 
+    try:
         rent = entities.get("rent", {}).get("monthly", 0)
         deposit = entities.get("deposit", {}).get("amount", 0)
         prop_type = "住宅租赁" if any(w in contract_text for w in ["住宅", "公寓", "住房"]) else "商业租赁"
 
-        response = client.chat.completions.create(
+        response = create_chat_completion(
             model=os.getenv("OPENAI_MODEL", "glm-5"),
             messages=[
                 {"role": "system", "content": "你是一个智能法律检索系统。"},
@@ -74,7 +75,9 @@ def decide_routing(contract_text: str, entities: dict) -> dict:
             ],
             temperature=0.1,
             max_tokens=512,
+            timeout=15.0,
         )
+        print(f"[Routing] LLM response received", flush=True)
 
         result_text = response.choices[0].message.content.strip()
 
@@ -103,14 +106,11 @@ def decide_routing(contract_text: str, entities: dict) -> dict:
                 query = contract_text[:500] if not focus_areas else "、".join(focus_areas[:3])
                 chunks = retrieve_similar_chunks(query, top_k=5, min_similarity=0.3)
                 routing["pgvector_results"] = chunks
-                print(f"[Routing] Retrieved {len(chunks)} chunks from pgvector")
             except Exception as e:
-                print(f"[Routing] pgvector retrieval failed: {e}")
                 routing["pgvector_results"] = []
 
         return routing
     except Exception as e:
-        print(f"[Routing] LLM call failed: {e}, using default")
         return _default_routing(contract_text, entities)
 
 

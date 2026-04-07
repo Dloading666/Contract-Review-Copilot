@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 
+from .cache import build_cache_key, close_redis_client, delete_json, get_json, get_ttl_seconds, set_json
 from .schemas import ContractReviewRequest, ConfirmRequest, HealthResponse
 from .graph.review_graph import run_review_stream, run_aggregation_stream
 from . import auth
@@ -21,11 +22,41 @@ from . import auth
 paused_sessions: dict[str, dict] = {}
 
 
+def _session_cache_key(session_id: str) -> str:
+    return build_cache_key("session", {"session_id": session_id})
+
+
+def store_paused_session(session_id: str, session_data: dict) -> None:
+    paused_sessions[session_id] = session_data
+    set_json(_session_cache_key(session_id), session_data, get_ttl_seconds("session"))
+
+
+def load_paused_session(session_id: str) -> dict | None:
+    cached_session = get_json(_session_cache_key(session_id))
+    if isinstance(cached_session, dict):
+        paused_sessions[session_id] = cached_session
+        return cached_session
+    return paused_sessions.get(session_id)
+
+
+def delete_paused_session(session_id: str) -> None:
+    paused_sessions.pop(session_id, None)
+    delete_json(_session_cache_key(session_id))
+
+
+def pop_paused_session(session_id: str) -> dict | None:
+    session_data = load_paused_session(session_id)
+    if session_data is not None:
+        delete_paused_session(session_id)
+    return session_data
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("🚀 Contract Review Copilot API started")
     yield
     paused_sessions.clear()
+    close_redis_client()
     print("👋 Contract Review Copilot API stopped")
 
 
@@ -58,6 +89,14 @@ def get_current_user(authorization: Optional[str]) -> Optional[dict]:
         return None
     token = authorization[7:]
     return auth.get_user_from_token(token)
+
+
+def require_current_user(authorization: Optional[str]) -> dict:
+    """Require a valid user token for protected endpoints."""
+    user = get_current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="请先登录")
+    return user
 
 
 # ── Auth Endpoints ────────────────────────────────────────────────
@@ -130,23 +169,35 @@ async def health():
     return HealthResponse(status="ok")
 
 
+@app.post("/api/autofix")
+async def autofix_clause(body: dict, authorization: Optional[str] = Header(None)):
+    """Generate a suggested clause revision for a problematic clause."""
+    from .agents.logic_review import generate_clause_fix
+    require_current_user(authorization)
+
+    clause = body.get("clause", "")
+    issue = body.get("issue", "")
+    suggestion = body.get("suggestion", "")
+    legal_ref = body.get("legal_ref", "")
+
+    fix = generate_clause_fix(clause, issue, suggestion, legal_ref)
+    return {"suggestion": fix}
+
+
 @app.post("/api/review")
 async def create_review(
-    request: ContractReviewRequest,
+    body: ContractReviewRequest,
     authorization: Optional[str] = Header(None),
 ):
     """Start a new contract review session. Returns SSE stream."""
-    # Require authentication (disabled for dev — uncomment below line to enable)
-    # user = get_current_user(authorization)
-    # if not user:
-    #     raise HTTPException(status_code=401, detail="请先登录")
+    user = require_current_user(authorization)
 
-    session_id = request.session_id or f"session-{id(request)}"
+    session_id = body.session_id or f"session-{id(body)}"
 
     async def event_generator() -> AsyncGenerator[bytes, None]:
         try:
             async for event in run_review_stream(
-                contract_text=request.contract_text,
+                contract_text=body.contract_text,
                 session_id=session_id,
             ):
                 event_type = event.get("event", "message")
@@ -155,10 +206,11 @@ async def create_review(
 
                 if event_type == "breakpoint":
                     breakpoint_payload = event_data or {}
-                    paused_sessions[session_id] = {
-                        "contract_text": request.contract_text,
-                        "issues": breakpoint_payload.get("breakpoint", {}).get("issues", []),
-                    }
+                    store_paused_session(session_id, {
+                        "owner": user.get("email") or user.get("id"),
+                        "contract_text": body.contract_text,
+                        "issues": breakpoint_payload.get("issues", []),
+                    })
                     return
 
         except Exception as e:
@@ -182,18 +234,22 @@ async def confirm_breakpoint(
     authorization: Optional[str] = Header(None),
 ):
     """Resume a paused review session and continue with aggregation."""
-    # user = get_current_user(authorization)
-    # if not user:
-    #     raise HTTPException(status_code=401, detail="请先登录")
+    user = require_current_user(authorization)
 
-    if session_id not in paused_sessions:
+    session_data = load_paused_session(session_id)
+    if session_data is None:
         raise HTTPException(status_code=404, detail="Session not found or already completed")
+    session_owner = session_data.get("owner")
+    if session_owner and session_owner != (user.get("email") or user.get("id")):
+        raise HTTPException(status_code=403, detail="无权访问该审查会话")
 
     if not body.confirmed:
-        del paused_sessions[session_id]
+        delete_paused_session(session_id)
         return {"status": "cancelled"}
 
-    session_data = paused_sessions.pop(session_id)
+    session_data = pop_paused_session(session_id)
+    if session_data is None:
+        raise HTTPException(status_code=404, detail="Session not found or already completed")
 
     async def event_generator() -> AsyncGenerator[bytes, None]:
         try:

@@ -1,4 +1,23 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    environment:
+      POSTGRES_DB: contract_review
+      POSTGRES_USER: contract_user
+      POSTGRES_PASSWORD: contract_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U contract_user -d contract_review']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend
@@ -16,14 +35,17 @@ services:
       dockerfile: ../Dockerfile.backend
     ports:
       - '8000:8000'
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
-      - OPENAI_MODEL=${OPENAI_MODEL}
-      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
-      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
       - LOG_LEVEL=INFO
+      - DATABASE_URL=postgresql://contract_user:contract_pass@postgres:5432/contract_review
+      - REDIS_ENABLED=false
+      - SKIP_LLM_REVIEW=1
     env_file:
       - ./backend/.env
     restart: unless-stopped
+
+volumes:
+  postgres_data:
