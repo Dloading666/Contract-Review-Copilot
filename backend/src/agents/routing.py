@@ -1,0 +1,128 @@
+"""
+Routing Agent — LLM-powered
+Decides search strategy: pgvector RAG vs DuckDuckGo web search.
+"""
+import os
+import json
+from openai import OpenAI
+from .entity_extraction import get_llm_client
+
+# pgvector imports
+try:
+    from ..vectorstore.store import retrieve_similar_chunks
+    from ..vectorstore.connection import DATABASE_URL
+    PGVECTOR_AVAILABLE = bool(DATABASE_URL)
+except Exception:
+    PGVECTOR_AVAILABLE = False
+    retrieve_similar_chunks = None
+
+
+ROUTING_PROMPT = """你是一个智能法律检索系统。请分析以下合同的关键特征，决定检索策略。
+
+合同基本信息：
+- 合同类型：{contract_type}
+- 标的金额：月租 {monthly_rent} 元，押金 {deposit} 元
+- 合同性质：{property_type}
+
+请决定检索策略：
+
+1. primary_source: 应优先检索哪个数据源？
+   - "pgvector" = 法律数据库（民法典、司法解释）
+   - "duckduckgo" = 地方性法规、实时政策
+
+2. secondary_source: 辅助数据源（可以是 "pgvector"、"duckduckgo" 或 null）
+
+3. reason: 解释选择理由（1-2句话）
+
+4. confidence: 置信度 0.0-1.0
+
+5. local_context: 是否需要检索地方性规定？简述需要的地区和规定类型
+
+6. legal_focus: 本合同最需要关注的3个法律领域（如：违约金上限、押金退还、租赁期限）
+
+直接返回JSON，不要其他文字：
+{{
+  "primary_source": "pgvector",
+  "secondary_source": "duckduckgo",
+  "reason": "这是标准住宅租赁合同，适用全国性法律为主...",
+  "confidence": 0.92,
+  "local_context": "如涉及北京地区，需检索《北京市房屋租赁若干规定》...",
+  "legal_focus": ["违约金上限", "押金退还条件", "提前解约通知"]
+}}
+"""
+
+
+def decide_routing(contract_text: str, entities: dict) -> dict:
+    """Use LLM to decide retrieval strategy."""
+    try:
+        client = get_llm_client()
+
+        rent = entities.get("rent", {}).get("monthly", 0)
+        deposit = entities.get("deposit", {}).get("amount", 0)
+        prop_type = "住宅租赁" if any(w in contract_text for w in ["住宅", "公寓", "住房"]) else "商业租赁"
+
+        response = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "glm-5"),
+            messages=[
+                {"role": "system", "content": "你是一个智能法律检索系统。"},
+                {"role": "user", "content": ROUTING_PROMPT.format(
+                    contract_type=entities.get("contract_type", "租赁合同"),
+                    monthly_rent=rent,
+                    deposit=deposit,
+                    property_type=prop_type,
+                )},
+            ],
+            temperature=0.1,
+            max_tokens=512,
+        )
+
+        result_text = response.choices[0].message.content.strip()
+
+        # Parse JSON
+        if "```json" in result_text:
+            result_text = result_text.split("```json")[1].split("```")[0]
+        elif "```" in result_text:
+            result_text = result_text.split("```")[1].split("```")[0]
+
+        data = json.loads(result_text.strip())
+
+        routing = {
+            "primary_source": data.get("primary_source", "pgvector"),
+            "secondary_source": data.get("secondary_source", "duckduckgo"),
+            "reason": data.get("reason", ""),
+            "confidence": float(data.get("confidence", 0.9)),
+            "local_context": data.get("local_context", ""),
+            "legal_focus": data.get("legal_focus", []),
+        }
+
+        # Perform actual pgvector retrieval if primary source is pgvector
+        if routing["primary_source"] == "pgvector" and PGVECTOR_AVAILABLE:
+            try:
+                # Build query from legal focus areas
+                focus_areas = routing.get("legal_focus", [])
+                query = contract_text[:500] if not focus_areas else "、".join(focus_areas[:3])
+                chunks = retrieve_similar_chunks(query, top_k=5, min_similarity=0.3)
+                routing["pgvector_results"] = chunks
+                print(f"[Routing] Retrieved {len(chunks)} chunks from pgvector")
+            except Exception as e:
+                print(f"[Routing] pgvector retrieval failed: {e}")
+                routing["pgvector_results"] = []
+
+        return routing
+    except Exception as e:
+        print(f"[Routing] LLM call failed: {e}, using default")
+        return _default_routing(contract_text, entities)
+
+
+def _default_routing(contract_text: str, entities: dict) -> dict:
+    rent = entities.get("rent", {}).get("monthly", 0)
+    prop_type = "住宅" if any(w in contract_text for w in ["住宅", "公寓"]) else "商业"
+
+    return {
+        "primary_source": "pgvector",
+        "secondary_source": "duckduckgo" if prop_type == "商业" else None,
+        "reason": f"这是{prop_type}租赁合同，建议优先检索《民法典》和相关司法解释。",
+        "confidence": 0.85,
+        "local_context": "如为北京地区商业租赁，建议同时检索《北京市房地产租赁管理办法》。" if prop_type == "商业" else "住宅租赁以全国性法律为准。",
+        "legal_focus": ["违约金上限", "押金退还", "合同解除权"],
+    }

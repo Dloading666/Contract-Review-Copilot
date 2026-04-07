@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>合规智审 Copilot - 登录</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@300;400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "surface-tint": "#0053db",
+                    "primary-container": "#2563eb",
+                    "surface-bright": "#f7f9fb",
+                    "on-surface-variant": "#434655",
+                    "secondary": "#515f74",
+                    "on-secondary": "#ffffff",
+                    "outline": "#737686",
+                    "secondary-fixed-dim": "#b9c7df",
+                    "on-primary-fixed": "#00174b",
+                    "on-primary-container": "#eeefff",
+                    "surface-container-highest": "#e0e3e5",
+                    "on-primary-fixed-variant": "#003ea8",
+                    "on-tertiary-fixed": "#360f00",
+                    "background": "#f7f9fb",
+                    "secondary-container": "#d5e3fc",
+                    "surface-container-lowest": "#ffffff",
+                    "inverse-on-surface": "#eff1f3",
+                    "on-primary": "#ffffff",
+                    "surface-container-high": "#e6e8ea",
+                    "surface-container-low": "#f2f4f6",
+                    "tertiary-fixed-dim": "#ffb596",
+                    "on-surface": "#191c1e",
+                    "on-error-container": "#93000a",
+                    "tertiary-fixed": "#ffdbcd",
+                    "tertiary-container": "#bc4800",
+                    "primary-fixed-dim": "#b4c5ff",
+                    "surface": "#f7f9fb",
+                    "primary-fixed": "#dbe1ff",
+                    "surface-variant": "#e0e3e5",
+                    "tertiary": "#943700",
+                    "on-secondary-fixed": "#0d1c2e",
+                    "inverse-primary": "#b4c5ff",
+                    "on-background": "#191c1e",
+                    "primary": "#004ac6",
+                    "inverse-surface": "#2d3133",
+                    "surface-dim": "#d8dadc",
+                    "on-tertiary-fixed-variant": "#7d2d00",
+                    "outline-variant": "#c3c6d7",
+                    "secondary-fixed": "#d5e3fc",
+                    "on-secondary-fixed-variant": "#3a485b",
+                    "surface-container": "#eceef0",
+                    "on-error": "#ffffff",
+                    "on-tertiary": "#ffffff",
+                    "error": "#ba1a1a",
+                    "on-tertiary-container": "#ffede6",
+                    "on-secondary-container": "#57657a",
+                    "error-container": "#ffdad6"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "fontFamily": {
+                    "headline": ["Manrope"],
+                    "body": ["Inter"],
+                    "label": ["Inter"]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        body { font-family: 'Inter', sans-serif; }
+        h1, h2, h3 { font-family: 'Manrope', sans-serif; }
+    </style>
+</head>
+<body class="bg-surface text-on-surface min-h-screen flex flex-col">
+<main class="flex-grow flex items-center justify-center px-4 py-12">
+<div class="w-full max-auto max-w-[1200px] grid md:grid-cols-2 gap-0 overflow-hidden rounded-xl bg-surface-container-lowest shadow-[0_20px_50px_rgba(0,74,198,0.05)]">
+<div class="hidden md:flex flex-col justify-between p-12 bg-primary relative overflow-hidden">
+<div class="absolute inset-0 opacity-10">
+<div class="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] rounded-full bg-white blur-3xl"></div>
+<div class="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-primary-container blur-3xl"></div>
+</div>
+<div class="relative z-10">
+<div class="flex items-center gap-2 text-white mb-12">
+<span class="material-symbols-outlined text-3xl" data-icon="gavel">gavel</span>
+<span class="text-xl font-bold tracking-tight">合规智审 Copilot</span>
+</div>
+<div class="space-y-6">
+<h1 class="text-4xl font-extrabold text-white leading-tight">
+                            法律科技新范式<br/>智能驱动契约信任
+                        </h1>
+<p class="text-on-primary-container/80 text-lg max-w-md">
+                            通过先进的 AI 语言模型，为您提供极速、精准的合同合规性审查与风险预警。
+                        </p>
+</div>
+</div>
+<div class="relative z-10 space-y-8">
+<div class="flex items-center gap-4 text-white">
+<div class="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="verified_user">verified_user</span>
+</div>
+<div>
+<p class="text-sm font-semibold">安全可靠</p>
+<p class="text-xs text-white/60">金融级加密保护您的文档隐私</p>
+</div>
+</div>
+</div>
+</div>
+<div class="p-8 md:p-16 flex flex-col justify-center">
+<div class="mb-10">
+<div class="md:hidden flex items-center gap-2 text-primary mb-8">
+<span class="material-symbols-outlined text-3xl" data-icon="gavel">gavel</span>
+<span class="text-xl font-bold tracking-tight">合规智审 Copilot</span>
+</div>
+<h2 class="text-3xl font-bold text-on-surface mb-2">欢迎登录</h2>
+<p class="text-on-surface-variant">请使用您的专业账号访问平台</p>
+</div>
+<form class="space-y-6">
+<div class="space-y-2">
+<label class="block text-sm font-medium text-on-surface" for="email">邮箱地址</label>
+<div class="relative">
+<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+<span class="material-symbols-outlined text-outline text-xl" data-icon="mail">mail</span>
+</div>
+<input class="block w-full pl-10 pr-3 py-3 bg-surface-container-low border-none rounded-lg text-on-surface placeholder:text-outline focus:ring-2 focus:ring-primary-container transition-all" id="email" name="email" placeholder="name@company.com" type="email"/>
+</div>
+</div>
+<div class="space-y-2">
+<div class="flex justify-between items-center">
+<label class="block text-sm font-medium text-on-surface" for="password">登录密码</label>
+<a class="text-sm font-medium text-primary hover:text-primary-container transition-colors" href="#">忘记密码？</a>
+</div>
+<div class="relative">
+<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+<span class="material-symbols-outlined text-outline text-xl" data-icon="lock">lock</span>
+</div>
+<input class="block w-full pl-10 pr-10 py-3 bg-surface-container-low border-none rounded-lg text-on-surface placeholder:text-outline focus:ring-2 focus:ring-primary-container transition-all" id="password" name="password" placeholder="请输入您的密码" type="password"/>
+<div class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer text-outline hover:text-on-surface">
+<span class="material-symbols-outlined" data-icon="visibility">visibility</span>
+</div>
+</div>
+</div>
+<div class="flex items-center">
+<input class="h-4 w-4 text-primary focus:ring-primary border-outline-variant rounded" id="remember-me" name="remember-me" type="checkbox"/>
+<label class="ml-2 block text-sm text-on-surface-variant" for="remember-me">
+                            保持登录状态
+                        </label>
+</div>
+<button class="w-full py-3 px-4 bg-primary hover:bg-surface-tint text-white font-semibold rounded-lg shadow-lg shadow-primary/20 transition-all active:scale-[0.98] flex justify-center items-center gap-2" type="submit">
+<span>登录</span>
+<span class="material-symbols-outlined text-lg" data-icon="arrow_forward">arrow_forward</span>
+</button>
+</form>
+<div class="mt-8">
+<div class="relative">
+<div class="absolute inset-0 flex items-center">
+<div class="w-full border-t border-surface-container-high"></div>
+</div>
+<div class="relative flex justify-center text-sm">
+<span class="px-2 bg-surface-container-lowest text-on-surface-variant">或使用社交账号登录</span>
+</div>
+</div>
+<div class="mt-6 grid grid-cols-2 gap-4">
+<button class="flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-surface-container-low hover:bg-surface-container-high text-on-surface transition-colors border border-outline-variant/20">
+<span class="material-symbols-outlined text-xl" data-icon="chat">chat</span>
+<span class="text-sm font-medium">企业微信</span>
+</button>
+<button class="flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-surface-container-low hover:bg-surface-container-high text-on-surface transition-colors border border-outline-variant/20">
+<span class="material-symbols-outlined text-xl" data-icon="apartment">apartment</span>
+<span class="text-sm font-medium">SSO 登录</span>
+</button>
+</div>
+</div>
+<p class="mt-10 text-center text-sm text-on-surface-variant">
+                    还没有账号？ 
+                    <a class="font-semibold text-primary hover:text-primary-container" href="#">立即申请试用</a>
+</p>
+</div>
+</div>
+</main>
+<footer class="fixed bottom-0 w-full flex justify-center gap-8 items-center w-full py-6 px-4 bg-transparent text-slate-500 dark:text-slate-400 font-['Inter'] text-sm tracking-wide">
+<span class="hidden md:inline">© 2024 Contract Review Copilot. All rights reserved.</span>
+<a class="hover:text-[#004ac6] underline transition-all" href="#">Terms of Service</a>
+<a class="hover:text-[#004ac6] underline transition-all" href="#">Privacy Policy</a>
+<a class="hover:text-[#004ac6] underline transition-all" href="#">Contact Support</a>
+</footer>
+</body></html>
