@@ -1,40 +1,54 @@
 """
-JWT Authentication — email+password login, email code registration.
-Users are persisted in Redis so they survive backend restarts.
+JWT authentication for email/password login plus email verification code flows.
+
+User data persistence strategy:
+- PostgreSQL as the primary user store.
+- Redis as a cache / fast lookup layer.
+- In-memory dict as process-local cache.
 """
+
+from __future__ import annotations
+
 import hashlib
 import json
 import os
-import jwt
-import smtplib
 import random
 import secrets
+import smtplib
 import string
 import time
 from datetime import datetime, timedelta
-from typing import Optional
-from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from threading import Lock
+from typing import Optional
+
+import jwt
 
 # JWT config
 JWT_SECRET = os.getenv("JWT_SECRET", "contract-review-copilot-secret-2024")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 
-# In-memory code store: email -> {code, expire_at}
+# One-time verification code store: email -> {code, expire_at}
 _code_store: dict[str, dict] = {}
 
-# In-memory user cache (write-through to Redis)
+# Process-local user cache
 _user_cache: dict[str, dict] = {}
 
+# Backward-compatible alias used by legacy tests.
+_user_store = _user_cache
+
 _REDIS_USER_PREFIX = "contract-review:user:"
+_PG_USER_TABLE_READY = False
+_PG_USER_TABLE_LOCK = Lock()
 
-
-# ── Redis helpers (lazy import to avoid circular deps) ────────────────────────
 
 def _get_redis():
+    """Lazy import to avoid circular dependencies at module import time."""
     try:
         from .cache.redis_cache import get_redis_client
+
         return get_redis_client()
     except Exception:
         return None
@@ -46,8 +60,8 @@ def _save_user_to_redis(user_id: str, user: dict) -> None:
         return
     try:
         client.set(f"{_REDIS_USER_PREFIX}{user_id}", json.dumps(user, ensure_ascii=False))
-    except Exception as e:
-        print(f"[Auth] Redis save user failed: {e}")
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[Auth] Redis save user failed: {exc}")
 
 
 def _load_user_from_redis(user_id: str) -> Optional[dict]:
@@ -58,28 +72,187 @@ def _load_user_from_redis(user_id: str) -> Optional[dict]:
         raw = client.get(f"{_REDIS_USER_PREFIX}{user_id}")
         if raw:
             return json.loads(raw)
-    except Exception as e:
-        print(f"[Auth] Redis load user failed: {e}")
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[Auth] Redis load user failed: {exc}")
+    return None
+
+
+def _get_pg_connection_factory():
+    """Return backend vectorstore connection context manager factory."""
+    try:
+        from .vectorstore.connection import get_connection
+
+        return get_connection
+    except Exception:
+        return None
+
+
+def _format_created_at(created_at: object) -> str:
+    if isinstance(created_at, datetime):
+        return created_at.isoformat()
+    if isinstance(created_at, str) and created_at:
+        return created_at
+    return datetime.now().isoformat()
+
+
+def _ensure_pg_user_table() -> bool:
+    global _PG_USER_TABLE_READY
+    if _PG_USER_TABLE_READY:
+        return True
+
+    with _PG_USER_TABLE_LOCK:
+        if _PG_USER_TABLE_READY:
+            return True
+
+        connection_factory = _get_pg_connection_factory()
+        if connection_factory is None:
+            return False
+
+        try:
+            with connection_factory() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS auth_users (
+                            user_id TEXT PRIMARY KEY,
+                            email TEXT UNIQUE NOT NULL,
+                            password_hash TEXT NOT NULL,
+                            salt TEXT NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    )
+                conn.commit()
+
+            _PG_USER_TABLE_READY = True
+            return True
+        except Exception as exc:  # pragma: no cover - defensive logging
+            print(f"[Auth] PostgreSQL user table init failed: {exc}")
+            return False
+
+
+def _save_user_to_postgres(user_id: str, user: dict) -> None:
+    if not _ensure_pg_user_table():
+        return
+
+    connection_factory = _get_pg_connection_factory()
+    if connection_factory is None:
+        return
+
+    try:
+        with connection_factory() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO auth_users (user_id, email, password_hash, salt, created_at)
+                    VALUES (%s, %s, %s, %s, %s::timestamptz)
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET
+                        email = EXCLUDED.email,
+                        password_hash = EXCLUDED.password_hash,
+                        salt = EXCLUDED.salt
+                    """,
+                    (
+                        user_id,
+                        user.get("email", ""),
+                        user.get("password_hash", ""),
+                        user.get("salt", ""),
+                        _format_created_at(user.get("created_at")),
+                    ),
+                )
+            conn.commit()
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[Auth] PostgreSQL save user failed: {exc}")
+
+
+def _load_user_from_postgres(user_id: str) -> Optional[dict]:
+    if not _ensure_pg_user_table():
+        return None
+
+    connection_factory = _get_pg_connection_factory()
+    if connection_factory is None:
+        return None
+
+    try:
+        with connection_factory() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT email, password_hash, salt, created_at
+                    FROM auth_users
+                    WHERE user_id = %s
+                    LIMIT 1
+                    """,
+                    (user_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return {
+                    "email": row[0],
+                    "password_hash": row[1],
+                    "salt": row[2],
+                    "created_at": _format_created_at(row[3]),
+                }
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[Auth] PostgreSQL load user failed: {exc}")
     return None
 
 
 def _get_user(user_id: str) -> Optional[dict]:
-    """Get user from cache or Redis."""
+    """Get user from in-memory cache, Redis, then PostgreSQL."""
     if user_id in _user_cache:
         return _user_cache[user_id]
+
     user = _load_user_from_redis(user_id)
     if user:
         _user_cache[user_id] = user
-    return user
+        _cache_legacy_user_alias(user_id, user)
+        # Opportunistic migration: old Redis-only users are moved to PostgreSQL.
+        _save_user_to_postgres(user_id, user)
+        return user
+
+    user = _load_user_from_postgres(user_id)
+    if user:
+        _user_cache[user_id] = user
+        _cache_legacy_user_alias(user_id, user)
+        _save_user_to_redis(user_id, user)
+        return user
+
+    return None
+
+
+def _cache_legacy_user_alias(user_id: str, user: dict) -> None:
+    """Mirror the user under its email local-part for backward-compatible cache lookups."""
+    email = (user.get("email") or "").strip().lower()
+    if not email:
+        return
+
+    alias = email.split("@", 1)[0]
+    if not alias or alias == user_id:
+        return
+
+    cached = _user_cache.get(alias)
+    if cached and cached.get("email") not in ("", email):
+        return
+
+    _user_cache[alias] = user
 
 
 def _put_user(user_id: str, user: dict) -> None:
-    """Save user to cache and Redis."""
+    """Write-through to memory, Redis and PostgreSQL."""
     _user_cache[user_id] = user
+    _cache_legacy_user_alias(user_id, user)
+    _save_user_to_redis(user_id, user)
+    _save_user_to_postgres(user_id, user)
+
+
+def _cache_user_without_db(user_id: str, user: dict) -> None:
+    """Cache-only write (for JWT recovery / legacy no-password paths)."""
+    _user_cache[user_id] = user
+    _cache_legacy_user_alias(user_id, user)
     _save_user_to_redis(user_id, user)
 
-
-# ── Password helpers ──────────────────────────────────────────────────────────
 
 def _hash_password(password: str, salt: str) -> str:
     return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
@@ -88,8 +261,6 @@ def _hash_password(password: str, salt: str) -> str:
 def _make_user_id(email: str) -> str:
     return email.split("@")[0] + "_" + hashlib.md5(email.encode()).hexdigest()[:6]
 
-
-# ── Verification code ─────────────────────────────────────────────────────────
 
 def generate_code() -> str:
     return "".join(random.choices(string.digits, k=6))
@@ -107,22 +278,22 @@ def send_verification_code(email: str) -> dict:
     from_email = os.getenv("FROM_EMAIL", smtp_user)
 
     if not smtp_host or not smtp_user:
-        print(f"[Auth] Dev mode — verification code for {email}: {code}")
+        print(f"[Auth] Dev mode - verification code for {email}: {code}")
         return {"success": True, "dev_code": code}
 
     try:
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = "【合规智审 Copilot】邮箱验证码"
+        msg["Subject"] = "[Contract Review Copilot] Verification Code"
         msg["From"] = from_email
         msg["To"] = email
 
         html_body = f"""
         <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
-            <h1 style="color: #ff8c00; font-size: 20px;">Doge 合规助手</h1>
-            <p>您的注册验证码为：</p>
+            <h1 style="color: #ff8c00; font-size: 20px;">Contract Review Copilot</h1>
+            <p>Your verification code:</p>
             <div style="background: #ff8c00; color: white; font-size: 32px; font-weight: 700;
                 letter-spacing: 8px; padding: 16px 32px; text-align: center;">{code}</div>
-            <p style="color: #888; font-size: 12px;">验证码 5 分钟内有效，请勿告知他人。</p>
+            <p style="color: #888; font-size: 12px;">Code expires in 5 minutes.</p>
         </div>
         """
         msg.attach(MIMEText(html_body, "html"))
@@ -133,14 +304,13 @@ def send_verification_code(email: str) -> dict:
             server.sendmail(from_email, [email], msg.as_string())
 
         return {"success": True}
-    except Exception as e:
-        print(f"[Auth] Failed to send email: {e}")
-        print(f"[Auth] Dev mode — verification code for {email}: {code}")
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[Auth] Failed to send email: {exc}")
+        print(f"[Auth] Dev fallback - verification code for {email}: {code}")
         return {"success": True, "dev_code": code}
 
 
 def verify_code_only(email: str, code: str) -> bool:
-    """Check code without consuming it (for registration pre-check)."""
     record = _code_store.get(email)
     if not record:
         return False
@@ -151,26 +321,23 @@ def verify_code_only(email: str, code: str) -> bool:
 
 
 def consume_code(email: str, code: str) -> bool:
-    """Verify and consume a code (one-time use)."""
     if not verify_code_only(email, code):
         return False
     del _code_store[email]
     return True
 
 
-# ── Registration ──────────────────────────────────────────────────────────────
-
 def register_user(email: str, code: str, password: str) -> dict:
     """
     Register a new user with email verification.
-    Returns {"success": True} or {"success": False, "error": "..."}
+    Returns {"success": True} or {"success": False, "error": "..."}.
     """
-    if not consume_code(email, code):
-        return {"success": False, "error": "验证码无效或已过期"}
-
     user_id = _make_user_id(email)
     if _get_user(user_id) is not None:
         return {"success": False, "error": "该邮箱已注册，请直接登录"}
+
+    if not consume_code(email, code):
+        return {"success": False, "error": "验证码无效或已过期"}
 
     if len(password) < 6:
         return {"success": False, "error": "密码不能少于6位"}
@@ -190,24 +357,19 @@ def register_user(email: str, code: str, password: str) -> dict:
     return {"success": True}
 
 
-# ── Login with password ───────────────────────────────────────────────────────
-
 def login_with_password(email: str, password: str) -> Optional[str]:
-    """
-    Authenticate with email + password. Returns JWT token or None.
-    """
+    """Authenticate with email + password. Returns JWT token or None."""
     user_id = _make_user_id(email)
     user = _get_user(user_id)
-
     if not user:
         return None
 
-    expected = _hash_password(password, user["salt"])
-    if expected != user["password_hash"]:
+    expected = _hash_password(password, user.get("salt", ""))
+    if expected != user.get("password_hash", ""):
         return None
 
     expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
-    token = jwt.encode(
+    return jwt.encode(
         {
             "sub": user_id,
             "email": email,
@@ -217,36 +379,32 @@ def login_with_password(email: str, password: str) -> Optional[str]:
         JWT_SECRET,
         algorithm=JWT_ALGORITHM,
     )
-    return token
 
-
-# ── Legacy code-only login (kept for backwards compat) ───────────────────────
 
 def verify_code(email: str, code: str) -> Optional[str]:
-    """Legacy: verify code and return token (no password)."""
+    """
+    Legacy code-only login path for backward compatibility.
+    """
     if not consume_code(email, code):
         return None
 
     user_id = _make_user_id(email)
     if _get_user(user_id) is None:
-        salt = secrets.token_hex(16)
-        _put_user(user_id, {
+        recovered = {
             "email": email,
             "password_hash": "",
-            "salt": salt,
+            "salt": "",
             "created_at": datetime.now().isoformat(),
-        })
+        }
+        _cache_user_without_db(user_id, recovered)
 
     expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
-    token = jwt.encode(
+    return jwt.encode(
         {"sub": user_id, "email": email, "exp": expire, "iat": datetime.utcnow()},
         JWT_SECRET,
         algorithm=JWT_ALGORITHM,
     )
-    return token
 
-
-# ── Token helpers ─────────────────────────────────────────────────────────────
 
 def decode_token(token: str) -> Optional[dict]:
     try:
@@ -269,7 +427,11 @@ def get_user_from_token(token: str) -> Optional[dict]:
     if user:
         return {"id": user_id, "email": user["email"], "created_at": user.get("created_at")}
 
-    # Recover from JWT (after backend restart with no Redis)
-    recovered = {"email": email, "password_hash": "", "salt": "", "created_at": datetime.now().isoformat()}
-    _put_user(user_id, recovered)
+    recovered = {
+        "email": email,
+        "password_hash": "",
+        "salt": "",
+        "created_at": datetime.now().isoformat(),
+    }
+    _cache_user_without_db(user_id, recovered)
     return {"id": user_id, "email": email, "created_at": recovered["created_at"]}

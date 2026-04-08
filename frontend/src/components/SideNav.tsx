@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { MessageSquare, History, FileText, Settings } from 'lucide-react'
+import { MessageSquare, History, Settings } from 'lucide-react'
+import { loadPersistedReviewHistory } from '../lib/reviewHistory'
 
 interface SideNavProps {
   user?: { email: string; id: string } | null
@@ -15,8 +16,6 @@ interface HistoryListItem {
   date: string
 }
 
-const HISTORY_STORAGE_KEY = 'reviewHistory'
-
 export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings, activeView }: SideNavProps) {
   const [showHistory, setShowHistory] = useState(false)
   const [historyItems, setHistoryItems] = useState<HistoryListItem[]>([])
@@ -25,9 +24,8 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
 
   const loadHistoryItems = () => {
     try {
-      const saved = sessionStorage.getItem(HISTORY_STORAGE_KEY)
-      const parsed = saved ? JSON.parse(saved) : []
-      setHistoryItems(Array.isArray(parsed) ? parsed : [])
+      const parsed = loadPersistedReviewHistory<HistoryListItem>(user?.email)
+      setHistoryItems(parsed)
     } catch {
       setHistoryItems([])
     }
@@ -58,7 +56,6 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
   const navItems = [
     { id: 'chat', icon: <MessageSquare size={26} />, label: '实时对话', onClick: () => setShowHistory(false) },
     { id: 'history', icon: <History size={26} />, label: '审查历史', onClick: handleHistoryClick, ref: historyButtonRef },
-    { id: 'docs', icon: <FileText size={26} />, label: '我的文档', onClick: () => {} },
   ]
 
   return (
@@ -77,11 +74,11 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
         <div style={{
           border: '3px solid black',
           background: 'white',
-          padding: '6px 4px',
+          padding: '7px 4px',
           textAlign: 'center',
           fontFamily: 'var(--font-header)',
-          fontSize: 6,
-          lineHeight: 1.6,
+          fontSize: 7,
+          lineHeight: 1.5,
           color: 'var(--color-ink)',
           overflow: 'hidden',
         }}>
@@ -126,33 +123,109 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
 
       {/* Nav items */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        {navItems.map(item => (
-          <button
-            key={item.id}
-            ref={item.ref as any}
-            type="button"
-            className={`pixel-sidebar-btn${activeView === item.id || (item.id === 'history' && showHistory) ? ' active' : ''}`}
-            onClick={item.onClick}
-          >
-            {item.icon}
-            <span>{item.label}</span>
-          </button>
-        ))}
+        {navItems.map(item => {
+          const button = (
+            <button
+              ref={item.ref as any}
+              type="button"
+              className={`pixel-sidebar-btn${activeView === item.id || (item.id === 'history' && showHistory) ? ' active' : ''}`}
+              onClick={item.onClick}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          )
+
+          if (item.id !== 'history') {
+            return <div key={item.id}>{button}</div>
+          }
+
+          return (
+            <div key={item.id} style={{ position: 'relative', overflow: 'visible' }}>
+              {button}
+              {showHistory && (
+                <div
+                  ref={historyDropdownRef}
+                  style={{
+                    position: 'absolute',
+                    left: 'calc(100% + 8px)',
+                    top: 0,
+                    width: 280,
+                    background: 'var(--color-paper)',
+                    border: '4px solid black',
+                    boxShadow: '6px 6px 0 rgba(0,0,0,1)',
+                    zIndex: 200,
+                    maxHeight: 400,
+                    display: 'flex',
+                    flexDirection: 'column',
+                  }}
+                >
+                  <div style={{
+                    padding: '10px 14px',
+                    background: 'var(--color-orange)',
+                    color: 'white',
+                    fontFamily: 'var(--font-pixel)',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    borderBottom: '4px solid black',
+                    flexShrink: 0,
+                  }}>
+                    审查历史
+                  </div>
+                  {historyItems.length === 0 ? (
+                    <div style={{ padding: '24px 14px', textAlign: 'center', fontFamily: 'var(--font-pixel)', fontSize: 8, color: 'var(--color-ink-muted)' }}>
+                      暂无历史记录
+                    </div>
+                  ) : (
+                    <div style={{ overflowY: 'auto', flex: 1 }}>
+                      {historyItems.map(historyItem => (
+                        <button
+                          key={historyItem.sessionId}
+                          type="button"
+                          onClick={() => handleHistorySelect(historyItem.sessionId)}
+                          style={{
+                            display: 'block',
+                            width: '100%',
+                            textAlign: 'left',
+                            padding: '10px 14px',
+                            border: 'none',
+                            borderBottom: '3px solid black',
+                            background: 'white',
+                            cursor: 'pointer',
+                            fontFamily: 'var(--font-pixel)',
+                            fontSize: 8,
+                            color: 'var(--color-ink)',
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-orange-light)')}
+                          onMouseLeave={e => (e.currentTarget.style.background = 'white')}
+                        >
+                          <div style={{ fontWeight: 700, marginBottom: 4, lineHeight: 1.4 }}>{historyItem.filename}</div>
+                          <div style={{ fontSize: 7, color: 'var(--color-ink-muted)' }}>{historyItem.date}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
 
       {/* Footer: settings + logout */}
       <div style={{ borderTop: '4px solid black' }}>
         {user?.email && (
           <div style={{
-            padding: '6px 8px',
+            padding: '8px 8px',
             fontFamily: 'var(--font-pixel)',
-            fontSize: 7,
+            fontSize: 9,
             wordBreak: 'break-all',
             textAlign: 'center',
             background: 'white',
             borderBottom: '4px solid black',
             color: 'var(--color-ink-soft)',
-            lineHeight: 1.5,
+            lineHeight: 1.6,
           }}>
             {user.email}
           </div>
@@ -181,7 +254,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
             background: 'var(--color-paper)',
             color: 'var(--color-red)',
             fontFamily: 'var(--font-pixel)',
-            fontSize: 8,
+            fontSize: 10,
             fontWeight: 700,
             textTransform: 'uppercase',
             cursor: 'pointer',
@@ -194,72 +267,6 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
         </button>
       </div>
 
-      {/* History dropdown */}
-      {showHistory && (
-        <div
-          ref={historyDropdownRef}
-          style={{
-            position: 'fixed',
-            left: 112,
-            top: 0,
-            width: 280,
-            background: 'var(--color-paper)',
-            border: '4px solid black',
-            boxShadow: '6px 6px 0 rgba(0,0,0,1)',
-            zIndex: 200,
-            maxHeight: 400,
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          <div style={{
-            padding: '10px 14px',
-            background: 'var(--color-orange)',
-            color: 'white',
-            fontFamily: 'var(--font-pixel)',
-            fontSize: 9,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            borderBottom: '4px solid black',
-            flexShrink: 0,
-          }}>
-            审查历史
-          </div>
-          {historyItems.length === 0 ? (
-            <div style={{ padding: '24px 14px', textAlign: 'center', fontFamily: 'var(--font-pixel)', fontSize: 8, color: 'var(--color-ink-muted)' }}>
-              暂无历史记录
-            </div>
-          ) : (
-            <div style={{ overflowY: 'auto', flex: 1 }}>
-              {historyItems.map(item => (
-                <button
-                  key={item.sessionId}
-                  type="button"
-                  onClick={() => handleHistorySelect(item.sessionId)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '10px 14px',
-                    border: 'none',
-                    borderBottom: '3px solid black',
-                    background: 'white',
-                    cursor: 'pointer',
-                    fontFamily: 'var(--font-pixel)',
-                    fontSize: 8,
-                    color: 'var(--color-ink)',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-orange-light)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'white')}
-                >
-                  <div style={{ fontWeight: 700, marginBottom: 4, lineHeight: 1.4 }}>{item.filename}</div>
-                  <div style={{ fontSize: 7, color: 'var(--color-ink-muted)' }}>{item.date}</div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </aside>
   )
 }

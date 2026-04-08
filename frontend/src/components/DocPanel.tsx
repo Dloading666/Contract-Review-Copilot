@@ -1,13 +1,16 @@
 import { useCallback, useRef, useState } from 'react'
 import mammoth from 'mammoth'
-import { ZoomIn, ZoomOut, Download, Menu, Upload, Eye } from 'lucide-react'
-import type { ReviewState, RiskCard } from '../App'
-import { DEMO_CONTRACT_FILENAME, DEMO_CONTRACT_TEXT } from '../lib/demoContract'
+import { ZoomIn, ZoomOut, Download, Upload, Plus } from 'lucide-react'
+import type { ModelKey, ModelOption, ReviewState, RiskCard } from '../App'
+import { ModelSelector } from './ModelSelector'
 
 interface DocPanelProps {
   review: ReviewState
+  selectedModel: ModelKey
+  availableModels: ModelOption[]
+  onModelChange: (model: ModelKey) => void
   onFileUpload: (text: string, filename: string) => void
-  onExportReport?: () => void
+  onNewConversation?: () => void
 }
 
 const RISK_KEYWORDS = [
@@ -50,12 +53,32 @@ function getLineMatches(line: string, riskCards: RiskCard[]) {
     .sort((a, b) => a.level === b.level ? 0 : a.level === 'high' ? -1 : 1)
 }
 
-export function DocPanel({ review, onFileUpload, onExportReport }: DocPanelProps) {
+function isNoRiskPlaceholderCard(card: RiskCard) {
+  const summaryText = `${card.title} ${card.clause}`.toLowerCase()
+  const issueText = `${card.issue} ${card.suggestion}`
+  return (
+    (summaryText.includes('整体评估') || summaryText.includes('风险评估'))
+    && (
+      issueText.includes('未发现明显不公平条款')
+      || issueText.includes('合同条款基本公平合理')
+      || issueText.includes('未发现明显不公平')
+    )
+  )
+}
+
+export function DocPanel({
+  review,
+  selectedModel,
+  availableModels,
+  onModelChange,
+  onFileUpload,
+  onNewConversation,
+}: DocPanelProps) {
   const [zoom, setZoom] = useState(100)
 
   const isEmpty = review.status === 'idle'
   const contractText = review.contractText
-  const riskCards: RiskCard[] = review.riskCards || []
+  const riskCards: RiskCard[] = (review.riskCards || []).filter((card) => !isNoRiskPlaceholderCard(card))
 
   const handleDownload = useCallback(() => {
     if (!contractText) return
@@ -123,9 +146,6 @@ export function DocPanel({ review, onFileUpload, onExportReport }: DocPanelProps
       {/* Toolbar */}
       <div className="doc-panel__toolbar">
         <div className="doc-panel__toolbar-left">
-          <button className="doc-panel__icon-btn" title="文档菜单">
-            <Menu size={16} />
-          </button>
           <span className="doc-panel__filename">
             {review.filename || '等待上传合同'}
           </span>
@@ -133,6 +153,17 @@ export function DocPanel({ review, onFileUpload, onExportReport }: DocPanelProps
         <div className="doc-panel__toolbar-right">
           {!isEmpty && (
             <>
+              {onNewConversation && (
+                <button
+                  className="px-btn px-btn--sm px-btn--ghost"
+                  aria-label="new conversation"
+                  onClick={onNewConversation}
+                  title="\u65B0\u5EFA\u5BF9\u8BDD"
+                >
+                  <Plus size={14} />
+                  {'\u65B0\u5EFA\u5BF9\u8BDD'}
+                </button>
+              )}
               <div className="doc-panel__zoom-group">
                 <button
                   className="doc-panel__zoom-btn"
@@ -157,15 +188,6 @@ export function DocPanel({ review, onFileUpload, onExportReport }: DocPanelProps
               >
                 <Download size={16} />
               </button>
-              {onExportReport && review.finalReport.length > 0 && (
-                <button
-                  className="px-btn px-btn--sm px-btn--orange"
-                  onClick={onExportReport}
-                  title="导出报告"
-                >
-                  导出报告
-                </button>
-              )}
             </>
           )}
         </div>
@@ -174,7 +196,12 @@ export function DocPanel({ review, onFileUpload, onExportReport }: DocPanelProps
       {/* Content */}
       <div className="doc-panel__content">
         {isEmpty ? (
-          <UploadArea onFileUpload={onFileUpload} />
+          <UploadArea
+            selectedModel={selectedModel}
+            availableModels={availableModels}
+            onModelChange={onModelChange}
+            onFileUpload={onFileUpload}
+          />
         ) : (
           <div className="doc-paper" style={{ fontSize: `${zoom}%` }}>
             <div>{renderContractContent()}</div>
@@ -210,15 +237,21 @@ export function DocPanel({ review, onFileUpload, onExportReport }: DocPanelProps
 }
 
 interface UploadAreaProps {
+  selectedModel: ModelKey
+  availableModels: ModelOption[]
+  onModelChange: (model: ModelKey) => void
   onFileUpload: (text: string, filename: string) => void
 }
 
-function UploadArea({ onFileUpload }: UploadAreaProps) {
+function UploadArea({
+  selectedModel,
+  availableModels,
+  onModelChange,
+  onFileUpload,
+}: UploadAreaProps) {
   const hiddenFileInput = useRef<HTMLInputElement>(null)
 
   const handleUploadClick = () => hiddenFileInput.current?.click()
-
-  const handleLoadSample = () => onFileUpload(DEMO_CONTRACT_TEXT, DEMO_CONTRACT_FILENAME)
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -274,14 +307,21 @@ function UploadArea({ onFileUpload }: UploadAreaProps) {
         系统将自动扫描潜在风险条款
       </p>
 
+      <div className="upload-area__model">
+        <div className="upload-area__model-label">开始分析前先选择模型</div>
+        <ModelSelector
+          selectedModel={selectedModel}
+          availableModels={availableModels}
+          onModelChange={onModelChange}
+          menuPlacement="bottom"
+        />
+        <p className="upload-area__model-hint">所选模型会用于本次审查和后续问答。</p>
+      </div>
+
       <div className="upload-area__actions">
         <button className="px-btn px-btn--blue" style={{ width: '100%' }} onClick={handleUploadClick}>
           <Upload size={14} />
           选择文件
-        </button>
-        <button className="px-btn px-btn--ghost" style={{ width: '100%' }} onClick={handleLoadSample}>
-          <Eye size={14} />
-          加载示例
         </button>
       </div>
 

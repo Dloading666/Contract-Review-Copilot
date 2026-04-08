@@ -5,6 +5,7 @@ Decides search strategy: pgvector RAG vs DuckDuckGo web search.
 import os
 import json
 from .entity_extraction import create_chat_completion
+from ..llm_client import get_primary_model_key
 
 # pgvector imports
 try:
@@ -51,7 +52,7 @@ ROUTING_PROMPT = """你是一个智能法律检索系统。请分析以下合同
 """
 
 
-def decide_routing(contract_text: str, entities: dict) -> dict:
+def decide_routing(contract_text: str, entities: dict, model_key: str | None = None) -> dict:
     """Use LLM to decide retrieval strategy."""
     # Skip LLM if environment variable is set
     if os.getenv("SKIP_LLM_ROUTING", "").lower() in ("1", "true", "yes"):
@@ -63,7 +64,7 @@ def decide_routing(contract_text: str, entities: dict) -> dict:
         prop_type = "住宅租赁" if any(w in contract_text for w in ["住宅", "公寓", "住房"]) else "商业租赁"
 
         response = create_chat_completion(
-            model=os.getenv("OPENAI_MODEL", "glm-5"),
+            model=model_key or get_primary_model_key(),
             messages=[
                 {"role": "system", "content": "你是一个智能法律检索系统。"},
                 {"role": "user", "content": ROUTING_PROMPT.format(

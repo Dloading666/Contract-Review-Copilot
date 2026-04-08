@@ -96,7 +96,7 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
         {success ? (
           <div style={{ textAlign: 'center', padding: '24px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
             <CheckCircle2 size={48} color="var(--color-green)" />
-            <p style={{ fontFamily: 'var(--font-pixel)', fontSize: 13, fontWeight: 700, color: 'var(--color-green)' }}>注册成功！正在跳转登录…</p>
+            <p style={{ fontFamily: 'var(--font-ui)', fontSize: 13, fontWeight: 700, color: 'var(--color-green)' }}>注册成功！正在跳转登录…</p>
           </div>
         ) : (
           <form style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 18 }} onSubmit={handleSubmit}>
@@ -105,8 +105,9 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
               <label style={labelStyle}>电子邮箱</label>
               <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                 <Mail size={18} style={{ position: 'absolute', left: 12, color: 'var(--color-ink-muted)', pointerEvents: 'none' }} />
-                <input type="email" className="pixel-input" placeholder="your@email.com"
+                <input type="email" className="pixel-input pixel-input--literal" placeholder="your@email.com"
                   value={email} onChange={e => setEmail(e.target.value)}
+                  autoCapitalize="none" autoCorrect="off" spellCheck={false}
                   style={{ paddingLeft: 44, fontSize: 13 }} />
               </div>
             </div>
@@ -117,18 +118,19 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
               <div style={{ display: 'flex', gap: 10 }}>
                 <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
                   <ShieldCheck size={18} style={{ position: 'absolute', left: 12, color: 'var(--color-ink-muted)', pointerEvents: 'none' }} />
-                  <input type="text" className="pixel-input" placeholder="6 位验证码"
+                  <input type="text" className="pixel-input pixel-input--literal" placeholder="6 位验证码"
                     value={code} onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    autoCapitalize="none" autoCorrect="off" spellCheck={false}
                     maxLength={6} style={{ paddingLeft: 44, fontSize: 13 }} />
                 </div>
                 <button type="button" className="pixel-button" onClick={sendCode}
                   disabled={sending || countdown > 0}
-                  style={{ flexShrink: 0, background: 'var(--color-orange)', color: 'white', fontSize: 10, whiteSpace: 'nowrap', padding: '0 16px' }}>
+                  style={{ flexShrink: 0, background: 'var(--color-orange)', color: 'white', fontFamily: 'var(--font-ui)', fontSize: 10, textTransform: 'none', letterSpacing: 'normal', whiteSpace: 'nowrap', padding: '0 16px' }}>
                   {countdown > 0 ? `${countdown}s` : sending ? '发送中…' : '获取验证码'}
                 </button>
               </div>
               {devCode && (
-                <div style={{ border: '3px solid var(--color-orange)', background: 'var(--color-orange-light)', padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, color: 'var(--color-orange)' }}>
+                <div style={{ border: '3px solid var(--color-orange)', background: 'var(--color-orange-light)', padding: '8px 12px', fontFamily: 'var(--font-ui)', fontSize: 12, color: 'var(--color-orange)' }}>
                   开发模式验证码：{devCode}
                 </div>
               )}
@@ -140,8 +142,9 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
                 <label style={labelStyle}>设置密码</label>
                 <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                   <Lock size={18} style={{ position: 'absolute', left: 12, color: 'var(--color-ink-muted)', pointerEvents: 'none' }} />
-                  <input type={showPassword ? 'text' : 'password'} className="pixel-input" placeholder="至少6位"
+                  <input type={showPassword ? 'text' : 'password'} className="pixel-input pixel-input--literal" placeholder="至少6位"
                     value={password} onChange={e => setPassword(e.target.value)}
+                    autoCapitalize="none" autoCorrect="off" spellCheck={false}
                     style={{ paddingLeft: 44, paddingRight: 36, fontSize: 13 }} />
                   <button type="button" onClick={() => setShowPassword(v => !v)}
                     style={{ position: 'absolute', right: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-ink-muted)', display: 'flex', alignItems: 'center' }}>
@@ -153,8 +156,9 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
                 <label style={labelStyle}>确认密码</label>
                 <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                   <Lock size={18} style={{ position: 'absolute', left: 12, color: 'var(--color-ink-muted)', pointerEvents: 'none' }} />
-                  <input type={showConfirm ? 'text' : 'password'} className="pixel-input" placeholder="再次输入"
+                  <input type={showConfirm ? 'text' : 'password'} className="pixel-input pixel-input--literal" placeholder="再次输入"
                     value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                    autoCapitalize="none" autoCorrect="off" spellCheck={false}
                     style={{ paddingLeft: 44, paddingRight: 36, fontSize: 13 }} />
                   <button type="button" onClick={() => setShowConfirm(v => !v)}
                     style={{ position: 'absolute', right: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-ink-muted)', display: 'flex', alignItems: 'center' }}>
@@ -176,28 +180,25 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
             )}
 
             {error && (
-              <div style={{ border: '3px solid var(--color-red)', background: 'var(--color-red-light)', padding: '10px 14px', fontFamily: 'var(--font-pixel)', fontSize: 10, color: 'var(--color-red)', lineHeight: 1.6 }}>
+              <div style={{ border: '3px solid var(--color-red)', background: 'var(--color-red-light)', padding: '10px 14px', fontFamily: 'var(--font-ui)', fontSize: 10, color: 'var(--color-red)', lineHeight: 1.6 }}>
                 {error}
               </div>
             )}
 
             <button type="submit" className="pixel-button" disabled={loading}
-              style={{ width: '100%', padding: '16px 0', fontSize: 16, marginTop: 4, background: 'var(--color-orange)', color: 'white', letterSpacing: '0.05em' }}>
+              style={{ width: '100%', padding: '16px 0', fontSize: 16, marginTop: 4, background: 'var(--color-orange)', color: 'white', fontFamily: 'var(--font-ui)', textTransform: 'none', letterSpacing: 'normal' }}>
               {loading ? '注册中…' : '立即注册'}
             </button>
           </form>
         )}
 
-        <div style={{ fontFamily: 'var(--font-pixel)', fontSize: 12, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div>
             <span>已有帐号? </span>
             <button type="button" onClick={onNavigateLogin}
-              style={{ background: 'none', border: 'none', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-pixel)', fontSize: 12, borderBottom: '2px solid black', padding: 0 }}>
+              style={{ background: 'none', border: 'none', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-ui)', fontSize: 12, borderBottom: '2px solid black', padding: 0 }}>
               去登录
             </button>
-          </div>
-          <div style={{ fontFamily: 'var(--font-pixel)', fontSize: 9, color: 'var(--color-ink-muted)' }}>
-            © 2024 Doge 合规助手
           </div>
         </div>
       </motion.div>
@@ -206,17 +207,17 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
 }
 
 const labelStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-pixel)',
+  fontFamily: 'var(--font-ui)',
   fontSize: 10,
   fontWeight: 700,
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
+  textTransform: 'none',
+  letterSpacing: 'normal',
   color: 'var(--color-ink-soft)',
 }
 
 function StrengthRow({ ok, label }: { ok: boolean; label: string }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-pixel)', fontSize: 10, fontWeight: 700, color: ok ? '#27ae60' : 'var(--color-ink-muted)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-ui)', fontSize: 10, fontWeight: 700, color: ok ? '#27ae60' : 'var(--color-ink-muted)' }}>
       <CheckCircle2 size={13} style={{ flexShrink: 0, opacity: ok ? 1 : 0.3 }} />
       {label}
     </div>

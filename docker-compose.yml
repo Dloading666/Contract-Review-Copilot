@@ -18,6 +18,18 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend
@@ -38,11 +50,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - LOG_LEVEL=INFO
       - DATABASE_URL=postgresql://contract_user:contract_pass@postgres:5432/contract_review
-      - REDIS_ENABLED=false
-      - SKIP_LLM_REVIEW=1
+      - AUTO_SEED_LEGAL_KNOWLEDGE=1
+      - REDIS_ENABLED=true
+      - REDIS_URL=redis://redis:6379/0
+      - PRIMARY_LLM_MODEL_KEY=gemma4
+      - GEMMA4_BASE_URL=http://host.docker.internal:11434/v1
+      - GEMMA4_MODEL=contract-gemma4:latest
+      - SKIP_LLM_EXTRACTION=0
+      - SKIP_LLM_ROUTING=0
+      - SKIP_LLM_REVIEW=0
+      - SKIP_LLM_REPORT=0
     env_file:
       - ./backend/.env
     restart: unless-stopped

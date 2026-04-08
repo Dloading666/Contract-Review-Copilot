@@ -73,7 +73,7 @@ export function LoginPage({ onLogin, onNavigateRegister }: LoginPageProps) {
             }}>
               Doge 合规助手登录
             </h1>
-            <p style={{ fontFamily: 'var(--font-pixel)', fontSize: 11, color: 'var(--color-ink-soft)', lineHeight: 1.6 }}>
+            <p style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--color-ink-soft)', lineHeight: 1.6 }}>
               输入邮箱和密码，安全登录
             </p>
           </div>
@@ -84,11 +84,14 @@ export function LoginPage({ onLogin, onNavigateRegister }: LoginPageProps) {
               <InputWrap icon={<Mail size={18} />}>
                 <input
                   type="email"
-                  className="pixel-input"
+                  className="pixel-input pixel-input--literal"
                   placeholder="your@email.com"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   autoComplete="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   style={{ paddingLeft: 44, fontSize: 13 }}
                 />
               </InputWrap>
@@ -104,11 +107,14 @@ export function LoginPage({ onLogin, onNavigateRegister }: LoginPageProps) {
               }>
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  className="pixel-input"
+                  className="pixel-input pixel-input--literal"
                   placeholder="请输入密码"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   autoComplete="current-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   style={{ paddingLeft: 44, paddingRight: 44, fontSize: 13 }}
                 />
               </InputWrap>
@@ -116,17 +122,17 @@ export function LoginPage({ onLogin, onNavigateRegister }: LoginPageProps) {
 
             {/* Remember / forgot */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontFamily: 'var(--font-pixel)', fontSize: 11, fontWeight: 700 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 700 }}>
                 <input type="checkbox" style={{ width: 16, height: 16, border: '2px solid black', accentColor: 'black' }} />
                 记住我
               </label>
-              <span style={{ fontFamily: 'var(--font-pixel)', fontSize: 11, fontWeight: 700, borderBottom: '2px solid black', cursor: 'pointer' }}>
+              <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 700, borderBottom: '2px solid black', cursor: 'pointer' }}>
                 忘记密码?
               </span>
             </div>
 
             {error && (
-              <div style={{ border: '3px solid var(--color-red)', background: 'var(--color-red-light)', padding: '10px 14px', fontFamily: 'var(--font-pixel)', fontSize: 10, color: 'var(--color-red)', lineHeight: 1.6 }}>
+              <div style={{ border: '3px solid var(--color-red)', background: 'var(--color-red-light)', padding: '10px 14px', fontFamily: 'var(--font-ui)', fontSize: 10, color: 'var(--color-red)', lineHeight: 1.6 }}>
                 {error}
               </div>
             )}
@@ -135,16 +141,16 @@ export function LoginPage({ onLogin, onNavigateRegister }: LoginPageProps) {
               type="submit"
               className="pixel-button"
               disabled={loading}
-              style={{ width: '100%', padding: '16px 0', fontSize: 16, marginTop: 4, background: 'var(--color-green)', color: 'white', letterSpacing: '0.05em' }}
+              style={{ width: '100%', padding: '16px 0', fontSize: 16, marginTop: 4, background: 'var(--color-green)', color: 'white', fontFamily: 'var(--font-ui)', textTransform: 'none', letterSpacing: 'normal' }}
             >
               {loading ? <span style={{ width: 18, height: 18, border: '3px solid rgba(255,255,255,0.4)', borderTopColor: 'white', display: 'inline-block', animation: 'login-spin 0.6s steps(4) infinite' }} /> : '安全登录'}
             </button>
           </form>
 
-          <div style={{ fontFamily: 'var(--font-pixel)', fontSize: 12, textAlign: 'center', marginTop: 4 }}>
+          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, textAlign: 'center', marginTop: 4 }}>
             <span>没有帐号? </span>
             <button type="button" onClick={onNavigateRegister}
-              style={{ background: 'none', border: 'none', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-pixel)', fontSize: 12, borderBottom: '2px solid black', padding: 0 }}>
+              style={{ background: 'none', border: 'none', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-ui)', fontSize: 12, borderBottom: '2px solid black', padding: 0 }}>
               立即注册
             </button>
           </div>
@@ -162,7 +168,7 @@ export function LoginPage({ onLogin, onNavigateRegister }: LoginPageProps) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <label style={{ fontFamily: 'var(--font-pixel)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-ink-soft)' }}>
+      <label style={{ fontFamily: 'var(--font-ui)', fontSize: 10, fontWeight: 700, textTransform: 'none', letterSpacing: 'normal', color: 'var(--color-ink-soft)' }}>
         {label}
       </label>
       {children}

@@ -10,6 +10,7 @@
 @theme {
   --font-pixel: "Silkscreen", cursive;
   --font-header: "Press Start 2P", cursive;
+  --font-ui: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
 
   /* Core Palette */
   --color-cream: #f5f2ed;
@@ -141,6 +142,12 @@ body {
   background: var(--color-cream-dark);
   opacity: 0.7;
   cursor: not-allowed;
+}
+
+.pixel-input--literal {
+  font-family: var(--font-ui);
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .pixel-card {
@@ -562,12 +569,12 @@ body {
 }
 
 .chat-panel__header {
-  padding: 16px 24px;
+  padding: 16px 18px 16px 16px;
   background: white;
   border-bottom: 4px solid black;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   flex-shrink: 0;
 }
 
@@ -726,6 +733,18 @@ body {
   text-underline-offset: 3px;
 }
 
+.ai-bubble--success {
+  background: var(--color-green-light);
+}
+
+.ai-bubble--success::before {
+  background: var(--color-green-light);
+}
+
+.ai-bubble--success strong {
+  color: var(--color-green);
+}
+
 /* ── Chat Messages ── */
 .chat-messages {
   display: flex;
@@ -815,6 +834,10 @@ body {
   border-left: 8px solid var(--color-orange);
 }
 
+.risk-card--success {
+  border-left: 8px solid var(--color-green);
+}
+
 .risk-card__header {
   display: flex;
   align-items: center;
@@ -831,6 +854,10 @@ body {
   background: var(--color-orange-light);
 }
 
+.risk-card--success .risk-card__header {
+  background: var(--color-green-light);
+}
+
 .risk-card__badge {
   font-family: var(--font-pixel);
   font-size: 16px;
@@ -843,6 +870,7 @@ body {
 
 .risk-card__badge--high { background: var(--color-red); }
 .risk-card__badge--medium { background: var(--color-orange); }
+.risk-card__badge--success { background: var(--color-green); }
 
 .risk-card__body {
   padding: 14px 16px;
@@ -1077,6 +1105,92 @@ body {
   padding: 16px;
   background: var(--color-cream-dark);
   border-top: 4px solid black;
+  flex-shrink: 0;
+}
+
+.chat-input-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.model-select {
+  position: relative;
+  width: 100%;
+}
+
+.model-select__trigger {
+  width: 100%;
+  border: 4px solid black;
+  background: white;
+  color: var(--color-ink);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  font-family: var(--font-pixel);
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.model-select__trigger:hover {
+  background: var(--color-paper);
+}
+
+.model-select__label {
+  color: var(--color-ink-muted);
+}
+
+.model-select__value {
+  flex: 1;
+  color: var(--color-ink);
+}
+
+.model-select__menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  border: 4px solid black;
+  background: #242424;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 1);
+  overflow: hidden;
+  z-index: 20;
+}
+
+.model-select--bottom .model-select__menu {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+
+.model-select__option {
+  width: 100%;
+  border: none;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: #f8f8f8;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  font-family: var(--font-pixel);
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.model-select__option:last-child {
+  border-bottom: none;
+}
+
+.model-select__option:hover,
+.model-select__option--active {
+  background: #111111;
+}
+
+.model-select__check {
   flex-shrink: 0;
 }
 
@@ -1398,6 +1512,29 @@ body {
   text-align: center;
   line-height: 1.8;
   max-width: 240px;
+}
+
+.upload-area__model {
+  width: min(100%, 300px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.upload-area__model-label {
+  font-family: var(--font-pixel);
+  font-size: 12px;
+  color: var(--color-ink);
+  text-align: left;
+}
+
+.upload-area__model-hint {
+  margin: 0;
+  font-family: var(--font-pixel);
+  font-size: 11px;
+  color: var(--color-ink-muted);
+  line-height: 1.6;
+  text-align: left;
 }
 
 .upload-area__actions {

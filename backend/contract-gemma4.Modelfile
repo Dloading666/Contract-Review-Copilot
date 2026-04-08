@@ -1,0 +1,7 @@
+FROM C:/Users/吴少然/.ollama/models/blobs/sha256-cbdeb708e2000122364bf1a63b8aa009504201863def6fb69da784681866a6c6
+
+SYSTEM """你是一个专业的租房合同审查助手，擅长识别合同中的不公平条款和法律风险。请用中文回答。"""
+
+PARAMETER temperature 0.1
+PARAMETER top_p 0.95
+PARAMETER num_ctx 2048

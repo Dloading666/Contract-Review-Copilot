@@ -23,7 +23,11 @@ async def _run_sync(func: Any, *args: Any) -> Any:
 
 
 async def entity_extraction_node(state: ReviewState) -> dict:
-    entities = await _run_sync(extract_entities, state["contract_text"])
+    entities = await _run_sync(
+        extract_entities,
+        state["contract_text"],
+        state.get("model_key"),
+    )
     return {"extracted_entities": entities}
 
 
@@ -32,6 +36,7 @@ async def routing_node(state: ReviewState) -> dict:
         decide_routing,
         state["contract_text"],
         state.get("extracted_entities") or {},
+        state.get("model_key"),
     )
     return {"routing_decision": routing}
 
@@ -42,6 +47,7 @@ async def logic_review_node(state: ReviewState) -> dict:
         state["contract_text"],
         state.get("routing_decision") or {},
         state.get("extracted_entities") or {},
+        state.get("model_key"),
     )
     return {"logic_review_results": issues}
 
@@ -59,6 +65,7 @@ async def aggregation_node(state: ReviewState) -> dict:
         generate_report,
         state["contract_text"],
         state.get("logic_review_results") or [],
+        state.get("model_key"),
     )
     return {"final_report": paragraphs}
 
@@ -90,6 +97,7 @@ def get_aggregation_graph():
 async def run_review_stream(
     contract_text: str,
     session_id: str,
+    model_key: str | None = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Main entry point. Runs the full pipeline and yields SSE-formatted events.
@@ -115,6 +123,7 @@ async def run_review_stream(
     state_snapshot: ReviewState = {
         "contract_text": contract_text,
         "session_id": session_id,
+        "model_key": model_key,
     }
 
     async for update in graph.astream(state_snapshot, stream_mode="updates"):
@@ -171,6 +180,7 @@ async def run_aggregation_stream(
     contract_text: str,
     session_id: str,
     issues: list[dict],
+    model_key: str | None = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Phase 2: Run aggregation only (called by confirm endpoint).
@@ -182,6 +192,7 @@ async def run_aggregation_stream(
     state_snapshot: ReviewState = {
         "contract_text": contract_text,
         "session_id": session_id,
+        "model_key": model_key,
         "logic_review_results": issues,
     }
 

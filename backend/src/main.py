@@ -6,14 +6,18 @@ import asyncio
 import json
 import re
 from contextlib import asynccontextmanager
+from io import BytesIO
 from typing import AsyncGenerator, Optional
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 
 from .cache import build_cache_key, close_redis_client, delete_json, get_json, get_ttl_seconds, set_json
-from .schemas import ContractReviewRequest, ConfirmRequest, HealthResponse
+from .llm_client import DEFAULT_MODEL_KEY, available_models, create_chat_completion, is_supported_model_key, resolve_model
+from .report_export import build_report_docx, build_report_download_name
+from .schemas import ContractReviewRequest, ConfirmRequest, ExportReportRequest, HealthResponse
 from .graph.review_graph import run_review_stream, run_aggregation_stream
 from . import auth
 
@@ -190,6 +194,64 @@ async def health():
     return HealthResponse(status="ok")
 
 
+@app.get("/api/models")
+async def list_models():
+    """Return the chat models available to the frontend."""
+    return {
+        "models": available_models(),
+        "default_model": DEFAULT_MODEL_KEY,
+    }
+
+
+@app.post("/api/chat")
+async def chat(body: dict, authorization: Optional[str] = Header(None)):
+    """Answer user questions about the current review using the selected model."""
+    require_current_user(authorization)
+
+    message = body.get("message", "").strip()
+    model_key = (body.get("model") or DEFAULT_MODEL_KEY).strip()
+    contract_text = body.get("contract_text", "")
+    risk_summary = body.get("risk_summary", "")
+
+    if not message:
+        return JSONResponse(status_code=400, content={"error": "消息不能为空"})
+    if not is_supported_model_key(model_key):
+        return JSONResponse(status_code=400, content={"error": "不支持的模型"})
+
+    context_sections = []
+    if contract_text:
+        context_sections.append(f"合同原文（节选）：\n{contract_text[:3000]}")
+    if risk_summary:
+        context_sections.append(f"已识别风险条款：\n{risk_summary[:2000]}")
+
+    system_prompt = (
+        "你是一个专业的合同审查助手。请基于合同原文和已识别风险回答用户问题，"
+        "结论要简洁直接，优先指出风险、影响和可执行建议。"
+    )
+    if context_sections:
+        system_prompt = f"{system_prompt}\n\n" + "\n\n".join(context_sections)
+
+    try:
+        resolved = resolve_model(model_key)
+        response = create_chat_completion(
+            model=model_key,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message},
+            ],
+            temperature=0.3,
+            max_tokens=1024,
+            timeout=30.0,
+        )
+        reply = (response.choices[0].message.content or "").strip()
+        return {
+            "reply": reply,
+            "model": getattr(response, "model", resolved.model_id) or resolved.model_id,
+        }
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
 @app.post("/api/autofix")
 async def autofix_clause(body: dict, authorization: Optional[str] = Header(None)):
     """Generate a suggested clause revision for a problematic clause."""
@@ -205,6 +267,30 @@ async def autofix_clause(body: dict, authorization: Optional[str] = Header(None)
     return {"suggestion": fix}
 
 
+@app.post("/api/review/export-docx")
+async def export_review_report_docx(
+    body: ExportReportRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Export the generated report as a Word document."""
+    require_current_user(authorization)
+
+    paragraphs = [paragraph for paragraph in body.report_paragraphs if paragraph and paragraph.strip()]
+    if not paragraphs:
+        raise HTTPException(status_code=400, detail="报告内容不能为空")
+
+    docx_bytes = build_report_docx(paragraphs, body.filename)
+    download_name = build_report_download_name(body.filename)
+
+    return StreamingResponse(
+        BytesIO(docx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(download_name)}",
+        },
+    )
+
+
 @app.post("/api/review")
 async def create_review(
     body: ContractReviewRequest,
@@ -214,12 +300,16 @@ async def create_review(
     user = require_current_user(authorization)
 
     session_id = body.session_id or f"session-{id(body)}"
+    model_key = (body.model or DEFAULT_MODEL_KEY).strip() or DEFAULT_MODEL_KEY
+    if not is_supported_model_key(model_key):
+        return JSONResponse(status_code=400, content={"error": "不支持的模型"})
 
     async def event_generator() -> AsyncGenerator[bytes, None]:
         try:
             async for event in run_review_stream(
                 contract_text=body.contract_text,
                 session_id=session_id,
+                model_key=model_key,
             ):
                 event_type = event.get("event", "message")
                 event_data = event.get("data", event)
@@ -231,6 +321,7 @@ async def create_review(
                         "owner": user.get("email") or user.get("id"),
                         "contract_text": body.contract_text,
                         "issues": breakpoint_payload.get("issues", []),
+                        "model_key": model_key,
                     })
                     return
 
@@ -278,6 +369,7 @@ async def confirm_breakpoint(
                 contract_text=session_data["contract_text"],
                 session_id=session_id,
                 issues=session_data["issues"],
+                model_key=session_data.get("model_key"),
             ):
                 event_type = event.get("event", "message")
                 event_data = event.get("data", event)

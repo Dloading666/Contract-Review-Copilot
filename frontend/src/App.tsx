@@ -1,15 +1,23 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RoutingDecision } from './types'
 import { ChatPanel } from './components/ChatPanel'
 import { DocPanel } from './components/DocPanel'
 import { SideNav } from './components/SideNav'
 import { useAuth } from './contexts/AuthContext'
 import { useStreamingReview } from './hooks/useStreamingReview'
+import { loadPersistedReviewHistory, savePersistedReviewHistory } from './lib/reviewHistory'
+import { exportReportAsWord } from './lib/reportExport'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { SettingsPage } from './pages/SettingsPage'
 
 export type ReviewStatus = 'idle' | 'uploading' | 'reviewing' | 'breakpoint' | 'complete' | 'error'
+export type ModelKey = 'glm-5' | 'minimax' | 'qwen' | 'kimi' | 'gemma4'
+
+export interface ModelOption {
+  key: ModelKey
+  label: string
+}
 
 export interface ThinkingStep {
   id: string
@@ -60,6 +68,7 @@ export interface ReviewState {
 
 export interface ReviewHistoryEntry {
   sessionId: string
+  status: ReviewStatus
   filename: string
   date: string
   contractText: string
@@ -67,10 +76,32 @@ export interface ReviewHistoryEntry {
   routingDecision: RoutingDecision | null
   riskCards: RiskCard[]
   finalReport: string[]
+  breakpointMessage: string | null
+  errorMessage: string | null
   chatMessages: ChatMessage[]
 }
 
-const HISTORY_STORAGE_KEY = 'reviewHistory'
+const DEFAULT_MODEL_KEY: ModelKey = 'gemma4'
+const MODEL_STORAGE_PREFIX = 'chatModel:'
+export const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
+  { key: 'glm-5', label: 'GLM-5' },
+  { key: 'minimax', label: 'MiniMax M2.5' },
+  { key: 'qwen', label: 'Qwen 3.5 Plus' },
+  { key: 'kimi', label: 'Kimi K2.5' },
+  { key: 'gemma4', label: 'Gemma4（本地免费）' },
+]
+
+function isModelKey(value: unknown): value is ModelKey {
+  return DEFAULT_MODEL_OPTIONS.some((option) => option.key === value)
+}
+
+function getChatModelStorageKey(ownerKey?: string | null) {
+  return `${MODEL_STORAGE_PREFIX}${ownerKey ?? 'anonymous'}`
+}
+
+function createSessionId() {
+  return `session-${Date.now()}`
+}
 
 function createDefaultChatMessages(): ChatMessage[] {
   return [
@@ -183,7 +214,7 @@ function buildThinkingSteps(phase: string, extracted: ExtractedInfo | null, rout
     statuses.retrieve = 'done'
   }
 
-  if (phase === 'complete' || phase === 'aggregation') {
+  if (phase === 'complete' || phase === 'aggregation' || phase === 'breakpoint') {
     statuses.review = 'done'
   } else if (phase === 'started' || phase === 'extraction') {
     statuses.extract = 'active'
@@ -201,83 +232,75 @@ function buildThinkingSteps(phase: string, extracted: ExtractedInfo | null, rout
   ]
 }
 
-function summarizeRisks(riskCards: RiskCard[]) {
-  if (riskCards.length === 0) {
-    return '当前没有识别到明显高风险条款。'
-  }
-
-  const highRiskCount = riskCards.filter((card) => card.level === 'high').length
-  const lead = riskCards[0]
-  return `本次审查共识别 ${riskCards.length} 条风险，其中 ${highRiskCount} 条为高风险，最先需要处理的是“${lead.title}”。`
+function hasMeaningfulChat(chatMessages: ChatMessage[]) {
+  return chatMessages.some((message) => message.role === 'user') || chatMessages.length > 1
 }
 
-function findRiskByKeyword(riskCards: RiskCard[], keyword: string) {
-  return riskCards.find((card) =>
-    [card.title, card.clause, card.issue, card.suggestion].some((value) => value.includes(keyword)),
+function shouldSaveReviewToHistory(review: ReviewState) {
+  return Boolean(
+    review.contractText.trim().length > 0
+    || review.filename.trim().length > 0
+    || review.extractedInfo
+    || review.routingDecision
+    || review.riskCards.length > 0
+    || review.finalReport.length > 0
+    || review.breakpointMessage
+    || review.errorMessage
+    || hasMeaningfulChat(review.chatMessages),
   )
 }
 
-function buildAssistantReply(message: string, review: ReviewState) {
-  const normalized = message.trim().toLowerCase()
-
-  if (!review.contractText) {
-    return '先上传一份合同文本，我就可以结合条款内容给你总结风险和修改建议。'
+function createHistoryEntry(review: ReviewState): ReviewHistoryEntry {
+  return {
+    sessionId: review.sessionId,
+    status: review.status,
+    filename: review.filename,
+    date: new Date().toLocaleString('zh-CN'),
+    contractText: review.contractText,
+    extractedInfo: review.extractedInfo,
+    routingDecision: review.routingDecision,
+    riskCards: review.riskCards,
+    finalReport: review.finalReport,
+    breakpointMessage: review.breakpointMessage,
+    errorMessage: review.errorMessage,
+    chatMessages: review.chatMessages,
   }
-
-  if (review.status === 'reviewing') {
-    return '合同还在审查中，我已经开始提取关键信息。等流式结果出来后，我可以给你更准确的结论。'
-  }
-
-  if (normalized.includes('总结') || normalized.includes('概括') || normalized.includes('结论')) {
-    return `${summarizeRisks(review.riskCards)}${review.finalReport[0] ? ` 报告开头是：${review.finalReport[0]}` : ''}`
-  }
-
-  if (normalized.includes('押金')) {
-    const match = findRiskByKeyword(review.riskCards, '押金')
-    return match
-      ? `押金相关风险在“${match.title}”。问题是：${match.issue}。建议优先按这条修改：${match.suggestion}`
-      : `当前提取到的押金金额是 ${review.extractedInfo?.deposit ?? 0} 元，暂时没有单独命中的押金风险卡。`
-  }
-
-  if (normalized.includes('违约金') || normalized.includes('解约')) {
-    const match = findRiskByKeyword(review.riskCards, '违约')
-      ?? findRiskByKeyword(review.riskCards, '解约')
-    return match
-      ? `违约责任里最值得关注的是“${match.title}”。核心问题：${match.issue}。建议：${match.suggestion}`
-      : '我还没有匹配到明确的违约金风险卡，可以结合最终报告再核对一次相关条款。'
-  }
-
-  if (normalized.includes('怎么改') || normalized.includes('修改') || normalized.includes('建议')) {
-    if (review.riskCards.length === 0) {
-      return '目前没有识别到需要优先修改的条款。如果你愿意，我可以继续根据最终报告帮你逐条解释。'
-    }
-
-    return review.riskCards
-      .slice(0, 3)
-      .map((card, index) => `${index + 1}. ${card.title}：${card.suggestion}`)
-      .join('\n')
-  }
-
-  if (normalized.includes('谁') || normalized.includes('甲方') || normalized.includes('乙方')) {
-    return `当前识别到的合同主体是：甲方/出租方“${review.extractedInfo?.lessor ?? '未知'}”，乙方/承租方“${review.extractedInfo?.lessee ?? '未知'}”。`
-  }
-
-  if (normalized.includes('导出') || normalized.includes('报告')) {
-    return review.finalReport.length > 0
-      ? '报告已经生成完成，可以直接点击顶部“导出报告”下载当前避坑指南。'
-      : '完整报告还没有生成完。等审查完成后，我会提示你导出。'
-  }
-
-  return '我可以继续帮你做三件事：概括风险结论、解释某一条风险卡、或者把修改建议整理成可执行清单。你也可以直接问我“押金风险在哪”或“这份合同怎么改”。'
 }
 
-function loadHistoryEntries(): ReviewHistoryEntry[] {
+function normalizeHistoryStatus(status: unknown): ReviewStatus {
+  if (
+    status === 'idle'
+    || status === 'uploading'
+    || status === 'reviewing'
+    || status === 'breakpoint'
+    || status === 'complete'
+    || status === 'error'
+  ) {
+    return status
+  }
+
+  return 'complete'
+}
+
+function getRestoredHistoryStatus(entry: ReviewHistoryEntry): ReviewStatus {
+  if (entry.status === 'breakpoint' && entry.breakpointMessage) {
+    return 'breakpoint'
+  }
+
+  if (entry.status === 'error' && entry.errorMessage) {
+    return 'error'
+  }
+
+  return 'complete'
+}
+
+function loadHistoryEntries(ownerKey?: string | null): ReviewHistoryEntry[] {
   try {
-    const entries = JSON.parse(sessionStorage.getItem(HISTORY_STORAGE_KEY) || '[]')
-    if (!Array.isArray(entries)) return []
+    const entries = loadPersistedReviewHistory<ReviewHistoryEntry>(ownerKey)
 
     return entries.map((entry) => ({
       sessionId: entry.sessionId,
+      status: normalizeHistoryStatus(entry.status),
       filename: entry.filename || '未命名合同',
       date: entry.date || '',
       contractText: entry.contractText || '',
@@ -285,6 +308,8 @@ function loadHistoryEntries(): ReviewHistoryEntry[] {
       routingDecision: entry.routingDecision ?? null,
       riskCards: Array.isArray(entry.riskCards) ? entry.riskCards.map((card: any) => normalizeRiskCard(card)) : [],
       finalReport: Array.isArray(entry.finalReport) ? entry.finalReport : [],
+      breakpointMessage: typeof entry.breakpointMessage === 'string' ? entry.breakpointMessage : null,
+      errorMessage: typeof entry.errorMessage === 'string' ? entry.errorMessage : null,
       chatMessages: Array.isArray(entry.chatMessages) && entry.chatMessages.length > 0
         ? entry.chatMessages
         : createDefaultChatMessages(),
@@ -294,29 +319,138 @@ function loadHistoryEntries(): ReviewHistoryEntry[] {
   }
 }
 
-function saveHistoryEntry(entry: ReviewHistoryEntry) {
-  const history = loadHistoryEntries().filter((item) => item.sessionId !== entry.sessionId)
+function saveHistoryEntry(entry: ReviewHistoryEntry, ownerKey?: string | null) {
+  const history = loadHistoryEntries(ownerKey).filter((item) => item.sessionId !== entry.sessionId)
   history.unshift(entry)
   if (history.length > 20) {
     history.length = 20
   }
-  sessionStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history))
+  savePersistedReviewHistory(history, ownerKey)
+}
+
+function parseModelOptions(payload: unknown): ModelOption[] {
+  if (!Array.isArray(payload)) {
+    return DEFAULT_MODEL_OPTIONS
+  }
+
+  const parsed = payload
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const key = (item as { key?: unknown }).key
+      const label = (item as { label?: unknown }).label
+      if (!isModelKey(key) || typeof label !== 'string' || !label.trim()) {
+        return null
+      }
+      return { key, label }
+    })
+    .filter((item): item is ModelOption => item !== null)
+
+  return parsed.length > 0 ? parsed : DEFAULT_MODEL_OPTIONS
 }
 
 export default function App() {
   const { isAuthenticated, login, logout, user, token } = useAuth()
+  const historyOwnerKey = user?.email?.trim().toLowerCase() ?? null
   const [authView, setAuthView] = useState<'login' | 'register'>('login')
   const [showSettings, setShowSettings] = useState(false)
-  const [review, setReview] = useState<ReviewState>(() => createInitialState(`session-${Date.now()}`))
+  const [isExportingReport, setIsExportingReport] = useState(false)
+  const [review, setReview] = useState<ReviewState>(() => createInitialState(createSessionId()))
   const [streamContractText, setStreamContractText] = useState('')
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS)
+  const [selectedModel, setSelectedModel] = useState<ModelKey>(DEFAULT_MODEL_KEY)
+  const previousHistoryOwnerKeyRef = useRef<string | null>(historyOwnerKey)
 
   const hook = useStreamingReview(review.sessionId, streamContractText, {
     enabled: review.status === 'reviewing',
+    model: selectedModel,
     token,
   })
 
+  const persistCurrentReview = useCallback((currentReview: ReviewState) => {
+    if (!historyOwnerKey || !shouldSaveReviewToHistory(currentReview)) return
+    saveHistoryEntry(createHistoryEntry(currentReview), historyOwnerKey)
+  }, [historyOwnerKey])
+
+  useEffect(() => {
+    if (previousHistoryOwnerKeyRef.current === historyOwnerKey) {
+      return
+    }
+
+    previousHistoryOwnerKeyRef.current = historyOwnerKey
+    setShowSettings(false)
+    setStreamContractText('')
+    setReview(createInitialState(createSessionId()))
+
+    try {
+      sessionStorage.removeItem('lastReport')
+    } catch {
+      // Ignore storage errors.
+    }
+  }, [historyOwnerKey])
+
+  useEffect(() => {
+    if (!historyOwnerKey) {
+      setSelectedModel(DEFAULT_MODEL_KEY)
+      return
+    }
+
+    try {
+      const stored = localStorage.getItem(getChatModelStorageKey(historyOwnerKey))
+      setSelectedModel(isModelKey(stored) ? stored : DEFAULT_MODEL_KEY)
+    } catch {
+      setSelectedModel(DEFAULT_MODEL_KEY)
+    }
+  }, [historyOwnerKey])
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setAvailableModels(DEFAULT_MODEL_OPTIONS)
+      return
+    }
+
+    let cancelled = false
+
+    const loadModels = async () => {
+      try {
+        const response = await fetch('/api/models')
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`)
+        }
+        const payload = await response.json() as { models?: unknown }
+        if (!cancelled) {
+          setAvailableModels(parseModelOptions(payload.models))
+        }
+      } catch {
+        if (!cancelled) {
+          setAvailableModels(DEFAULT_MODEL_OPTIONS)
+        }
+      }
+    }
+
+    void loadModels()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isAuthenticated])
+
+  useEffect(() => {
+    if (!availableModels.some((option) => option.key === selectedModel)) {
+      setSelectedModel(DEFAULT_MODEL_KEY)
+    }
+  }, [availableModels, selectedModel])
+
+  useEffect(() => {
+    if (!historyOwnerKey) return
+    try {
+      localStorage.setItem(getChatModelStorageKey(historyOwnerKey), selectedModel)
+    } catch {
+      // Ignore storage errors.
+    }
+  }, [historyOwnerKey, selectedModel])
+
   const handleFileUpload = useCallback((text: string, filename: string) => {
-    const nextSessionId = `session-${Date.now()}`
+    const nextSessionId = createSessionId()
     setStreamContractText(text)
     setReview({
       ...createInitialState(nextSessionId),
@@ -331,54 +465,120 @@ export default function App() {
     hook.confirm()
   }, [hook])
 
+  const handleNewConversation = useCallback(() => {
+    persistCurrentReview(review)
+    setStreamContractText('')
+    setReview(createInitialState(createSessionId()))
+  }, [persistCurrentReview, review])
+
   const handleReset = useCallback(() => {
-    const newSessionId = `session-${Date.now()}`
+    const newSessionId = createSessionId()
     setStreamContractText('')
     setReview(createInitialState(newSessionId))
   }, [])
 
   const handleExportReport = useCallback(() => {
-    if (review.finalReport.length === 0) return
+    if (review.finalReport.length === 0 || isExportingReport) return
 
-    const reportText = review.finalReport.join('\n\n')
-    sessionStorage.setItem('lastReport', reportText)
-
-    const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `避坑指南_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '-')}.txt`
-    anchor.click()
-    URL.revokeObjectURL(url)
-  }, [review.finalReport])
-
-  const handleSendMessage = useCallback((message: string) => {
-    setReview((prev) => {
-      const userMessage: ChatMessage = {
-        id: `user-${Date.now()}`,
-        role: 'user',
-        content: message,
-      }
-      const assistantMessage: ChatMessage = {
-        id: `assistant-${Date.now() + 1}`,
-        role: 'assistant',
-        content: buildAssistantReply(message, prev),
-      }
-      return {
-        ...prev,
-        chatMessages: [...prev.chatMessages, userMessage, assistantMessage],
-      }
+    setIsExportingReport(true)
+    exportReportAsWord({
+      filename: review.filename,
+      reportParagraphs: review.finalReport,
+      token,
     })
-  }, [])
+      .catch(() => {
+        alert('导出 Word 报告失败，请稍后重试。')
+      })
+      .finally(() => {
+        setIsExportingReport(false)
+      })
+  }, [isExportingReport, review.filename, review.finalReport, token])
+
+  const handleSendMessage = useCallback(async (message: string, model?: string) => {
+    const normalizedMessage = message.trim()
+    if (!normalizedMessage) return
+
+    const activeModel = isModelKey(model) ? model : selectedModel
+    const userMsgId = `user-${Date.now()}`
+    const assistantMsgId = `assistant-${Date.now() + 1}`
+
+    setReview((prev) => ({
+      ...prev,
+      chatMessages: [
+        ...prev.chatMessages,
+        { id: userMsgId, role: 'user', content: normalizedMessage },
+        { id: assistantMsgId, role: 'assistant', content: '思考中...' },
+      ],
+    }))
+
+    try {
+      const riskSummary = review.riskCards
+        .map((card) => `[${card.level}] ${card.title}：${card.issue}`)
+        .join('\n')
+
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          message: normalizedMessage,
+          model: activeModel,
+          contract_text: review.contractText,
+          risk_summary: riskSummary,
+        }),
+      })
+
+      let payload: { reply?: unknown; error?: unknown; detail?: unknown } = {}
+      try {
+        payload = await response.json() as { reply?: unknown; error?: unknown; detail?: unknown }
+      } catch {
+        payload = {}
+      }
+
+      const reply = typeof payload.reply === 'string'
+        ? payload.reply
+        : typeof payload.error === 'string'
+          ? payload.error
+          : typeof payload.detail === 'string'
+            ? payload.detail
+            : '获取回复失败'
+
+      setReview((prev) => ({
+        ...prev,
+        chatMessages: prev.chatMessages.map((chatMessage) => (
+          chatMessage.id === assistantMsgId
+            ? { ...chatMessage, content: reply }
+            : chatMessage
+        )),
+      }))
+    } catch {
+      setReview((prev) => ({
+        ...prev,
+        chatMessages: prev.chatMessages.map((chatMessage) => (
+          chatMessage.id === assistantMsgId
+            ? { ...chatMessage, content: '网络错误，请重试。' }
+            : chatMessage
+        )),
+      }))
+    }
+  }, [review.contractText, review.riskCards, selectedModel, token])
 
   const handleSelectHistorySession = useCallback((sessionId: string) => {
-    const entry = loadHistoryEntries().find((item) => item.sessionId === sessionId)
+    const entry = loadHistoryEntries(historyOwnerKey).find((item) => item.sessionId === sessionId)
     if (!entry) return
+
+    if (review.sessionId !== sessionId) {
+      persistCurrentReview(review)
+    }
+
+    const restoredStatus = getRestoredHistoryStatus(entry)
 
     setStreamContractText('')
     setReview({
       ...createInitialState(entry.sessionId),
-      status: 'complete',
+      status: restoredStatus,
       sessionId: entry.sessionId,
       contractText: entry.contractText,
       filename: entry.filename,
@@ -386,13 +586,15 @@ export default function App() {
       routingDecision: entry.routingDecision,
       riskCards: entry.riskCards,
       finalReport: entry.finalReport,
+      breakpointMessage: restoredStatus === 'breakpoint' ? entry.breakpointMessage : null,
+      errorMessage: restoredStatus === 'error' ? entry.errorMessage : null,
       chatMessages: entry.chatMessages?.length ? entry.chatMessages : createDefaultChatMessages(),
-      thinkingSteps: buildThinkingSteps('complete', entry.extractedInfo, entry.routingDecision),
+      thinkingSteps: buildThinkingSteps(restoredStatus, entry.extractedInfo, entry.routingDecision),
     })
-  }, [])
+  }, [historyOwnerKey, persistCurrentReview, review])
 
   useEffect(() => {
-    if (!streamContractText && hook.phase === 'idle' && !hook.error) {
+    if (!streamContractText) {
       return
     }
 
@@ -434,20 +636,9 @@ export default function App() {
   ])
 
   useEffect(() => {
-    if (hook.phase !== 'complete' || !review.filename) return
-
-    saveHistoryEntry({
-      sessionId: review.sessionId,
-      filename: review.filename,
-      date: new Date().toLocaleString('zh-CN'),
-      contractText: review.contractText,
-      extractedInfo: review.extractedInfo,
-      routingDecision: review.routingDecision,
-      riskCards: review.riskCards,
-      finalReport: review.finalReport,
-      chatMessages: review.chatMessages,
-    })
-  }, [hook.phase, review])
+    if (hook.phase !== 'complete' || !review.filename || !historyOwnerKey) return
+    saveHistoryEntry(createHistoryEntry(review), historyOwnerKey)
+  }, [historyOwnerKey, hook.phase, review])
 
   if (!isAuthenticated) {
     if (authView === 'register') {
@@ -473,11 +664,23 @@ export default function App() {
           <ChatPanel
             review={review}
             authToken={token}
+            selectedModel={selectedModel}
+            availableModels={availableModels}
+            onModelChange={setSelectedModel}
+            onExportReport={handleExportReport}
+            isExportingReport={isExportingReport}
             onBreakpointConfirm={handleBreakpointConfirm}
             onReset={handleReset}
             onSendMessage={handleSendMessage}
           />
-          <DocPanel review={review} onFileUpload={handleFileUpload} onExportReport={handleExportReport} />
+          <DocPanel
+            review={review}
+            selectedModel={selectedModel}
+            availableModels={availableModels}
+            onModelChange={setSelectedModel}
+            onFileUpload={handleFileUpload}
+            onNewConversation={handleNewConversation}
+          />
         </main>
       </div>
       {review.status === 'reviewing' && (

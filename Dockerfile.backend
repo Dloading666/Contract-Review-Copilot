@@ -4,13 +4,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install uv
-RUN pip install --upgrade pip && pip install --no-cache-dir uv
-
-# Copy application source before install so editable packaging works in Docker
+# Copy application source before install so packaging works in Docker
 COPY pyproject.toml .
 COPY src/ ./src/
-RUN uv pip install --system --no-cache -e .
+
+# Use pip's cache mount so transient network issues don't force a full re-download
+# on the next build retry.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip \
+    && pip install -e .
 
 # .env is provided via env_file in docker-compose
 

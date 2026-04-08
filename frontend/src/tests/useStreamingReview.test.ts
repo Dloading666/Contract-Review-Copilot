@@ -118,6 +118,42 @@ describe('useStreamingReview', () => {
     })
   })
 
+  it('resets stale streaming state after the contract text is cleared', async () => {
+    const mockResponse = new Response(createMockStream([
+      `event: final_report\ndata: ${JSON.stringify({ paragraph: '第一段' })}\n\n`,
+      'event: review_complete\ndata: {}\n\n',
+    ]))
+
+    mockFetch.mockResolvedValue(mockResponse)
+
+    const { result, rerender } = renderHook(
+      ({ sessionId, contractText }) => useStreamingReview(sessionId, contractText),
+      {
+        initialProps: {
+          sessionId: 'test-session',
+          contractText: '合同文本',
+        },
+      },
+    )
+
+    await waitFor(() => {
+      expect(result.current.phase).toBe('complete')
+      expect(result.current.reportParagraphs).toEqual(['第一段'])
+    })
+
+    rerender({
+      sessionId: 'next-session',
+      contractText: '',
+    })
+
+    await waitFor(() => {
+      expect(result.current.phase).toBe('idle')
+      expect(result.current.reportParagraphs).toEqual([])
+      expect(result.current.issues).toEqual([])
+      expect(result.current.breakpointData).toBeNull()
+    })
+  })
+
   it('sends authorization headers when a token is provided', async () => {
     mockFetch.mockResolvedValue(new Response(createMockStream([])))
 
@@ -133,6 +169,23 @@ describe('useStreamingReview', () => {
         headers: expect.objectContaining({
           Authorization: 'Bearer jwt-token',
         }),
+      }),
+    )
+  })
+
+  it('includes the selected model when starting a review stream', async () => {
+    mockFetch.mockResolvedValue(new Response(createMockStream([])))
+
+    renderHook(() => useStreamingReview('test-session', '合同文本', { model: 'gemma4' }))
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled()
+    })
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/api/review',
+      expect.objectContaining({
+        body: expect.stringContaining('"model":"gemma4"'),
       }),
     )
   })

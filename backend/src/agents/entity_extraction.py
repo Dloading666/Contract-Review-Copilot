@@ -1,6 +1,6 @@
 """
-Entity Extraction Agent — ZhipuAI GLM-5 Implementation
-Uses LLM to extract key variables from contract text.
+Entity Extraction Agent.
+Uses the shared LLM router with Redis-backed response caching.
 """
 import os
 import json
@@ -9,10 +9,16 @@ from types import SimpleNamespace
 from openai import OpenAI
 
 from ..cache import build_cache_key, get_json, get_ttl_seconds, set_json
+from ..llm_client import (
+    FALLBACK_MODEL_KEY,
+    check_model_status,
+    create_chat_completion as _core_create_chat_completion,
+    get_client_for_model,
+    get_primary_model_key,
+)
 
 PRIMARY_BASE_URL = "https://coding.dashscope.aliyuncs.com/v1"
-FALLBACK_BASE_URL = "https://open.bigmodel.cn/api/paas/v4/"
-FALLBACK_MODEL = "GLM-4.7-Flash"
+FALLBACK_MODEL = FALLBACK_MODEL_KEY
 
 
 def get_llm_client(api_key: str | None = None, base_url: str | None = None) -> OpenAI:
@@ -24,14 +30,8 @@ def get_llm_client(api_key: str | None = None, base_url: str | None = None) -> O
 
 
 def get_fallback_llm_client() -> OpenAI:
-    fallback_api_key = os.getenv("LLM_FALLBACK_API_KEY", "").strip()
-    if not fallback_api_key:
-        raise RuntimeError("LLM_FALLBACK_API_KEY is not configured.")
-
-    return get_llm_client(
-        api_key=fallback_api_key,
-        base_url=os.getenv("LLM_FALLBACK_BASE_URL", FALLBACK_BASE_URL),
-    )
+    client, _ = get_client_for_model(FALLBACK_MODEL_KEY)
+    return client
 
 
 def _chat_completion_cache_key(model: str, request_kwargs: dict) -> str:
@@ -81,38 +81,51 @@ def _store_cached_response(cache_key: str, response, fallback_model: str) -> Non
 
 def create_chat_completion(**kwargs):
     """
-    Call the primary chat model first and automatically fail over to GLM-4.7-Flash
-    when the primary request raises an exception.
+    统一的 LLM 调用入口，复用共享路由并增加缓存。
     """
-    primary_model = kwargs.pop("model", os.getenv("OPENAI_MODEL", "glm-5"))
-    request_kwargs = {**kwargs, "model": primary_model}
-    cache_key = _chat_completion_cache_key(primary_model, request_kwargs)
-    cached_response = get_json(cache_key)
-    if isinstance(cached_response, dict) and cached_response.get("content"):
-        return _cached_chat_completion(
-            cached_response["content"],
-            cached_response.get("model", primary_model),
+    import hashlib
+    import json as json_module
+
+    primary_model = kwargs.get("model", get_primary_model_key())
+
+    # 构建缓存 key
+    cache_data = {
+        "model": primary_model,
+        "messages": kwargs.get("messages", []),
+        "temperature": kwargs.get("temperature", 0.1),
+        "max_tokens": kwargs.get("max_tokens", 1024),
+    }
+    cache_key = build_cache_key("llm", {
+        "model": primary_model,
+        "hash": hashlib.md5(json_module.dumps(cache_data, ensure_ascii=False).encode()).hexdigest()
+    })
+
+    # 检查缓存
+    cached = get_json(cache_key)
+    if cached and cached.get("content"):
+        print(f"[LLM] 使用缓存: {primary_model}", flush=True)
+        return _cached_chat_completion(cached["content"], cached.get("model", primary_model))
+
+    # 调用核心 LLM 实现（来自 llm_client）
+    response = _dual_llm_chat_completion(**kwargs)
+
+    # 存储缓存
+    content = getattr(response.choices[0].message, "content", None)
+    if content:
+        set_json(
+            cache_key,
+            {"content": content, "model": getattr(response, "model", primary_model)},
+            get_ttl_seconds("llm"),
         )
 
-    try:
-        response = get_llm_client().chat.completions.create(**request_kwargs)
-        _store_cached_response(cache_key, response, primary_model)
-        return response
-    except Exception as primary_error:
-        fallback_model = os.getenv("LLM_FALLBACK_MODEL", FALLBACK_MODEL)
-        fallback_kwargs = {**kwargs, "model": fallback_model}
-        print(
-            f"[LLM] Primary model '{primary_model}' failed: {primary_error}. "
-            f"Falling back to '{fallback_model}'.",
-            flush=True,
-        )
-        try:
-            response = get_fallback_llm_client().chat.completions.create(**fallback_kwargs)
-            _store_cached_response(cache_key, response, fallback_model)
-            return response
-        except Exception as fallback_error:
-            print(f"[LLM] Fallback model '{fallback_model}' also failed: {fallback_error}", flush=True)
-            raise fallback_error from primary_error
+    return response
+
+
+def _dual_llm_chat_completion(**kwargs):
+    """
+    核心 LLM 调用实现来自 llm_client.py。
+    """
+    return _core_create_chat_completion(**kwargs)
 
 
 EXTRACTION_PROMPT = """你是一个专业的法律文档分析助手。请从以下合同文本中提取关键信息，以JSON格式返回。
@@ -139,7 +152,7 @@ EXTRACTION_PROMPT = """你是一个专业的法律文档分析助手。请从以
 请直接返回JSON，不要包含其他文字。确保所有数字字段返回实际数字而非文字。
 """
 
-def extract_entities(contract_text: str) -> dict:
+def extract_entities(contract_text: str, model_key: str | None = None) -> dict:
     """
     Use GLM-5 to extract structured entities from contract text.
     Falls back to regex-based extraction on error.
@@ -150,7 +163,7 @@ def extract_entities(contract_text: str) -> dict:
 
     try:
         response = create_chat_completion(
-            model=os.getenv("OPENAI_MODEL", "glm-5"),
+            model=model_key or get_primary_model_key(),
             messages=[
                 {"role": "system", "content": "你是一个专业的法律文档分析助手。"},
                 {"role": "user", "content": EXTRACTION_PROMPT.format(contract_text=contract_text)},
