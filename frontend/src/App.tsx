@@ -3,10 +3,11 @@ import type { RoutingDecision } from './types'
 import { ChatPanel } from './components/ChatPanel'
 import { DocPanel } from './components/DocPanel'
 import { SideNav } from './components/SideNav'
-import { TopNav } from './components/TopNav'
 import { useAuth } from './contexts/AuthContext'
 import { useStreamingReview } from './hooks/useStreamingReview'
 import { LoginPage } from './pages/LoginPage'
+import { RegisterPage } from './pages/RegisterPage'
+import { SettingsPage } from './pages/SettingsPage'
 
 export type ReviewStatus = 'idle' | 'uploading' | 'reviewing' | 'breakpoint' | 'complete' | 'error'
 
@@ -304,6 +305,8 @@ function saveHistoryEntry(entry: ReviewHistoryEntry) {
 
 export default function App() {
   const { isAuthenticated, login, logout, user, token } = useAuth()
+  const [authView, setAuthView] = useState<'login' | 'register'>('login')
+  const [showSettings, setShowSettings] = useState(false)
   const [review, setReview] = useState<ReviewState>(() => createInitialState(`session-${Date.now()}`))
   const [streamContractText, setStreamContractText] = useState('')
 
@@ -333,10 +336,6 @@ export default function App() {
     setStreamContractText('')
     setReview(createInitialState(newSessionId))
   }, [])
-
-  const handleNewReview = useCallback(() => {
-    handleReset()
-  }, [handleReset])
 
   const handleExportReport = useCallback(() => {
     if (review.finalReport.length === 0) return
@@ -451,22 +450,26 @@ export default function App() {
   }, [hook.phase, review])
 
   if (!isAuthenticated) {
-    return <LoginPage onLogin={login} />
+    if (authView === 'register') {
+      return <RegisterPage onNavigateLogin={() => setAuthView('login')} />
+    }
+    return <LoginPage onLogin={login} onNavigateRegister={() => setAuthView('register')} />
+  }
+
+  if (showSettings) {
+    return <SettingsPage user={user} onBack={() => setShowSettings(false)} />
   }
 
   return (
-    <div className="app-layout">
-      <TopNav
-        onNewReview={handleNewReview}
-        onExportReport={handleExportReport}
-      />
+    <div className="app-layout" style={{ flexDirection: 'row' }}>
       <SideNav
         user={user}
         onLogout={logout}
         onSelectHistorySession={handleSelectHistorySession}
+        onOpenSettings={() => setShowSettings(true)}
       />
-      <main className="workspace">
-        <>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <main className="workspace">
           <ChatPanel
             review={review}
             authToken={token}
@@ -474,13 +477,12 @@ export default function App() {
             onReset={handleReset}
             onSendMessage={handleSendMessage}
           />
-          <DocPanel review={review} onFileUpload={handleFileUpload} />
-        </>
-      </main>
+          <DocPanel review={review} onFileUpload={handleFileUpload} onExportReport={handleExportReport} />
+        </main>
+      </div>
       {review.status === 'reviewing' && (
         <button className="fab" onClick={handleReset}>
-          <span className="material-symbols-outlined fab__icon">refresh</span>
-          <span>深度扫描</span>
+          ↺ 重新扫描
         </button>
       )}
     </div>

@@ -1,254 +1,181 @@
-import { useState, useCallback } from 'react'
-import './LoginPage.css'
+import { useState } from 'react'
+import { motion } from 'motion/react'
+import { Mail, Lock, Eye, EyeOff } from 'lucide-react'
 
 interface LoginPageProps {
   onLogin: (token: string, user: { email: string; id: string }) => void
+  onNavigateRegister?: () => void
 }
 
-type Step = 'email' | 'code'
-
-export function LoginPage({ onLogin }: LoginPageProps) {
-  const [step, setStep] = useState<Step>('email')
+export function LoginPage({ onLogin, onNavigateRegister }: LoginPageProps) {
   const [email, setEmail] = useState('')
-  const [code, setCode] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [countdown, setCountdown] = useState(0)
 
-  const sendCode = useCallback(async () => {
-    if (!email.trim()) {
-      setError('请输入邮箱地址')
-      return
-    }
-    if (!/^[\w\.-]+@[\w\.-]+\.\w+$/.test(email.trim())) {
-      setError('请输入有效的邮箱格式')
-      return
-    }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!email.trim()) { setError('请输入邮箱地址'); return }
+    if (!password) { setError('请输入密码'); return }
 
     setLoading(true)
     setError('')
-
-    try {
-      const res = await fetch('/api/auth/send-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase() }),
-      })
-      const data = await res.json()
-
-      if (!res.ok) {
-        setError(data.error || '发送失败，请稍后重试')
-        return
-      }
-
-      // Dev mode: show code if returned
-      if (data.dev_code) {
-        setCode(data.dev_code)
-        setError('')
-      }
-
-      setStep('code')
-      setCountdown(60)
-
-      const timer = setInterval(() => {
-        setCountdown(c => {
-          if (c <= 1) {
-            clearInterval(timer)
-            return 0
-          }
-          return c - 1
-        })
-      }, 1000)
-
-    } catch {
-      setError('网络错误，请检查连接后重试')
-    } finally {
-      setLoading(false)
-    }
-  }, [email])
-
-  const verifyCode = useCallback(async () => {
-    if (code.length !== 6) {
-      setError('请输入6位验证码')
-      return
-    }
-
-    setLoading(true)
-    setError('')
-
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase(), code: code.trim() }),
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       })
       const data = await res.json()
-
-      if (!res.ok) {
-        setError(data.error || '验证码错误或已过期')
-        return
-      }
-
-      // Store token
+      if (!res.ok) { setError(data.error || '邮箱或密码错误'); return }
       localStorage.setItem('auth_token', data.token)
       localStorage.setItem('auth_user', JSON.stringify(data.user))
-
       onLogin(data.token, data.user)
-
     } catch {
       setError('网络错误，请检查连接后重试')
     } finally {
       setLoading(false)
     }
-  }, [email, code, onLogin])
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (step === 'email') {
-      sendCode()
-    } else {
-      verifyCode()
-    }
-  }
-
-  const handleBack = () => {
-    setStep('email')
-    setCode('')
-    setError('')
   }
 
   return (
-    <div className="login-page">
-      {/* Left brand panel */}
-      <div className="login-page__brand">
-        <div className="login-page__brand-bg">
-          <div className="login-page__brand-blur login-page__brand-blur--1" />
-          <div className="login-page__brand-blur login-page__brand-blur--2" />
-        </div>
-        <div className="login-page__brand-content">
-          <div className="login-page__brand-logo">
-            <span className="material-symbols-outlined login-page__logo-icon">verified_user</span>
-            <span className="login-page__logo-text">合规智审 Copilot</span>
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24,
+    }}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        style={{
+          width: '100%',
+          maxWidth: 760,
+          border: '4px solid black',
+          boxShadow: '8px 8px 0px 0px rgba(0,0,0,1)',
+          display: 'flex',
+          flexDirection: 'row',
+          background: 'var(--color-paper)',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Form side */}
+        <div style={{ flex: 1, padding: '48px 44px', display: 'flex', flexDirection: 'column', gap: 28 }}>
+          <div>
+            <h1 style={{
+              fontFamily: 'var(--font-header)',
+              fontSize: 18,
+              color: 'var(--color-ink)',
+              lineHeight: 1.5,
+              marginBottom: 10,
+            }}>
+              Doge 合规助手登录
+            </h1>
+            <p style={{ fontFamily: 'var(--font-pixel)', fontSize: 11, color: 'var(--color-ink-soft)', lineHeight: 1.6 }}>
+              输入邮箱和密码，安全登录
+            </p>
           </div>
-          <div className="login-page__brand-headline">
-            <h1>法律科技新范式<br />智能驱动契约信任</h1>
-            <p>通过先进的 AI 语言模型，为您提供极速、精准的合同合规性审查与风险预警。</p>
-          </div>
-          <div className="login-page__brand-features">
-            <div className="login-page__feature">
-              <div className="login-page__feature-icon">
-                <span className="material-symbols-outlined">verified_user</span>
-              </div>
-              <div>
-                <p className="login-page__feature-title">安全可靠</p>
-                <p className="login-page__feature-desc">金融级加密保护您的文档隐私</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Right form panel */}
-      <div className="login-page__form-panel">
-        <div className="login-page__form-container">
-          <div className="login-page__form-header">
-            <h2>欢迎登录</h2>
-            <p>请使用您的专业账号访问平台</p>
-          </div>
-
-          <form className="login-page__form" onSubmit={handleSubmit}>
-            {/* Email field — always shown */}
-            <div className="login-page__field">
-              <label className="login-page__label" htmlFor="email">邮箱地址</label>
-              <div className="login-page__input-wrap">
-                <span className="material-symbols-outlined login-page__input-icon">mail</span>
+          <form style={{ display: 'flex', flexDirection: 'column', gap: 20 }} onSubmit={handleSubmit}>
+            {/* Email */}
+            <Field label="邮箱地址">
+              <InputWrap icon={<Mail size={18} />}>
                 <input
-                  id="email"
                   type="email"
-                  className="login-page__input"
-                  placeholder="name@company.com"
+                  className="pixel-input"
+                  placeholder="your@email.com"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
-                  disabled={step === 'code'}
                   autoComplete="email"
+                  style={{ paddingLeft: 44, fontSize: 13 }}
                 />
-              </div>
+              </InputWrap>
+            </Field>
+
+            {/* Password */}
+            <Field label="密码">
+              <InputWrap icon={<Lock size={18} />} right={
+                <button type="button" onClick={() => setShowPassword(v => !v)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 12px', color: 'var(--color-ink-muted)', display: 'flex', alignItems: 'center' }}>
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              }>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  className="pixel-input"
+                  placeholder="请输入密码"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  style={{ paddingLeft: 44, paddingRight: 44, fontSize: 13 }}
+                />
+              </InputWrap>
+            </Field>
+
+            {/* Remember / forgot */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontFamily: 'var(--font-pixel)', fontSize: 11, fontWeight: 700 }}>
+                <input type="checkbox" style={{ width: 16, height: 16, border: '2px solid black', accentColor: 'black' }} />
+                记住我
+              </label>
+              <span style={{ fontFamily: 'var(--font-pixel)', fontSize: 11, fontWeight: 700, borderBottom: '2px solid black', cursor: 'pointer' }}>
+                忘记密码?
+              </span>
             </div>
 
-            {/* Verification code field */}
-            {step === 'code' && (
-              <div className="login-page__field">
-                <label className="login-page__label" htmlFor="code">邮箱验证码</label>
-                <div className="login-page__code-row">
-                  <div className="login-page__input-wrap login-page__input-wrap--grow">
-                    <span className="material-symbols-outlined login-page__input-icon">shield_person</span>
-                    <input
-                      id="code"
-                      type="text"
-                      className="login-page__input"
-                      placeholder="6位验证码"
-                      value={code}
-                      onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                      maxLength={6}
-                      autoComplete="one-time-code"
-                      autoFocus
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    className="login-page__send-btn"
-                    onClick={sendCode}
-                    disabled={loading || countdown > 0}
-                  >
-                    {countdown > 0 ? `${countdown}s` : '重新发送'}
-                  </button>
-                </div>
-
-                {/* Dev mode: show code */}
-                {code && (
-                  <div className="login-page__dev-hint">
-                    开发模式验证码：{code}
-                  </div>
-                )}
+            {error && (
+              <div style={{ border: '3px solid var(--color-red)', background: 'var(--color-red-light)', padding: '10px 14px', fontFamily: 'var(--font-pixel)', fontSize: 10, color: 'var(--color-red)', lineHeight: 1.6 }}>
+                {error}
               </div>
             )}
 
-            {/* Error message */}
-            {error && (
-              <div className="login-page__error">{error}</div>
-            )}
-
-            {/* Submit button */}
             <button
               type="submit"
-              className="login-page__submit"
+              className="pixel-button"
               disabled={loading}
+              style={{ width: '100%', padding: '16px 0', fontSize: 16, marginTop: 4, background: 'var(--color-green)', color: 'white', letterSpacing: '0.05em' }}
             >
-              {loading ? (
-                <span className="login-page__spinner" />
-              ) : (
-                <>
-                  <span>{step === 'email' ? '发送验证码' : '登录'}</span>
-                  <span className="material-symbols-outlined login-page__submit-icon">arrow_forward</span>
-                </>
-              )}
+              {loading ? <span style={{ width: 18, height: 18, border: '3px solid rgba(255,255,255,0.4)', borderTopColor: 'white', display: 'inline-block', animation: 'login-spin 0.6s steps(4) infinite' }} /> : '安全登录'}
             </button>
           </form>
 
-          {/* Back button when in code step */}
-          {step === 'code' && (
-            <button className="login-page__back" onClick={handleBack} type="button">
-              <span className="material-symbols-outlined">arrow_back</span>
-              返回修改邮箱
+          <div style={{ fontFamily: 'var(--font-pixel)', fontSize: 12, textAlign: 'center', marginTop: 4 }}>
+            <span>没有帐号? </span>
+            <button type="button" onClick={onNavigateRegister}
+              style={{ background: 'none', border: 'none', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-pixel)', fontSize: 12, borderBottom: '2px solid black', padding: 0 }}>
+              立即注册
             </button>
-          )}
-
-          <p className="login-page__footer-text">
-            还没有账号？
-            <a className="login-page__link" href="#">立即申请试用</a>
-          </p>
+          </div>
         </div>
-      </div>
+
+        {/* Doge side */}
+        <div style={{ width: '36%', background: 'var(--color-cream-darker)', borderLeft: '4px solid black', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <img src="/doge.png" alt="Doge" style={{ width: '100%', height: 'auto', objectFit: 'contain', imageRendering: 'pixelated' }} />
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <label style={{ fontFamily: 'var(--font-pixel)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-ink-soft)' }}>
+        {label}
+      </label>
+      {children}
+    </div>
+  )
+}
+
+function InputWrap({ icon, right, children }: { icon: React.ReactNode; right?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+      <span style={{ position: 'absolute', left: 12, color: 'var(--color-ink-muted)', pointerEvents: 'none', display: 'flex', alignItems: 'center', zIndex: 1 }}>{icon}</span>
+      <div style={{ flex: 1 }}>{children}</div>
+      {right && <span style={{ position: 'absolute', right: 0, display: 'flex', alignItems: 'center', height: '100%' }}>{right}</span>}
     </div>
   )
 }

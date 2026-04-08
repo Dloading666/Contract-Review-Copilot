@@ -129,18 +129,39 @@ async def send_code(body: dict):
     return {"success": True}
 
 
-@app.post("/api/auth/login")
-async def login(body: dict):
-    """Verify code and return JWT token."""
+@app.post("/api/auth/register")
+async def register(body: dict):
+    """Register a new user with email verification code + password."""
     email = body.get("email", "").strip().lower()
     code = body.get("code", "").strip()
+    password = body.get("password", "").strip()
 
-    if not email or not code:
-        return JSONResponse(status_code=400, content={"error": "邮箱和验证码不能为空"})
+    if not email or not code or not password:
+        return JSONResponse(status_code=400, content={"error": "邮箱、验证码和密码不能为空"})
+    if not re.match(r"^[\w\.-]+@[\w\.-]+\w+$", email):
+        return JSONResponse(status_code=400, content={"error": "无效的邮箱格式"})
+    if len(password) < 6:
+        return JSONResponse(status_code=400, content={"error": "密码不能少于6位"})
 
-    token = auth.verify_code(email, code)
+    result = auth.register_user(email, code, password)
+    if not result.get("success"):
+        return JSONResponse(status_code=400, content={"error": result.get("error", "注册失败")})
+
+    return {"success": True, "message": "注册成功，请登录"}
+
+
+@app.post("/api/auth/login")
+async def login(body: dict):
+    """Login with email + password, return JWT token."""
+    email = body.get("email", "").strip().lower()
+    password = body.get("password", "").strip()
+
+    if not email or not password:
+        return JSONResponse(status_code=400, content={"error": "邮箱和密码不能为空"})
+
+    token = auth.login_with_password(email, password)
     if not token:
-        return JSONResponse(status_code=401, content={"error": "验证码无效或已过期"})
+        return JSONResponse(status_code=401, content={"error": "邮箱或密码错误"})
 
     user = auth.get_user_from_token(token)
     return {
