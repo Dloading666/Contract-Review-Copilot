@@ -171,6 +171,8 @@ export function useStreamingReview(
 
   const confirm = useCallback(() => {
     setError(null)
+    setBreakpointData(null)
+    setPhase('aggregation')
     setIsStreaming(true)
     startStream(`${API_BASE}/review/confirm/${sessionIdRef.current}`, { confirmed: true })
   }, [startStream])

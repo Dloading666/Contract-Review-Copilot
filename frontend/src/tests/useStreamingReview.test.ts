@@ -1,5 +1,5 @@
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
 import { useStreamingReview } from '../hooks/useStreamingReview'
 
 const mockFetch = vi.fn()
@@ -100,6 +100,51 @@ describe('useStreamingReview', () => {
       expect(result.current.breakpointData).toEqual(breakpointData)
       expect(result.current.isStreaming).toBe(false)
     })
+  })
+
+  it('resumes aggregation after confirm and completes the report stream', async () => {
+    const breakpointData = {
+      needs_review: true,
+      question: '确认继续？',
+      issues_count: 1,
+      critical_count: 0,
+      high_count: 1,
+      medium_count: 0,
+    }
+
+    mockFetch
+      .mockResolvedValueOnce(new Response(createMockStream([
+        `event: breakpoint\ndata: ${JSON.stringify({ breakpoint: breakpointData, issues: [] })}\n\n`,
+      ])))
+      .mockResolvedValueOnce(new Response(createMockStream([
+        'event: stream_resume\ndata: {"session_id":"test-session"}\n\n',
+        `event: final_report\ndata: ${JSON.stringify({ paragraph: '报告第一段' })}\n\n`,
+        'event: review_complete\ndata: {"session_id":"test-session"}\n\n',
+      ])))
+
+    const { result } = renderHook(() => useStreamingReview('test-session', '合同文本'))
+
+    await waitFor(() => {
+      expect(result.current.phase).toBe('breakpoint')
+    })
+
+    act(() => {
+      result.current.confirm()
+    })
+
+    await waitFor(() => {
+      expect(result.current.phase).toBe('complete')
+      expect(result.current.reportParagraphs).toEqual(['报告第一段'])
+    })
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      '/api/review/confirm/test-session',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ confirmed: true }),
+      }),
+    )
   })
 
   it('accumulates final report paragraphs', async () => {

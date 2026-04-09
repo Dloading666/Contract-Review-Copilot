@@ -5,6 +5,7 @@ SSE streaming endpoint + LangGraph StateGraph orchestration
 import asyncio
 import json
 import re
+import uuid
 from contextlib import asynccontextmanager
 from io import BytesIO
 from typing import AsyncGenerator, Optional
@@ -15,9 +16,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 
 from .cache import build_cache_key, close_redis_client, delete_json, get_json, get_ttl_seconds, set_json
+from .config import get_settings
 from .llm_client import DEFAULT_MODEL_KEY, available_models, create_chat_completion, is_supported_model_key, resolve_model
 from .report_export import build_report_docx, build_report_download_name
-from .schemas import ContractReviewRequest, ConfirmRequest, ExportReportRequest, HealthResponse
+from .schemas import (
+    ConfirmRequest,
+    ContractReviewRequest,
+    ExportReportRequest,
+    HealthResponse,
+    LoginRequest,
+    RegisterRequest,
+    SendCodeRequest,
+)
 from .graph.review_graph import run_review_stream, run_aggregation_stream
 from . import auth
 
@@ -71,9 +81,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+settings = get_settings()
+allowed_origins = [
+    origin.strip()
+    for origin in settings.cors_allowed_origins.split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -105,19 +122,10 @@ def require_current_user(authorization: Optional[str]) -> dict:
 
 # ── Auth Endpoints ────────────────────────────────────────────────
 
-class SendCodeRequest:
-    email: str
-
-
-class VerifyCodeRequest:
-    email: str
-    code: str
-
-
 @app.post("/api/auth/send-code")
-async def send_code(body: dict):
+async def send_code(body: SendCodeRequest):
     """Send a verification code to the given email."""
-    email = body.get("email", "").strip().lower()
+    email = body.email.strip().lower()
 
     # Validate email format
     if not re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email):
@@ -134,15 +142,15 @@ async def send_code(body: dict):
 
 
 @app.post("/api/auth/register")
-async def register(body: dict):
+async def register(body: RegisterRequest):
     """Register a new user with email verification code + password."""
-    email = body.get("email", "").strip().lower()
-    code = body.get("code", "").strip()
-    password = body.get("password", "").strip()
+    email = body.email.strip().lower()
+    code = body.code.strip()
+    password = body.password.strip()
 
     if not email or not code or not password:
         return JSONResponse(status_code=400, content={"error": "邮箱、验证码和密码不能为空"})
-    if not re.match(r"^[\w\.-]+@[\w\.-]+\w+$", email):
+    if not re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email):
         return JSONResponse(status_code=400, content={"error": "无效的邮箱格式"})
     if len(password) < 6:
         return JSONResponse(status_code=400, content={"error": "密码不能少于6位"})
@@ -155,10 +163,10 @@ async def register(body: dict):
 
 
 @app.post("/api/auth/login")
-async def login(body: dict):
+async def login(body: LoginRequest):
     """Login with email + password, return JWT token."""
-    email = body.get("email", "").strip().lower()
-    password = body.get("password", "").strip()
+    email = body.email.strip().lower()
+    password = body.password.strip()
 
     if not email or not password:
         return JSONResponse(status_code=400, content={"error": "邮箱和密码不能为空"})
@@ -299,7 +307,7 @@ async def create_review(
     """Start a new contract review session. Returns SSE stream."""
     user = require_current_user(authorization)
 
-    session_id = body.session_id or f"session-{id(body)}"
+    session_id = body.session_id or f"session-{uuid.uuid4().hex}"
     model_key = (body.model or DEFAULT_MODEL_KEY).strip() or DEFAULT_MODEL_KEY
     if not is_supported_model_key(model_key):
         return JSONResponse(status_code=400, content={"error": "不支持的模型"})

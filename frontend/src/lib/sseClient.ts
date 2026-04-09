@@ -22,6 +22,7 @@ export function createSSEClient(
   let retryCount = 0
   const maxRetries = 2
   let controller: AbortController | null = null
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
 
   function emitEvent(eventType: string, dataLines: string[]) {
     if (dataLines.length === 0) return
@@ -38,6 +39,7 @@ export function createSSEClient(
 
   function connect() {
     if (aborted) return
+    retryTimer = null
 
     controller = new AbortController()
     fetch(url, {
@@ -100,7 +102,7 @@ export function createSSEClient(
 
         if (retryCount < maxRetries) {
           retryCount += 1
-          setTimeout(connect, 2 ** retryCount * 1000)
+          retryTimer = setTimeout(connect, 2 ** retryCount * 1000)
           return
         }
 
@@ -113,6 +115,10 @@ export function createSSEClient(
   return {
     abort: () => {
       aborted = true
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+        retryTimer = null
+      }
       controller?.abort()
     },
   }

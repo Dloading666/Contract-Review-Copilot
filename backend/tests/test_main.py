@@ -27,6 +27,53 @@ def test_models_endpoint_returns_available_models():
     assert any(model['key'] == 'gemma4' for model in payload['models'])
 
 
+def test_register_rejects_invalid_email_without_top_level_domain(monkeypatch):
+    monkeypatch.setattr(main.auth, 'register_user', lambda *_args, **_kwargs: {'success': True})
+
+    client = TestClient(main.app)
+    response = client.post(
+        '/api/auth/register',
+        json={
+            'email': 'user@domaincom',
+            'code': '123456',
+            'password': 'secret123',
+        },
+    )
+
+    assert response.status_code == 400
+
+
+def test_review_generates_uuid_session_id_when_client_omits_one(monkeypatch):
+    captured: list[str] = []
+
+    async def fake_run_review_stream(contract_text: str, session_id: str, model_key: str | None = None):
+        captured.append(session_id)
+        yield {'event': 'review_complete', 'data': {'session_id': session_id}}
+
+    monkeypatch.setattr(main, 'run_review_stream', fake_run_review_stream)
+    monkeypatch.setattr(
+        main.auth,
+        'get_user_from_token',
+        lambda token: {'email': 'owner@example.com'} if token == 'token-a' else None,
+    )
+
+    client = TestClient(main.app)
+    for _ in range(2):
+        with client.stream(
+            'POST',
+            '/api/review',
+            json={'contract_text': '合同文本', 'model': 'gemma4'},
+            headers={'Authorization': 'Bearer token-a'},
+        ) as response:
+            assert response.status_code == 200
+            list(response.iter_text())
+
+    assert len(captured) == 2
+    assert captured[0] != captured[1]
+    assert all(session_id.startswith('session-') for session_id in captured)
+    assert all(len(session_id) == len('session-') + 32 for session_id in captured)
+
+
 def test_chat_endpoint_uses_selected_model(monkeypatch):
     monkeypatch.setattr(
         main.auth,

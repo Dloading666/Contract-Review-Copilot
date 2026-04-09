@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RoutingDecision } from './types'
 import { ChatPanel } from './components/ChatPanel'
 import { DocPanel } from './components/DocPanel'
@@ -83,12 +83,14 @@ export interface ReviewHistoryEntry {
 
 const DEFAULT_MODEL_KEY: ModelKey = 'gemma4'
 const MODEL_STORAGE_PREFIX = 'chatModel:'
+const GEMMA4_MODEL_LABEL = 'Gemma4（免费模型）'
+
 export const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
+  { key: 'gemma4', label: GEMMA4_MODEL_LABEL },
   { key: 'glm-5', label: 'GLM-5' },
   { key: 'minimax', label: 'MiniMax M2.5' },
   { key: 'qwen', label: 'Qwen 3.5 Plus' },
   { key: 'kimi', label: 'Kimi K2.5' },
-  { key: 'gemma4', label: 'Gemma4（本地免费）' },
 ]
 
 function isModelKey(value: unknown): value is ModelKey {
@@ -97,6 +99,46 @@ function isModelKey(value: unknown): value is ModelKey {
 
 function getChatModelStorageKey(ownerKey?: string | null) {
   return `${MODEL_STORAGE_PREFIX}${ownerKey ?? 'anonymous'}`
+}
+
+function getModelLabel(modelKey: ModelKey) {
+  return DEFAULT_MODEL_OPTIONS.find((option) => option.key === modelKey)?.label ?? modelKey
+}
+
+function normalizeModelOptions(models: unknown): ModelOption[] {
+  if (!Array.isArray(models)) {
+    return DEFAULT_MODEL_OPTIONS
+  }
+
+  const normalized: ModelOption[] = []
+  const seen = new Set<ModelKey>()
+
+  for (const model of models) {
+    if (!model || typeof model !== 'object') continue
+
+    const maybeKey = (model as { key?: unknown }).key
+    if (!isModelKey(maybeKey) || seen.has(maybeKey)) continue
+
+    const maybeLabel = (model as { label?: unknown }).label
+    normalized.push({
+      key: maybeKey,
+      label: typeof maybeLabel === 'string' && maybeLabel.trim()
+        ? maybeLabel
+        : getModelLabel(maybeKey),
+    })
+    seen.add(maybeKey)
+  }
+
+  return normalized.length > 0 ? normalized : DEFAULT_MODEL_OPTIONS
+}
+
+function loadStoredModel(ownerKey?: string | null): ModelKey | null {
+  try {
+    const storedModel = localStorage.getItem(getChatModelStorageKey(ownerKey))
+    return isModelKey(storedModel) ? storedModel : null
+  } catch {
+    return null
+  }
 }
 
 function createSessionId() {
@@ -123,7 +165,7 @@ function createInitialState(sessionId: string): ReviewState {
       { id: 'parse', label: '解析合同主体信息', status: 'pending' },
       { id: 'extract', label: '提取关键条款变量', status: 'pending' },
       { id: 'retrieve', label: '检索相关法律依据', status: 'pending' },
-      { id: 'review', label: '扫描风险项', status: 'pending' },
+      { id: 'review', label: '扫描风险项目', status: 'pending' },
     ],
     extractedInfo: null,
     routingDecision: null,
@@ -160,20 +202,20 @@ function mapEntities(extracted: any): ExtractedInfo | null {
   if (!extracted) return null
 
   return {
-    lessor: extracted.parties?.lessor || extracted.lessor || '未知',
-    lessee: extracted.parties?.lessee || extracted.lessee || '未知',
-    property: extracted.property?.address || extracted.property || '未知',
+    lessor: extracted.parties?.lessor || extracted.lessor || '鏈煡',
+    lessee: extracted.parties?.lessee || extracted.lessee || '鏈煡',
+    property: extracted.property?.address || extracted.property || '鏈煡',
     monthlyRent: extracted.rent?.monthly || extracted.monthlyRent || 0,
     deposit: extracted.deposit?.amount || extracted.deposit || 0,
-    leaseTerm: extracted.lease_term?.duration_text || extracted.leaseTerm || '未知',
+    leaseTerm: extracted.lease_term?.duration_text || extracted.leaseTerm || '鏈煡',
   }
 }
 
 function mapIssues(issues: any[]): RiskCard[] {
-  return issues.map((issue, idx) => ({
-    id: String(idx + 1),
+  return issues.map((issue, index) => ({
+    id: String(index + 1),
     level: issue.level === 'critical' || issue.level === 'high' ? 'high' : 'medium',
-    title: issue.clause || `风险项${idx + 1}`,
+    title: issue.clause || `风险项 ${index + 1}`,
     clause: issue.clause || '',
     issue: issue.issue || '',
     suggestion: issue.suggestion || '',
@@ -195,7 +237,11 @@ function normalizeRiskCard(card: any): RiskCard {
   }
 }
 
-function buildThinkingSteps(phase: string, extracted: ExtractedInfo | null, routing: RoutingDecision | null) {
+export function buildThinkingSteps(
+  phase: string,
+  extracted: ExtractedInfo | null,
+  routing: RoutingDecision | null,
+) {
   type StepStatus = 'done' | 'active' | 'pending'
 
   const statuses: Record<string, StepStatus> = {
@@ -205,30 +251,40 @@ function buildThinkingSteps(phase: string, extracted: ExtractedInfo | null, rout
     review: 'pending',
   }
 
-  if (extracted) {
+  if (phase === 'started') {
+    statuses.parse = 'active'
+  } else if (phase === 'extraction') {
     statuses.parse = 'done'
-    statuses.extract = 'done'
-  }
-
-  if (routing) {
-    statuses.retrieve = 'done'
-  }
-
-  if (phase === 'complete' || phase === 'aggregation' || phase === 'breakpoint') {
-    statuses.review = 'done'
-  } else if (phase === 'started' || phase === 'extraction') {
     statuses.extract = 'active'
   } else if (phase === 'routing') {
+    statuses.parse = 'done'
+    statuses.extract = 'done'
     statuses.retrieve = 'active'
   } else if (phase === 'logic_review') {
+    statuses.parse = 'done'
+    statuses.extract = 'done'
+    statuses.retrieve = 'done'
     statuses.review = 'active'
+  } else if (phase === 'aggregation' || phase === 'breakpoint' || phase === 'complete') {
+    statuses.parse = 'done'
+    statuses.extract = 'done'
+    statuses.retrieve = 'done'
+    statuses.review = 'done'
+  } else {
+    if (extracted) {
+      statuses.parse = 'done'
+      statuses.extract = 'done'
+    }
+    if (routing) {
+      statuses.retrieve = 'done'
+    }
   }
 
   return [
     { id: 'parse', label: '解析合同主体信息', status: statuses.parse },
     { id: 'extract', label: '提取关键条款变量', status: statuses.extract },
     { id: 'retrieve', label: '检索相关法律依据', status: statuses.retrieve },
-    { id: 'review', label: '扫描风险项', status: statuses.review },
+    { id: 'review', label: '扫描风险项目', status: statuses.review },
   ]
 }
 
@@ -246,7 +302,7 @@ function shouldSaveReviewToHistory(review: ReviewState) {
     || review.finalReport.length > 0
     || review.breakpointMessage
     || review.errorMessage
-    || hasMeaningfulChat(review.chatMessages),
+    || hasMeaningfulChat(review.chatMessages)
   )
 }
 
@@ -278,7 +334,6 @@ function normalizeHistoryStatus(status: unknown): ReviewStatus {
   ) {
     return status
   }
-
   return 'complete'
 }
 
@@ -286,11 +341,9 @@ function getRestoredHistoryStatus(entry: ReviewHistoryEntry): ReviewStatus {
   if (entry.status === 'breakpoint' && entry.breakpointMessage) {
     return 'breakpoint'
   }
-
   if (entry.status === 'error' && entry.errorMessage) {
     return 'error'
   }
-
   return 'complete'
 }
 
@@ -306,7 +359,9 @@ function loadHistoryEntries(ownerKey?: string | null): ReviewHistoryEntry[] {
       contractText: entry.contractText || '',
       extractedInfo: entry.extractedInfo ?? null,
       routingDecision: entry.routingDecision ?? null,
-      riskCards: Array.isArray(entry.riskCards) ? entry.riskCards.map((card: any) => normalizeRiskCard(card)) : [],
+      riskCards: Array.isArray(entry.riskCards)
+        ? entry.riskCards.map((card: any) => normalizeRiskCard(card))
+        : [],
       finalReport: Array.isArray(entry.finalReport) ? entry.finalReport : [],
       breakpointMessage: typeof entry.breakpointMessage === 'string' ? entry.breakpointMessage : null,
       errorMessage: typeof entry.errorMessage === 'string' ? entry.errorMessage : null,
@@ -328,37 +383,21 @@ function saveHistoryEntry(entry: ReviewHistoryEntry, ownerKey?: string | null) {
   savePersistedReviewHistory(history, ownerKey)
 }
 
-function parseModelOptions(payload: unknown): ModelOption[] {
-  if (!Array.isArray(payload)) {
-    return DEFAULT_MODEL_OPTIONS
-  }
-
-  const parsed = payload
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null
-      const key = (item as { key?: unknown }).key
-      const label = (item as { label?: unknown }).label
-      if (!isModelKey(key) || typeof label !== 'string' || !label.trim()) {
-        return null
-      }
-      return { key, label }
-    })
-    .filter((item): item is ModelOption => item !== null)
-
-  return parsed.length > 0 ? parsed : DEFAULT_MODEL_OPTIONS
-}
-
 export default function App() {
   const { isAuthenticated, login, logout, user, token } = useAuth()
   const historyOwnerKey = user?.email?.trim().toLowerCase() ?? null
   const [authView, setAuthView] = useState<'login' | 'register'>('login')
   const [showSettings, setShowSettings] = useState(false)
   const [isExportingReport, setIsExportingReport] = useState(false)
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS)
+  const [selectedModel, setSelectedModel] = useState<ModelKey>(() => (
+    loadStoredModel(historyOwnerKey) ?? DEFAULT_MODEL_KEY
+  ))
   const [review, setReview] = useState<ReviewState>(() => createInitialState(createSessionId()))
   const [streamContractText, setStreamContractText] = useState('')
-  const [availableModels, setAvailableModels] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS)
-  const [selectedModel, setSelectedModel] = useState<ModelKey>(DEFAULT_MODEL_KEY)
   const previousHistoryOwnerKeyRef = useRef<string | null>(historyOwnerKey)
+  const prevPhaseRef = useRef<ReviewStatus>(review.status)
+  const reviewRef = useRef(review)
 
   const hook = useStreamingReview(review.sessionId, streamContractText, {
     enabled: review.status === 'reviewing',
@@ -372,12 +411,17 @@ export default function App() {
   }, [historyOwnerKey])
 
   useEffect(() => {
+    reviewRef.current = review
+  }, [review])
+
+  useEffect(() => {
     if (previousHistoryOwnerKeyRef.current === historyOwnerKey) {
       return
     }
 
     previousHistoryOwnerKeyRef.current = historyOwnerKey
     setShowSettings(false)
+    setSelectedModel(loadStoredModel(historyOwnerKey) ?? DEFAULT_MODEL_KEY)
     setStreamContractText('')
     setReview(createInitialState(createSessionId()))
 
@@ -389,63 +433,63 @@ export default function App() {
   }, [historyOwnerKey])
 
   useEffect(() => {
-    if (!historyOwnerKey) {
-      setSelectedModel(DEFAULT_MODEL_KEY)
-      return
-    }
+    let isCancelled = false
+    const abortController = new AbortController()
 
-    try {
-      const stored = localStorage.getItem(getChatModelStorageKey(historyOwnerKey))
-      setSelectedModel(isModelKey(stored) ? stored : DEFAULT_MODEL_KEY)
-    } catch {
-      setSelectedModel(DEFAULT_MODEL_KEY)
-    }
-  }, [historyOwnerKey])
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setAvailableModels(DEFAULT_MODEL_OPTIONS)
-      return
-    }
-
-    let cancelled = false
-
-    const loadModels = async () => {
+    async function syncModels() {
       try {
-        const response = await fetch('/api/models')
+        const response = await fetch('/api/models', {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          signal: abortController.signal,
+        })
+
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`)
+          throw new Error(`Failed to load models: ${response.status}`)
         }
-        const payload = await response.json() as { models?: unknown }
-        if (!cancelled) {
-          setAvailableModels(parseModelOptions(payload.models))
-        }
-      } catch {
-        if (!cancelled) {
-          setAvailableModels(DEFAULT_MODEL_OPTIONS)
-        }
+
+        const payload = await response.json() as { default_model?: unknown; models?: unknown }
+        if (isCancelled) return
+
+        const nextOptions = normalizeModelOptions(payload.models)
+        const serverDefault = isModelKey(payload.default_model) ? payload.default_model : DEFAULT_MODEL_KEY
+        const storedModel = loadStoredModel(historyOwnerKey)
+        const fallbackModel = nextOptions.some((option) => option.key === serverDefault)
+          ? serverDefault
+          : nextOptions[0]?.key ?? DEFAULT_MODEL_KEY
+
+        setAvailableModels(nextOptions)
+        setSelectedModel((current) => (
+          nextOptions.some((option) => option.key === current)
+            ? current
+            : storedModel && nextOptions.some((option) => option.key === storedModel)
+              ? storedModel
+              : fallbackModel
+        ))
+      } catch (error) {
+        if (abortController.signal.aborted || isCancelled) return
+
+        setAvailableModels(DEFAULT_MODEL_OPTIONS)
+        setSelectedModel((current) => (
+          DEFAULT_MODEL_OPTIONS.some((option) => option.key === current)
+            ? current
+            : loadStoredModel(historyOwnerKey) ?? DEFAULT_MODEL_KEY
+        ))
       }
     }
 
-    void loadModels()
+    void syncModels()
 
     return () => {
-      cancelled = true
+      isCancelled = true
+      abortController.abort()
     }
-  }, [isAuthenticated])
+  }, [historyOwnerKey, token])
 
   useEffect(() => {
-    if (!availableModels.some((option) => option.key === selectedModel)) {
-      setSelectedModel(DEFAULT_MODEL_KEY)
-    }
-  }, [availableModels, selectedModel])
-
-  useEffect(() => {
-    if (!historyOwnerKey) return
     try {
       localStorage.setItem(getChatModelStorageKey(historyOwnerKey), selectedModel)
     } catch {
-      // Ignore storage errors.
+      // Ignore storage errors in tests or private browsing.
     }
   }, [historyOwnerKey, selectedModel])
 
@@ -494,11 +538,10 @@ export default function App() {
       })
   }, [isExportingReport, review.filename, review.finalReport, token])
 
-  const handleSendMessage = useCallback(async (message: string, model?: string) => {
+  const handleSendMessage = useCallback(async (message: string) => {
     const normalizedMessage = message.trim()
     if (!normalizedMessage) return
 
-    const activeModel = isModelKey(model) ? model : selectedModel
     const userMsgId = `user-${Date.now()}`
     const assistantMsgId = `assistant-${Date.now() + 1}`
 
@@ -507,13 +550,13 @@ export default function App() {
       chatMessages: [
         ...prev.chatMessages,
         { id: userMsgId, role: 'user', content: normalizedMessage },
-        { id: assistantMsgId, role: 'assistant', content: '思考中...' },
+        { id: assistantMsgId, role: 'assistant', content: '鎬濊€冧腑...' },
       ],
     }))
 
     try {
       const riskSummary = review.riskCards
-        .map((card) => `[${card.level}] ${card.title}：${card.issue}`)
+        .map((card) => `[${card.level}] ${card.title}: ${card.issue}`)
         .join('\n')
 
       const response = await fetch('/api/chat', {
@@ -524,7 +567,7 @@ export default function App() {
         },
         body: JSON.stringify({
           message: normalizedMessage,
-          model: activeModel,
+          model: selectedModel,
           contract_text: review.contractText,
           risk_summary: riskSummary,
         }),
@@ -543,7 +586,7 @@ export default function App() {
           ? payload.error
           : typeof payload.detail === 'string'
             ? payload.detail
-            : '获取回复失败'
+            : '鑾峰彇鍥炲澶辫触'
 
       setReview((prev) => ({
         ...prev,
@@ -574,7 +617,6 @@ export default function App() {
     }
 
     const restoredStatus = getRestoredHistoryStatus(entry)
-
     setStreamContractText('')
     setReview({
       ...createInitialState(entry.sessionId),
@@ -636,9 +678,12 @@ export default function App() {
   ])
 
   useEffect(() => {
-    if (hook.phase !== 'complete' || !review.filename || !historyOwnerKey) return
-    saveHistoryEntry(createHistoryEntry(review), historyOwnerKey)
-  }, [historyOwnerKey, hook.phase, review])
+    const prevPhase = prevPhaseRef.current
+    if (review.status === 'complete' && prevPhase !== 'complete' && review.filename && historyOwnerKey) {
+      saveHistoryEntry(createHistoryEntry(reviewRef.current), historyOwnerKey)
+    }
+    prevPhaseRef.current = review.status
+  }, [historyOwnerKey, review.filename, review.status])
 
   if (!isAuthenticated) {
     if (authView === 'register') {
@@ -664,9 +709,6 @@ export default function App() {
           <ChatPanel
             review={review}
             authToken={token}
-            selectedModel={selectedModel}
-            availableModels={availableModels}
-            onModelChange={setSelectedModel}
             onExportReport={handleExportReport}
             isExportingReport={isExportingReport}
             onBreakpointConfirm={handleBreakpointConfirm}
@@ -685,9 +727,12 @@ export default function App() {
       </div>
       {review.status === 'reviewing' && (
         <button className="fab" onClick={handleReset}>
-          ↺ 重新扫描
+          閲嶆柊鎵弿
         </button>
       )}
     </div>
   )
 }
+
+
+

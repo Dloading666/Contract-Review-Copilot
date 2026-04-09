@@ -10,9 +10,9 @@ User data persistence strategy:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
-import random
 import secrets
 import smtplib
 import string
@@ -25,8 +25,22 @@ from typing import Optional
 
 import jwt
 
+from .config import get_settings
+
 # JWT config
-JWT_SECRET = os.getenv("JWT_SECRET", "contract-review-copilot-secret-2024")
+
+
+def _load_jwt_secret() -> str:
+    configured_secret = (get_settings().jwt_secret or "").strip()
+    if configured_secret:
+        return configured_secret
+
+    generated_secret = secrets.token_hex(32)
+    print("[Auth] JWT_SECRET not set; using an ephemeral per-process secret", flush=True)
+    return generated_secret
+
+
+JWT_SECRET = _load_jwt_secret()
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 
@@ -42,6 +56,7 @@ _user_store = _user_cache
 _REDIS_USER_PREFIX = "contract-review:user:"
 _PG_USER_TABLE_READY = False
 _PG_USER_TABLE_LOCK = Lock()
+_VERIFICATION_CODE_TTL_SECONDS = 300
 
 
 def _get_redis():
@@ -52,6 +67,67 @@ def _get_redis():
         return get_redis_client()
     except Exception:
         return None
+
+
+def _verification_code_cache_key(email: str) -> str:
+    digest = hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
+    return f"contract-review:auth-code:{digest}"
+
+
+def _save_code_record(email: str, record: dict) -> None:
+    normalized_email = email.strip().lower()
+    _code_store[normalized_email] = record
+
+    client = _get_redis()
+    if client is None:
+        return
+
+    try:
+        client.setex(
+            _verification_code_cache_key(normalized_email),
+            _VERIFICATION_CODE_TTL_SECONDS,
+            json.dumps(record, ensure_ascii=False),
+        )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[Auth] Redis save verification code failed: {exc}")
+
+
+def _load_code_record(email: str) -> Optional[dict]:
+    normalized_email = email.strip().lower()
+    record = _code_store.get(normalized_email)
+    if record:
+        return record
+
+    client = _get_redis()
+    if client is None:
+        return None
+
+    try:
+        raw = client.get(_verification_code_cache_key(normalized_email))
+        if not raw:
+            return None
+        record = json.loads(raw)
+        if isinstance(record, dict):
+            _code_store[normalized_email] = record
+            return record
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[Auth] Redis load verification code failed: {exc}")
+
+    return None
+
+
+def _delete_code_record(email: str) -> None:
+    normalized_email = email.strip().lower()
+    _code_store.pop(normalized_email, None)
+
+    client = _get_redis()
+    if client is None:
+        return
+
+    try:
+        client.delete(_verification_code_cache_key(normalized_email))
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[Auth] Redis delete verification code failed: {exc}")
 
 
 def _save_user_to_redis(user_id: str, user: dict) -> None:
@@ -263,13 +339,13 @@ def _make_user_id(email: str) -> str:
 
 
 def generate_code() -> str:
-    return "".join(random.choices(string.digits, k=6))
+    return "".join(secrets.choice(string.digits) for _ in range(6))
 
 
 def send_verification_code(email: str) -> dict:
     code = generate_code()
-    expire_at = time.time() + 300  # 5 minutes
-    _code_store[email] = {"code": code, "expire_at": expire_at}
+    expire_at = time.time() + _VERIFICATION_CODE_TTL_SECONDS
+    _save_code_record(email, {"code": code, "expire_at": expire_at})
 
     smtp_host = os.getenv("SMTP_HOST", "")
     smtp_user = os.getenv("SMTP_USER", "")
@@ -311,19 +387,19 @@ def send_verification_code(email: str) -> dict:
 
 
 def verify_code_only(email: str, code: str) -> bool:
-    record = _code_store.get(email)
+    record = _load_code_record(email)
     if not record:
         return False
     if time.time() > record["expire_at"]:
-        del _code_store[email]
+        _delete_code_record(email)
         return False
-    return record["code"] == code
+    return hmac.compare_digest(str(record["code"]), str(code))
 
 
 def consume_code(email: str, code: str) -> bool:
     if not verify_code_only(email, code):
         return False
-    del _code_store[email]
+    _delete_code_record(email)
     return True
 
 
@@ -365,7 +441,7 @@ def login_with_password(email: str, password: str) -> Optional[str]:
         return None
 
     expected = _hash_password(password, user.get("salt", ""))
-    if expected != user.get("password_hash", ""):
+    if not hmac.compare_digest(expected, user.get("password_hash", "")):
         return None
 
     expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)

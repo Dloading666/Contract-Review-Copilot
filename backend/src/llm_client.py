@@ -11,6 +11,8 @@ from typing import Optional
 import httpx
 from openai import OpenAI
 
+from .config import get_settings
+
 DEFAULT_MODEL_KEY = "gemma4"
 FALLBACK_MODEL_KEY = "gemma4"
 
@@ -22,7 +24,7 @@ CLOUD_MODEL_LABELS = {
 }
 
 LOCAL_MODEL_LABELS = {
-    "gemma4": "Gemma4 (local)",
+    "gemma4": "Gemma4（免费模型）",
 }
 
 
@@ -35,24 +37,36 @@ class ResolvedModel:
 
 
 def get_primary_model_key() -> str:
-    return os.getenv("PRIMARY_LLM_MODEL_KEY", DEFAULT_MODEL_KEY).strip() or DEFAULT_MODEL_KEY
+    settings = get_settings()
+    return (
+        os.getenv("PRIMARY_LLM_MODEL_KEY", settings.primary_llm_model_key).strip()
+        or DEFAULT_MODEL_KEY
+    )
 
 
 def _cloud_model_ids() -> dict[str, str]:
+    settings = get_settings()
     return {
-        "glm-5": os.getenv("OPENAI_MODEL", "glm-5"),
-        "minimax": os.getenv("MINIMAX_MODEL", "MiniMax-M2.5"),
-        "qwen": os.getenv("QWEN_MODEL", "qwen-plus"),
-        "kimi": os.getenv("KIMI_MODEL", "kimi-k2.5"),
+        "glm-5": os.getenv("OPENAI_MODEL", settings.openai_model),
+        "minimax": os.getenv("MINIMAX_MODEL", settings.minimax_model),
+        "qwen": os.getenv("QWEN_MODEL", settings.qwen_model),
+        "kimi": os.getenv("KIMI_MODEL", settings.kimi_model),
     }
 
 
 def _gemma_model_id() -> str:
-    return os.getenv("GEMMA4_MODEL", "gemma3")
+    settings = get_settings()
+    return os.getenv("GEMMA4_MODEL", settings.gemma4_model)
 
 
 def _gemma_base_url() -> str:
-    return os.getenv("GEMMA4_BASE_URL") or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    settings = get_settings()
+    return (
+        os.getenv("GEMMA4_BASE_URL")
+        or os.getenv("OLLAMA_BASE_URL")
+        or settings.gemma4_base_url
+        or settings.ollama_base_url
+    )
 
 
 def _ollama_api_base_url() -> str:
@@ -61,9 +75,10 @@ def _ollama_api_base_url() -> str:
 
 
 def _cloud_client() -> OpenAI:
+    settings = get_settings()
     return OpenAI(
-        api_key=os.getenv("OPENAI_API_KEY", ""),
-        base_url=os.getenv("OPENAI_BASE_URL", "https://coding.dashscope.aliyuncs.com/v1"),
+        api_key=os.getenv("OPENAI_API_KEY") or (settings.openai_api_key or ""),
+        base_url=os.getenv("OPENAI_BASE_URL") or settings.openai_base_url,
         timeout=httpx.Timeout(30.0, connect=10.0),
     )
 

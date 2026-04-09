@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import App from '../App'
+import App, { buildThinkingSteps } from '../App'
 
 const {
   confirmMock,
@@ -16,6 +16,7 @@ const {
     user: { email: 'demo@example.com', id: 'demo-user' },
     token: 'demo-token',
   }
+
   const idleHookState = {
     phase: 'idle',
     extractedEntities: null,
@@ -27,6 +28,7 @@ const {
     confirm: confirmMock,
     isStreaming: false,
   }
+
   const completeHookState = {
     phase: 'complete',
     extractedEntities: {
@@ -60,14 +62,15 @@ const {
 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
+
     if (url === '/api/models') {
       return {
         ok: true,
         json: async () => ({
           default_model: 'gemma4',
           models: [
+            { key: 'gemma4', label: 'Gemma4' },
             { key: 'glm-5', label: 'GLM-5' },
-            { key: 'gemma4', label: 'Gemma4（本地免费）' },
           ],
         }),
       } as Response
@@ -101,25 +104,14 @@ vi.mock('../components/SideNav', () => ({
 vi.mock('../components/ChatPanel', () => ({
   ChatPanel: ({
     review,
-    selectedModel,
-    availableModels,
-    onModelChange,
     onSendMessage,
   }: {
     review: { status: string }
-    selectedModel: string
-    availableModels: Array<{ key: string; label: string }>
-    onModelChange: (model: 'gemma4') => void
-    onSendMessage: (message: string, model: string) => void
+    onSendMessage: (message: string) => void
   }) => (
     <div>
       <div data-testid="chat-status">{review.status}</div>
-      <div data-testid="selected-model">{selectedModel}</div>
-      <div data-testid="available-model-count">{availableModels.length}</div>
-      <button type="button" onClick={() => onModelChange('gemma4')}>
-        switch-model
-      </button>
-      <button type="button" onClick={() => onSendMessage('Summarize the risks', selectedModel)}>
+      <button type="button" onClick={() => onSendMessage('Summarize the risks')}>
         send-message
       </button>
     </div>
@@ -138,16 +130,15 @@ vi.mock('../components/DocPanel', () => ({
     review: { status: string; filename: string }
     selectedModel: string
     availableModels: Array<{ key: string; label: string }>
-    onModelChange: (model: 'gemma4') => void
+    onModelChange: (model: 'glm-5' | 'gemma4') => void
     onFileUpload: (text: string, filename: string) => void
     onNewConversation?: () => void
   }) => (
     <div>
-      <div data-testid="doc-status">{`${review.status}:${review.filename || 'empty'}`}</div>
-      <div data-testid="doc-selected-model">{selectedModel}</div>
-      <div data-testid="doc-available-model-count">{availableModels.length}</div>
-      <button type="button" onClick={() => onModelChange('gemma4')}>
-        doc-switch-model
+      <div data-testid="doc-status">{`${review.status}:${review.filename || 'empty'}:${selectedModel}`}</div>
+      <div data-testid="model-options">{availableModels.map((option) => option.key).join(',')}</div>
+      <button type="button" onClick={() => onModelChange('glm-5')}>
+        switch-model
       </button>
       <button type="button" onClick={() => onFileUpload('contract body', 'test-contract.docx')}>
         upload-file
@@ -207,7 +198,7 @@ describe('App new conversation flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'new-conversation' }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('doc-status').textContent).toBe('idle:empty')
+      expect(screen.getByTestId('doc-status').textContent).toContain('idle:empty')
     })
 
     const savedHistory = JSON.parse(localStorage.getItem('reviewHistory:demo@example.com') || '[]')
@@ -223,13 +214,62 @@ describe('App new conversation flow', () => {
     expect(localStorage.getItem('reviewHistory')).toBeNull()
   })
 
-  it('persists the selected model per user and uses it for chat requests', async () => {
-    localStorage.setItem('chatModel:demo@example.com', 'gemma4')
-
+  it('keeps model selection in the upload area and uses it for chat requests', async () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('selected-model').textContent).toBe('gemma4')
+      expect(screen.getByTestId('model-options').textContent).toContain('glm-5')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'switch-model' }))
+    fireEvent.click(screen.getByRole('button', { name: 'send-message' }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/chat',
+        expect.objectContaining({
+          body: expect.stringContaining('"model":"glm-5"'),
+        }),
+      )
+    })
+  })
+
+  it('starts review streaming with the selected upload model', async () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'switch-model' }))
+    fireEvent.click(screen.getByRole('button', { name: 'upload-file' }))
+
+    await waitFor(() => {
+      const reviewCalls = useStreamingReviewMock.mock.calls as Array<
+        [string, string, { enabled?: boolean; token?: string; model?: string }]
+      >
+
+      expect(
+          reviewCalls.some(
+            ([, contractText, options]) => (
+              contractText === 'contract body'
+              && options?.enabled === true
+              && options?.token === 'demo-token'
+              && options?.model === 'glm-5'
+            ),
+          ),
+      ).toBe(true)
+    })
+  })
+
+  it('saves review history only once when the review first reaches complete', async () => {
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'upload-file' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('doc-status').textContent).toContain('complete:test-contract.docx')
+      expect(
+        setItemSpy.mock.calls.filter(([key]) => key === 'reviewHistory:demo@example.com').length,
+      ).toBe(1)
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'send-message' }))
@@ -237,62 +277,15 @@ describe('App new conversation flow', () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         '/api/chat',
-        expect.objectContaining({
-          body: expect.stringContaining('"model":"gemma4"'),
-        }),
+        expect.objectContaining({ method: 'POST' }),
       )
     })
-  })
 
-  it('updates the persisted model when the user switches it', async () => {
-    render(<App />)
+    expect(
+      setItemSpy.mock.calls.filter(([key]) => key === 'reviewHistory:demo@example.com').length,
+    ).toBe(1)
 
-    fireEvent.click(screen.getByRole('button', { name: 'switch-model' }))
-
-    await waitFor(() => {
-      expect(localStorage.getItem('chatModel:demo@example.com')).toBe('gemma4')
-      expect(screen.getByTestId('selected-model').textContent).toBe('gemma4')
-    })
-  })
-
-  it('falls back to default model options when /api/models fails', async () => {
-    fetchMock.mockImplementationOnce(async () => {
-      throw new Error('models unavailable')
-    })
-
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('available-model-count').textContent).toBe('5')
-      expect(screen.getByTestId('selected-model').textContent).toBe('gemma4')
-      expect(screen.getByTestId('doc-available-model-count').textContent).toBe('5')
-    })
-  })
-
-  it('shows the selector before upload and sends the selected model into review streaming', async () => {
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('doc-selected-model').textContent).toBe('gemma4')
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: 'upload-file' }))
-
-    await waitFor(() => {
-      const reviewCalls = useStreamingReviewMock.mock.calls as Array<
-        [string, string, { enabled?: boolean; model?: string; token?: string }]
-      >
-      expect(
-        reviewCalls.some(
-          ([, contractText, options]) => (
-            contractText === 'contract body'
-            && options?.enabled === true
-            && options?.model === 'gemma4'
-            && options?.token === 'demo-token'
-          ),
-        ),
-      ).toBe(true)
-    })
+    setItemSpy.mockRestore()
   })
 
   it('resets the workspace when the signed-in user changes', async () => {
@@ -309,9 +302,46 @@ describe('App new conversation flow', () => {
     rerender(<App />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('doc-status').textContent).toBe('idle:empty')
+      expect(screen.getByTestId('doc-status').textContent).toContain('idle:empty')
       expect(screen.getByTestId('chat-status').textContent).toBe('idle')
-      expect(screen.getByTestId('selected-model').textContent).toBe('gemma4')
     })
+  })
+})
+
+describe('buildThinkingSteps', () => {
+  it('marks parse as active when the stream just started', () => {
+    expect(buildThinkingSteps('started', null, null).map((step) => step.status)).toEqual([
+      'active',
+      'pending',
+      'pending',
+      'pending',
+    ])
+  })
+
+  it('marks extraction as active during entity extraction', () => {
+    expect(buildThinkingSteps('extraction', null, null).map((step) => step.status)).toEqual([
+      'done',
+      'active',
+      'pending',
+      'pending',
+    ])
+  })
+
+  it('marks retrieval as active during routing', () => {
+    expect(buildThinkingSteps('routing', null, null).map((step) => step.status)).toEqual([
+      'done',
+      'done',
+      'active',
+      'pending',
+    ])
+  })
+
+  it('marks review as active during logic review', () => {
+    expect(buildThinkingSteps('logic_review', null, null).map((step) => step.status)).toEqual([
+      'done',
+      'done',
+      'done',
+      'active',
+    ])
   })
 })

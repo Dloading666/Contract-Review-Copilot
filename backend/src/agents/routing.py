@@ -108,6 +108,7 @@ def decide_routing(contract_text: str, entities: dict, model_key: str | None = N
                 chunks = retrieve_similar_chunks(query, top_k=5, min_similarity=0.3)
                 routing["pgvector_results"] = chunks
             except Exception as e:
+                print(f"[Routing] pgvector retrieval failed: {e}", flush=True)
                 routing["pgvector_results"] = []
 
         return routing

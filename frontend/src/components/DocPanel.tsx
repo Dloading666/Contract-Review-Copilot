@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import mammoth from 'mammoth'
 import { ZoomIn, ZoomOut, Download, Upload, Plus } from 'lucide-react'
 import type { ModelKey, ModelOption, ReviewState, RiskCard } from '../App'
@@ -75,6 +75,10 @@ export function DocPanel({
   onNewConversation,
 }: DocPanelProps) {
   const [zoom, setZoom] = useState(100)
+
+  useEffect(() => {
+    setZoom(100)
+  }, [review.sessionId, review.filename])
 
   const isEmpty = review.status === 'idle'
   const contractText = review.contractText

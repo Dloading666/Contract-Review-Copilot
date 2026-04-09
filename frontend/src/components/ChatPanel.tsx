@@ -1,30 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
-import { motion, AnimatePresence } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import {
-  Send,
   CheckSquare,
-  Loader,
-  Wand2,
   ChevronDown,
   ChevronUp,
-  TriangleAlert,
-  FileText,
   Download,
+  FileText,
+  Loader,
+  Send,
+  TriangleAlert,
+  Wand2,
 } from 'lucide-react'
-import type { ModelKey, ModelOption, ReviewState, RiskCard } from '../App'
-import { ModelSelector } from './ModelSelector'
+import type { ReviewState, RiskCard } from '../App'
 
 interface ChatPanelProps {
   review: ReviewState
   authToken?: string | null
-  selectedModel: ModelKey
-  availableModels: ModelOption[]
-  onModelChange: (model: ModelKey) => void
   onExportReport: () => void
   isExportingReport?: boolean
   onBreakpointConfirm: () => void
   onReset: () => void
-  onSendMessage: (message: string, model: string) => void
+  onSendMessage: (message: string) => void
 }
 
 function isNoRiskPlaceholderCard(card: RiskCard) {
@@ -43,9 +39,6 @@ function isNoRiskPlaceholderCard(card: RiskCard) {
 export function ChatPanel({
   review,
   authToken,
-  selectedModel,
-  availableModels,
-  onModelChange,
   onExportReport,
   isExportingReport = false,
   onBreakpointConfirm,
@@ -57,11 +50,13 @@ export function ChatPanel({
   const [autoFixSuggestions, setAutoFixSuggestions] = useState<Record<string, string>>({})
   const [loadingFix, setLoadingFix] = useState<string | null>(null)
   const [elapsedTime, setElapsedTime] = useState(0)
+  const [isGeneratingGuide, setIsGeneratingGuide] = useState(false)
   const [showChatComposer, setShowChatComposer] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const finalReportRef = useRef<HTMLDivElement>(null)
-  const hasUserMessages = review.chatMessages.some((msg) => msg.role === 'user')
+  const previousStatusRef = useRef(review.status)
+  const hasUserMessages = review.chatMessages.some((message) => message.role === 'user')
 
   useEffect(() => {
     if (review.status === 'reviewing') {
@@ -71,8 +66,12 @@ export function ChatPanel({
       clearInterval(timerRef.current)
       timerRef.current = null
     }
+
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
     }
   }, [review.status])
 
@@ -83,25 +82,49 @@ export function ChatPanel({
   useEffect(() => {
     setShowChatComposer(false)
     setInputValue('')
+    setExpandedCard(null)
+    setAutoFixSuggestions({})
+    setLoadingFix(null)
   }, [review.sessionId])
 
   useEffect(() => {
-    if (!hasUserMessages) return
-    setShowChatComposer(true)
+    if (hasUserMessages) {
+      setShowChatComposer(true)
+    }
   }, [hasUserMessages])
 
   useEffect(() => {
-    if (review.finalReport.length !== 1) return
-    finalReportRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+    if (review.finalReport.length === 1) {
+      finalReportRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+    }
   }, [review.finalReport.length])
+
+  useEffect(() => {
+    const cameFromBreakpoint = previousStatusRef.current === 'breakpoint'
+    if (cameFromBreakpoint && review.status === 'reviewing' && review.finalReport.length === 0) {
+      setIsGeneratingGuide(true)
+    }
+
+    if (
+      review.status === 'idle'
+      || review.status === 'error'
+      || review.status === 'complete'
+      || review.finalReport.length > 0
+    ) {
+      setIsGeneratingGuide(false)
+    }
+
+    previousStatusRef.current = review.status
+  }, [review.finalReport.length, review.status])
 
   const formatTime = (seconds: number) => (seconds < 60
     ? `${seconds}秒`
     : `${Math.floor(seconds / 60)}分 ${seconds % 60}秒`)
 
   const handleSend = () => {
-    if (!inputValue.trim()) return
-    onSendMessage(inputValue.trim(), selectedModel)
+    const message = inputValue.trim()
+    if (!message) return
+    onSendMessage(message)
     setInputValue('')
   }
 
@@ -115,6 +138,7 @@ export function ChatPanel({
   const handleAutoFix = async (card: RiskCard) => {
     setLoadingFix(card.id)
     setExpandedCard(card.id)
+
     try {
       const response = await fetch('/api/autofix', {
         method: 'POST',
@@ -129,28 +153,44 @@ export function ChatPanel({
           legal_ref: card.legalRef,
         }),
       })
+
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
       const data = await response.json() as { suggestion?: string }
-      setAutoFixSuggestions((prev) => ({ ...prev, [card.id]: data.suggestion ?? '生成修正建议失败。' }))
+      setAutoFixSuggestions((prev) => ({
+        ...prev,
+        [card.id]: data.suggestion ?? '生成修正建议失败。',
+      }))
     } catch {
       setAutoFixSuggestions((prev) => ({
         ...prev,
-        [card.id]: `建议将"${card.clause}"条款修改为符合《民法典》相关规定的表述。参考依据：${card.legalRef}。可优先采用这条建议：${card.suggestion}`,
+        [card.id]: `建议将“${card.clause}”条款修改为符合《民法典》等相关规定的表述。参考依据：${card.legalRef}。可优先采用这条建议：${card.suggestion}`,
       }))
     } finally {
       setLoadingFix(null)
     }
   }
 
+  const toggleExpandedCard = (cardId: string) => {
+    setExpandedCard((current) => (current === cardId ? null : cardId))
+  }
+
   const isReviewing = review.status === 'reviewing'
   const isBreakpoint = review.status === 'breakpoint'
   const isComplete = review.status === 'complete'
   const hasContent = review.status !== 'idle'
+  const isGeneratingGuideInProgress = isReviewing && isGeneratingGuide && review.finalReport.length === 0
+  const reviewingStatusText = isGeneratingGuideInProgress ? '正在生成避坑指南中...' : '正在分析合同...'
+  const reviewingIndicatorText = isGeneratingGuideInProgress
+    ? '正在生成避坑指南中...'
+    : '认真审查中，请耐心等待...'
   const canChatAboutReport = isComplete && review.finalReport.length > 0
   const showChatHistory = canChatAboutReport && showChatComposer && review.chatMessages.length > 0
   const substantiveRiskCards = review.riskCards.filter((card) => !isNoRiskPlaceholderCard(card))
   const noRiskSummaryCard = review.riskCards.find((card) => isNoRiskPlaceholderCard(card)) ?? null
   const hasNoRiskConclusion = Boolean(noRiskSummaryCard) && substantiveRiskCards.length === 0
+  const highRiskCount = substantiveRiskCards.filter((card) => card.level === 'high').length
+  const mediumRiskCount = substantiveRiskCards.filter((card) => card.level === 'medium').length
 
   return (
     <section className="chat-panel">
@@ -176,7 +216,7 @@ export function ChatPanel({
               <>
                 <span className={`chat-panel__status-dot ${isReviewing ? 'chat-panel__status-dot--pulse' : ''}`} />
                 <span>
-                  {isReviewing && '正在分析合同...'}
+                  {isReviewing && reviewingStatusText}
                   {isBreakpoint && '等待确认...'}
                   {isComplete && '审查完成'}
                   {review.status === 'error' && '处理失败'}
@@ -191,11 +231,7 @@ export function ChatPanel({
 
       <div className="chat-panel__messages">
         {hasContent && (
-          <motion.div
-            className="thinking-steps"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
+          <motion.div className="thinking-steps" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
             {review.thinkingSteps.map((step) => (
               <div
                 key={step.id}
@@ -229,10 +265,10 @@ export function ChatPanel({
             {substantiveRiskCards.length > 0 && (
               <>
                 已识别到 <strong>{substantiveRiskCards.length} 处</strong> 潜在合规风险。
-                {substantiveRiskCards[0] && <> 其中「{substantiveRiskCards[0].title}」建议优先处理。</>}
+                {substantiveRiskCards[0] && <> 其中“{substantiveRiskCards[0].title}”建议优先处理。</>}
               </>
             )}
-            {hasNoRiskConclusion && <>已识别 <strong>0 处</strong> 潜在合规风险。当前合同未发现明显不公平条款。</>}
+            {hasNoRiskConclusion && <>已识别到 <strong>0 处</strong> 潜在合规风险。当前合同未发现明显不公平条款。</>}
             {isComplete && review.finalReport.length === 0 && !hasNoRiskConclusion && <>审查完成，暂未发现明显风险点。</>}
           </motion.div>
         )}
@@ -246,9 +282,12 @@ export function ChatPanel({
                 initial={{ opacity: 0, x: -8 }}
                 animate={{ opacity: 1, x: 0 }}
               >
-                <div className="risk-card__header">
+                <div
+                  className="risk-card__header risk-card__header--interactive"
+                  onClick={() => toggleExpandedCard(card.id)}
+                >
                   <span className={`risk-card__badge risk-card__badge--${card.level}`}>
-                    {card.level === 'high' ? '⚠ 高风险' : '◈ 提示'}
+                    {card.level === 'high' ? '高风险' : '提示'}
                   </span>
                   {expandedCard === card.id ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                 </div>
@@ -260,9 +299,7 @@ export function ChatPanel({
                     {card.clause}
                   </div>
                   <div className="risk-card__desc">{card.issue}</div>
-                  {card.legalRef && (
-                    <div className="risk-card__legal">法律依据：{card.legalRef}</div>
-                  )}
+                  {card.legalRef && <div className="risk-card__legal">法律依据：{card.legalRef}</div>}
                 </div>
 
                 <AnimatePresence>
@@ -305,7 +342,7 @@ export function ChatPanel({
                   </button>
                   <button
                     className="risk-card__action-btn"
-                    onClick={() => setExpandedCard(expandedCard === card.id ? null : card.id)}
+                    onClick={() => toggleExpandedCard(card.id)}
                   >
                     {expandedCard === card.id ? (
                       <>
@@ -374,32 +411,32 @@ export function ChatPanel({
               <div style={{ fontWeight: 700, color: 'var(--color-orange)', marginBottom: 6 }}>风险扫描完成</div>
               <div>{review.breakpointMessage}</div>
               <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {review.riskCards.filter((card) => card.level === 'high').length > 0 && (
+                {highRiskCount > 0 && (
                   <span className="breakpoint-card__tag breakpoint-card__tag--high">
-                    {review.riskCards.filter((card) => card.level === 'high').length} 条高危
+                    {highRiskCount} 条高危
                   </span>
                 )}
-                {review.riskCards.filter((card) => card.level === 'medium').length > 0 && (
+                {mediumRiskCount > 0 && (
                   <span className="breakpoint-card__tag">
-                    {review.riskCards.filter((card) => card.level === 'medium').length} 条提示
+                    {mediumRiskCount} 条提示
                   </span>
                 )}
               </div>
               <div style={{ marginTop: 10, fontSize: 12, color: 'var(--color-ink-muted)' }}>
-                ↓ 点击下方「确认，生成完整报告」继续
+                点击下方“确认，生成完整报告”继续
               </div>
             </div>
           </motion.div>
         )}
 
-        {isReviewing && review.riskCards.length === 0 && (
+        {isReviewing && (review.riskCards.length === 0 || isGeneratingGuideInProgress) && (
           <div className="streaming-indicator">
             <div className="streaming-dots">
               <span className="streaming-dot" />
               <span className="streaming-dot" />
               <span className="streaming-dot" />
             </div>
-            <span>认真审查中，请耐心等待...</span>
+            <span>{reviewingIndicatorText}</span>
             <span style={{ marginLeft: 'auto', fontSize: 8, color: 'var(--color-ink-muted)' }}>
               {formatTime(elapsedTime)}
             </span>
@@ -413,7 +450,7 @@ export function ChatPanel({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
           >
-            <div className="final-report__heading-strip">■ 合同审查报告</div>
+            <div className="final-report__heading-strip">合同审查报告</div>
             <div className="final-report__body">
               {review.finalReport.map((paragraph, index) => {
                 if (paragraph.startsWith('## ')) {
@@ -423,6 +460,7 @@ export function ChatPanel({
                     </h2>
                   )
                 }
+
                 if (paragraph.startsWith('### ')) {
                   return (
                     <h3 key={paragraph + index} className="final-report__h3">
@@ -430,6 +468,7 @@ export function ChatPanel({
                     </h3>
                   )
                 }
+
                 return (
                   <p key={paragraph + index} className="final-report__text">
                     {paragraph}
@@ -449,7 +488,7 @@ export function ChatPanel({
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
               >
-                <div className="chat-msg__label">{message.role === 'assistant' ? '🐶 助手' : '你'}</div>
+                <div className="chat-msg__label">{message.role === 'assistant' ? '助手' : '你'}</div>
                 <div className="chat-msg__bubble">
                   {message.content.split('\n').map((line, index) => (
                     <p key={`${message.id}-${index}`}>{line}</p>
@@ -467,12 +506,6 @@ export function ChatPanel({
         {canChatAboutReport ? (
           showChatComposer ? (
             <div className="chat-input-stack">
-              <ModelSelector
-                selectedModel={selectedModel}
-                availableModels={availableModels}
-                onModelChange={onModelChange}
-              />
-
               <div className="chat-input-row">
                 <textarea
                   className="chat-input-textarea"
@@ -481,11 +514,7 @@ export function ChatPanel({
                   onChange={(event) => setInputValue(event.target.value)}
                   onKeyDown={handleKeyDown}
                 />
-                <button
-                  className="chat-input-send"
-                  onClick={handleSend}
-                  disabled={!inputValue.trim()}
-                >
+                <button className="chat-input-send" onClick={handleSend} disabled={!inputValue.trim()}>
                   <Send size={24} />
                 </button>
               </div>
@@ -599,7 +628,7 @@ export function ChatPanel({
                 onClick={onBreakpointConfirm}
                 style={{ flex: 1, padding: '14px 0', fontSize: 14 }}
               >
-                ✓ 确认，生成完整报告
+                确认，生成完整报告
               </button>
               <button
                 className="px-btn px-btn--ghost"
@@ -612,7 +641,7 @@ export function ChatPanel({
           </div>
         ) : (
           <div className="chat-locked">
-            <span style={{ fontSize: 22 }}>🔒</span>
+            <span style={{ fontSize: 22 }}>Q&A</span>
             <span>
               {review.status === 'idle'
                 ? '上传合同后开始分析，报告生成完成后可进行问答'
