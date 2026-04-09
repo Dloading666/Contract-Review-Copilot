@@ -16,9 +16,6 @@ class Settings(BaseSettings):
     qwen_model: str = "qwen-plus"
     kimi_model: str = "kimi-k2.5"
     primary_llm_model_key: str = "kimi"
-    gemma4_model: str = "gemma3"
-    gemma4_base_url: str | None = None
-    ollama_base_url: str = "http://localhost:11434/v1"
     jwt_secret: str | None = None
     cors_allowed_origins: str = "http://localhost:3000,http://localhost:5173"
 
@@ -30,6 +27,36 @@ class Settings(BaseSettings):
     redis_session_ttl_seconds: int = 7200
     redis_search_ttl_seconds: int = 1800
     redis_llm_ttl_seconds: int = 3600
+    redis_auth_code_ttl_seconds: int = 300
+
+    # Commercialization settings
+    free_review_count: int = 2
+    review_price_fen: int = 300
+    review_question_quota: int = 15
+    extra_question_price_fen: int = 8
+    recharge_min_amount_fen: int = 300
+    recharge_quick_amounts: str = "300,990,1990"
+
+    # Aliyun SMS
+    aliyun_sms_access_key_id: str | None = None
+    aliyun_sms_access_key_secret: str | None = None
+    aliyun_sms_sign_name: str | None = None
+    aliyun_sms_template_code: str | None = None
+    aliyun_sms_region_id: str = "cn-hangzhou"
+    aliyun_sms_endpoint: str = "https://dysmsapi.aliyuncs.com"
+
+    # WeChat Pay Native
+    wechat_pay_appid: str | None = None
+    wechat_pay_mchid: str | None = None
+    wechat_pay_serial_no: str | None = None
+    wechat_pay_private_key_path: str | None = None
+    wechat_pay_private_key_pem: str | None = None
+    wechat_pay_platform_serial_no: str | None = None
+    wechat_pay_platform_cert_path: str | None = None
+    wechat_pay_platform_cert_pem: str | None = None
+    wechat_pay_api_v3_key: str | None = None
+    wechat_pay_notify_url: str | None = None
+    wechat_pay_api_base_url: str = "https://api.mch.weixin.qq.com"
 
     class Config:
         env_file = ".env"

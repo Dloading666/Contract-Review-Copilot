@@ -65,7 +65,7 @@ def check_breakpoint(issues: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(substantive_issues)
 
     return {
-        "needs_review": True,
+        "needs_review": total > 0,
         "question": _build_question(total, critical_count, high_count),
         "issues_count": total,
         "critical_count": critical_count,

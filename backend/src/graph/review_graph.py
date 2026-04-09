@@ -168,12 +168,16 @@ async def run_review_stream(
                     await asyncio.sleep(0.4)
 
             elif node_name == "breakpoint":
-                yield _sse_event("breakpoint", {
-                    "session_id": session_id,
-                    "breakpoint": state_snapshot.get("breakpoint_data"),
-                    "issues": state_snapshot.get("logic_review_results") or [],
-                })
-                return
+                breakpoint_data = state_snapshot.get("breakpoint_data") or {}
+                if breakpoint_data.get("needs_review"):
+                    yield _sse_event("breakpoint", {
+                        "session_id": session_id,
+                        "breakpoint": breakpoint_data,
+                        "issues": state_snapshot.get("logic_review_results") or [],
+                    })
+                    return
+
+    yield _sse_event("review_complete", {"session_id": session_id})
 
 
 async def run_aggregation_stream(

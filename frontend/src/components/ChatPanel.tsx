@@ -187,13 +187,23 @@ export function ChatPanel({
   const reviewingIndicatorText = isGeneratingGuideInProgress
     ? '正在生成避坑指南中...'
     : '认真审查中，请耐心等待...'
-  const canChatAboutReport = isComplete && review.finalReport.length > 0
-  const showChatHistory = canChatAboutReport && showChatComposer && review.chatMessages.length > 0
   const substantiveRiskCards = review.riskCards.filter((card) => !isNoRiskPlaceholderCard(card))
   const noRiskSummaryCard = review.riskCards.find((card) => isNoRiskPlaceholderCard(card)) ?? null
   const hasNoRiskConclusion = Boolean(noRiskSummaryCard) && substantiveRiskCards.length === 0
+  const canChatAboutReport = isComplete && review.finalReport.length > 0
+  const canChatWithoutReport = isComplete && hasNoRiskConclusion
+  const showChatHistory = (
+    (canChatAboutReport && showChatComposer)
+    || canChatWithoutReport
+  ) && review.chatMessages.length > 0
   const highRiskCount = substantiveRiskCards.filter((card) => card.level === 'high').length
   const mediumRiskCount = substantiveRiskCards.filter((card) => card.level === 'medium').length
+
+  useEffect(() => {
+    if (review.status === 'complete' && hasNoRiskConclusion) {
+      setShowChatComposer(true)
+    }
+  }, [hasNoRiskConclusion, review.status])
 
   return (
     <section className="chat-panel">
@@ -607,6 +617,21 @@ export function ChatPanel({
               </div>
             </div>
           )
+        ) : canChatWithoutReport ? (
+          <div className="chat-input-stack">
+            <div className="chat-input-row">
+              <textarea
+                className="chat-input-textarea"
+                placeholder="当前合同未发现明显不公平条款。你可以继续追问：押金怎么约定更稳妥？还有哪些签约注意点？"
+                value={inputValue}
+                onChange={(event) => setInputValue(event.target.value)}
+                onKeyDown={handleKeyDown}
+              />
+              <button className="chat-input-send" onClick={handleSend} disabled={!inputValue.trim()}>
+                <Send size={24} />
+              </button>
+            </div>
+          </div>
         ) : isBreakpoint && review.breakpointMessage ? (
           <div
             style={{

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App, { buildThinkingSteps } from '../App'
@@ -91,6 +92,29 @@ vi.mock('../components/SideNav', () => ({
   SideNav: () => <div data-testid="side-nav" />,
 }))
 
+vi.mock('../components/DisclaimerModal', () => ({
+  DisclaimerModal: ({ onAccept }: { onAccept: () => void }) => {
+    const [checked, setChecked] = useState(false)
+
+    return (
+      <div role="dialog" aria-label="Disclaimer">
+        <label>
+          <input
+            type="checkbox"
+            aria-label="I agree"
+            checked={checked}
+            onChange={(event) => setChecked(event.currentTarget.checked)}
+          />
+          I agree
+        </label>
+        <button type="button" disabled={!checked} onClick={onAccept}>
+          Accept and continue
+        </button>
+      </div>
+    )
+  },
+}))
+
 vi.mock('../components/ChatPanel', () => ({
   ChatPanel: ({
     review,
@@ -182,12 +206,12 @@ describe('App new conversation flow', () => {
 
     render(<App />)
 
-    expect(screen.getByRole('dialog', { name: '免责声明' })).not.toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Disclaimer' })).toBeTruthy()
 
-    const confirmButton = screen.getByRole('button', { name: '同意并继续' })
+    const confirmButton = screen.getByRole('button', { name: 'Accept and continue' })
     expect(confirmButton.getAttribute('disabled')).not.toBeNull()
 
-    fireEvent.click(screen.getByRole('checkbox', { name: '我已知悉并同意上述免责声明' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'I agree' }))
     expect(confirmButton.getAttribute('disabled')).toBeNull()
 
     fireEvent.click(confirmButton)
@@ -300,6 +324,7 @@ describe('App new conversation flow', () => {
       const reviewCallsAfterConfirm = useStreamingReviewMock.mock.calls as Array<
         [string, string, { enabled?: boolean; token?: string; model?: string }]
       >
+
       expect(
         reviewCallsAfterConfirm.some(
           ([, contractText, options]) => (
@@ -313,32 +338,25 @@ describe('App new conversation flow', () => {
     })
   })
 
-  it('shows a no-risk breakpoint message when only the placeholder issue is present', async () => {
+  it('goes straight to complete when only the placeholder issue is present', async () => {
     useStreamingReviewMock.mockImplementation((_sessionId: string, contractText: string) => (
       contractText
         ? {
-            phase: 'breakpoint',
+            phase: 'complete',
             extractedEntities: null,
             routingDecision: null,
             issues: [
               {
-                clause: '整体评估',
-                issue: '未发现明显不公平条款。',
-                suggestion: '签约前仍建议逐条核对押金、违约责任和证据留存要求。',
+                clause: 'Overall summary',
+                issue: 'No obviously unfair clauses were detected.',
+                suggestion: 'Keep checking deposit, termination, and evidence retention clauses before signing.',
                 level: 'low',
-                legal_reference: '《民法典》合同编',
+                legal_reference: 'Civil Code Contract Book',
                 matched_text: '',
                 risk_level: 1,
               },
             ],
-            breakpointData: {
-              needs_review: true,
-              question: '本次审查未发现明显不公平条款，是否继续生成完整的避坑指南报告？',
-              issues_count: 0,
-              critical_count: 0,
-              high_count: 0,
-              medium_count: 0,
-            },
+            breakpointData: null,
             reportParagraphs: [],
             error: null,
             confirm: confirmMock,
@@ -362,10 +380,9 @@ describe('App new conversation flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'upload-file' }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('chat-status').textContent).toBe('breakpoint')
-      expect(screen.getByTestId('chat-breakpoint-message').textContent).toBe(
-        '本次未检测到明显风险条款，是否继续生成完整的避坑指南报告？',
-      )
+      expect(screen.getByTestId('chat-status').textContent).toBe('complete')
+      expect(screen.getByTestId('chat-breakpoint-message').textContent).toBe('')
+      expect(screen.getByTestId('doc-status').textContent).toContain('complete:test-contract.docx')
     })
   })
 
@@ -413,11 +430,11 @@ describe('App new conversation flow', () => {
     rerender(<App />)
 
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: '免责声明' })).not.toBeNull()
+      expect(screen.getByRole('dialog', { name: 'Disclaimer' })).toBeTruthy()
     })
 
-    fireEvent.click(screen.getByRole('checkbox', { name: '我已知悉并同意上述免责声明' }))
-    fireEvent.click(screen.getByRole('button', { name: '同意并继续' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'I agree' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Accept and continue' }))
 
     await waitFor(() => {
       expect(screen.getByTestId('doc-status').textContent).toContain('idle:empty')
