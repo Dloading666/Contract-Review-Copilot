@@ -9,6 +9,7 @@ from .entity_extraction import create_chat_completion, extract_entities
 from .routing import decide_routing
 from .logic_review import review_clauses
 from ..llm_client import get_primary_model_key
+from .legal_skill import LEGAL_RISK_ASSESSMENT_SKILL
 
 
 REPORT_PROMPT = """你是一个专业的法律文档撰写助手。请根据以下合同审查结果，生成一份结构化的《避坑指南》报告。
@@ -97,10 +98,11 @@ def generate_report(
         legal_refs = list(set([i.get("legal_reference", "") for i in issues if i.get("legal_reference")]))
         legal_basis = "\n".join([f"- {ref}" for ref in legal_refs[:5]]) if legal_refs else "《民法典》合同编通则"
 
+        system_content = LEGAL_RISK_ASSESSMENT_SKILL
         response = create_chat_completion(
             model=model_key or get_primary_model_key(),
             messages=[
-                {"role": "system", "content": "你是一个专业的法律文档撰写助手，擅长将复杂的法律分析转化为清晰易懂的报告。"},
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": REPORT_PROMPT.format(
                     lessor=lessor,
                     lessee=lessee,

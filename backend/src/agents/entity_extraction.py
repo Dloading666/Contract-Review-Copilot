@@ -82,7 +82,14 @@ def _store_cached_response(cache_key: str, response, fallback_model: str) -> Non
 def create_chat_completion(**kwargs):
     """
     统一的 LLM 调用入口，复用共享路由并增加缓存。
+    当设置 ANTHROPIC_API_KEY 时，路由至 Claude（使用 legal skill 能力）。
     """
+    from .legal_skill import _is_claude_enabled, create_claude_completion, _get_claude_model
+    if _is_claude_enabled():
+        model = kwargs.pop("model", _get_claude_model())
+        messages = kwargs.pop("messages", [])
+        return create_claude_completion(messages, model, **kwargs)
+
     import hashlib
     import json as json_module
 

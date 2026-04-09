@@ -10,6 +10,7 @@ from datetime import datetime
 
 from .entity_extraction import create_chat_completion, extract_entities
 from .routing import decide_routing
+from .legal_skill import _is_claude_enabled, REVIEW_CONTRACT_SKILL
 from ..search import build_search_context
 from ..llm_client import get_primary_model_key
 
@@ -569,10 +570,11 @@ def review_clauses(
             contract_text=review_text[:5000],
         )
 
+        system_content = REVIEW_CONTRACT_SKILL
         response = create_chat_completion(
             model=model_key or get_primary_model_key(),
             messages=[
-                {"role": "system", "content": "你是一个专业的合同审查律师，擅长发现合同中的不公平条款和法律风险。"},
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
