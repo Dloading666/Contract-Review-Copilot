@@ -8,6 +8,7 @@ from datetime import datetime
 from .entity_extraction import create_chat_completion, extract_entities
 from .routing import decide_routing
 from .logic_review import review_clauses
+from .legal_skill import _is_claude_enabled, LEGAL_RISK_ASSESSMENT_SKILL
 
 
 REPORT_PROMPT = """你是一个专业的法律文档撰写助手。请根据以下合同审查结果，生成一份结构化的《避坑指南》报告。
@@ -92,10 +93,11 @@ def generate_report(contract_text: str, issues: list[dict] | None = None) -> lis
         legal_refs = list(set([i.get("legal_reference", "") for i in issues if i.get("legal_reference")]))
         legal_basis = "\n".join([f"- {ref}" for ref in legal_refs[:5]]) if legal_refs else "《民法典》合同编通则"
 
+        system_content = LEGAL_RISK_ASSESSMENT_SKILL
         response = create_chat_completion(
             model=os.getenv("OPENAI_MODEL", "glm-5"),
             messages=[
-                {"role": "system", "content": "你是一个专业的法律文档撰写助手，擅长将复杂的法律分析转化为清晰易懂的报告。"},
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": REPORT_PROMPT.format(
                     lessor=lessor,
                     lessee=lessee,

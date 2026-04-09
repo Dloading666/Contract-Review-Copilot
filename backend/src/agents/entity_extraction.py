@@ -83,7 +83,14 @@ def create_chat_completion(**kwargs):
     """
     Call the primary chat model first and automatically fail over to GLM-4.7-Flash
     when the primary request raises an exception.
+    When ANTHROPIC_API_KEY is set, routes to Claude with legal skill capabilities.
     """
+    from .legal_skill import _is_claude_enabled, create_claude_completion, _get_claude_model
+    if _is_claude_enabled():
+        model = kwargs.pop("model", _get_claude_model())
+        messages = kwargs.pop("messages", [])
+        return create_claude_completion(messages, model, **kwargs)
+
     primary_model = kwargs.pop("model", os.getenv("OPENAI_MODEL", "glm-5"))
     request_kwargs = {**kwargs, "model": primary_model}
     cache_key = _chat_completion_cache_key(primary_model, request_kwargs)

@@ -7,6 +7,7 @@ import json
 import re
 from .entity_extraction import create_chat_completion, extract_entities
 from .routing import decide_routing
+from .legal_skill import _is_claude_enabled, REVIEW_CONTRACT_SKILL
 from ..search import build_search_context
 
 
@@ -270,10 +271,11 @@ def review_clauses(contract_text: str, routing: dict | None = None, entities: di
             rag_context=search_context or "未检索到额外法规上下文，请基于合同文本和通用法律原则审查。",
         )
 
+        system_content = REVIEW_CONTRACT_SKILL
         response = create_chat_completion(
             model=os.getenv("OPENAI_MODEL", "glm-5"),
             messages=[
-                {"role": "system", "content": "你是一个专业的合同审查律师，擅长发现合同中的不公平条款和法律风险。"},
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
