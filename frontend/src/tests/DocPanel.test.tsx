@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import type { ComponentProps } from 'react'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DocPanel } from '../components/DocPanel'
-import type { ModelOption, ReviewState } from '../App'
+import type { ReviewState } from '../App'
 
 function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
   return {
@@ -9,6 +10,7 @@ function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
     sessionId: 'session-1',
     contractText: '',
     filename: '',
+    ocrWarnings: [],
     thinkingSteps: [
       { id: 'parse', label: 'parse', status: 'pending' },
       { id: 'extract', label: 'extract', status: 'pending' },
@@ -26,101 +28,193 @@ function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
   }
 }
 
-const modelOptions: ModelOption[] = [
-  { key: 'gemma4', label: 'Gemma4' },
-  { key: 'glm-5', label: 'GLM-5' },
-]
+function renderDocPanel(
+  reviewOverrides: Partial<ReviewState> = {},
+  propOverrides: Partial<ComponentProps<typeof DocPanel>> = {},
+) {
+  const props: ComponentProps<typeof DocPanel> = {
+    review: buildReviewState(reviewOverrides),
+    authToken: 'demo-token',
+    onFileUpload: vi.fn(),
+    onOcrReady: vi.fn(),
+    onContractTextChange: vi.fn(),
+    onConfirmReview: vi.fn(),
+    onReset: vi.fn(),
+    onNewConversation: vi.fn(),
+    ...propOverrides,
+  }
+
+  return {
+    ...render(<DocPanel {...props} />),
+    props,
+  }
+}
 
 describe('DocPanel', () => {
-  it('shows a model selector in the upload state and forwards changes', () => {
-    const onModelChange = vi.fn()
+  beforeEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
 
-    render(
-      <DocPanel
-        review={buildReviewState()}
-        selectedModel="gemma4"
-        availableModels={modelOptions}
-        onModelChange={onModelChange}
-        onFileUpload={vi.fn()}
-      />,
+  it('does not render a model selector in the upload state', () => {
+    const { container } = renderDocPanel()
+    expect(container.querySelector('.model-select')).toBeNull()
+  })
+
+  it('uploads multiple images through the unified OCR ingest endpoint and waits for confirmation', async () => {
+    const onFileUpload = vi.fn()
+    const onOcrReady = vi.fn()
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        source_type: 'image_batch',
+        display_name: '合同照片 等 2 页图片',
+        merged_text: '甲方：张三\n乙方：李四',
+        warnings: ['第 2 页有 1 行低置信度文字，建议重点核对。'],
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { container } = renderDocPanel(
+      {},
+      {
+        authToken: 'demo-token',
+        onFileUpload,
+        onOcrReady,
+      },
     )
 
-    expect(screen.getByText(/开始分析前先选择模型/)).toBeTruthy()
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    const imageFiles = [
+      new File(['fake-image-1'], 'contract-1.png', { type: 'image/png' }),
+      new File(['fake-image-2'], 'contract-2.png', { type: 'image/png' }),
+    ]
 
-    fireEvent.click(screen.getByRole('button', { name: /模型/i }))
-    fireEvent.click(screen.getByRole('option', { name: 'GLM-5' }))
+    fireEvent.change(fileInput, { target: { files: imageFiles } })
 
-    expect(onModelChange).toHaveBeenCalledWith('glm-5')
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/ocr/ingest',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { Authorization: 'Bearer demo-token' },
+          body: expect.any(FormData),
+        }),
+      )
+      expect(onOcrReady).toHaveBeenCalledWith(
+        '甲方：张三\n乙方：李四',
+        '合同照片 等 2 页图片',
+        ['第 2 页有 1 行低置信度文字，建议重点核对。'],
+      )
+      expect(onFileUpload).not.toHaveBeenCalled()
+    })
+  })
+
+  it('uploads a PDF through the ingest endpoint and starts review immediately when text extraction succeeds', async () => {
+    const onFileUpload = vi.fn()
+    const onOcrReady = vi.fn()
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        source_type: 'pdf_text',
+        display_name: 'lease.pdf',
+        merged_text: '第一条 租赁用途\n第二条 租金',
+        warnings: [],
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { container } = renderDocPanel({}, { onFileUpload, onOcrReady })
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    const pdfFile = new File(['fake-pdf'], 'lease.pdf', { type: 'application/pdf' })
+
+    fireEvent.change(fileInput, { target: { files: [pdfFile] } })
+
+    await waitFor(() => {
+      expect(onFileUpload).toHaveBeenCalledWith('第一条 租赁用途\n第二条 租金', 'lease.pdf')
+      expect(onOcrReady).not.toHaveBeenCalled()
+    })
+  })
+
+  it('renders editable OCR text and warnings before the review starts', () => {
+    const onContractTextChange = vi.fn()
+    const onConfirmReview = vi.fn()
+
+    const { container, getByText } = renderDocPanel(
+      {
+        status: 'ocr_ready',
+        filename: 'contract-photo.png',
+        contractText: '甲方：张三\n乙方：李四',
+        ocrWarnings: ['第 1 页检测到截图状态栏噪音，请删除无关文字。'],
+      },
+      {
+        onContractTextChange,
+        onConfirmReview,
+      },
+    )
+
+    const textarea = container.querySelector('.doc-editor__textarea') as HTMLTextAreaElement
+    const confirmButton = container.querySelector('.doc-panel__footer-right .px-btn--green') as HTMLButtonElement
+
+    expect(textarea.value).toBe('甲方：张三\n乙方：李四')
+    expect(getByText('第 1 页检测到截图状态栏噪音，请删除无关文字。')).not.toBeNull()
+    expect(confirmButton.disabled).toBe(false)
+
+    fireEvent.change(textarea, {
+      target: { value: '修订后的 OCR 文本' },
+    })
+    fireEvent.click(confirmButton)
+
+    expect(onContractTextChange).toHaveBeenCalledWith('修订后的 OCR 文本')
+    expect(onConfirmReview).toHaveBeenCalledTimes(1)
   })
 
   it('shows a new conversation button and calls back when clicked', () => {
     const onNewConversation = vi.fn()
 
-    render(
-      <DocPanel
-        review={buildReviewState({
-          status: 'complete',
-          filename: 'test-contract.docx',
-          contractText: 'Clause 1\nDeposit: 10400',
-        })}
-        selectedModel="gemma4"
-        availableModels={modelOptions}
-        onModelChange={vi.fn()}
-        onFileUpload={vi.fn()}
-        onNewConversation={onNewConversation}
-      />,
+    const { getAllByRole } = renderDocPanel(
+      {
+        status: 'complete',
+        filename: 'test-contract.docx',
+        contractText: 'Clause 1\nDeposit: 10400',
+      },
+      { onNewConversation },
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /new conversation/i }))
-
+    fireEvent.click(getAllByRole('button', { name: /new conversation/i })[0])
     expect(onNewConversation).toHaveBeenCalledTimes(1)
   })
 
   it('highlights matched risk lines in the document viewer', () => {
-    render(
-      <DocPanel
-        review={buildReviewState({
-          status: 'complete',
-          filename: 'test-contract.docx',
-          contractText: 'Clause 1\nDeposit: 10400\nLate fee: 10%\n',
-          riskCards: [
-            {
-              id: '1',
-              level: 'high',
-              title: 'Deposit clause',
-              clause: 'Deposit clause',
-              issue: 'Deposit is too high',
-              suggestion: 'Reduce the deposit amount',
-              legalRef: 'Civil Code Art. 585',
-              matchedText: 'Deposit: 10400',
-            },
-          ],
-        })}
-        selectedModel="gemma4"
-        availableModels={modelOptions}
-        onModelChange={vi.fn()}
-        onFileUpload={vi.fn()}
-      />,
-    )
+    const { getAllByText } = renderDocPanel({
+      status: 'complete',
+      filename: 'test-contract.docx',
+      contractText: 'Clause 1\nDeposit: 10400\nLate fee: 10%\n',
+      riskCards: [
+        {
+          id: '1',
+          level: 'high',
+          title: 'Deposit clause',
+          clause: 'Deposit clause',
+          issue: 'Deposit is too high',
+          suggestion: 'Reduce the deposit amount',
+          legalRef: 'Civil Code Art. 585',
+          matchedText: 'Deposit: 10400',
+        },
+      ],
+    })
 
-    expect(screen.getByText('Deposit: 10400').className).toContain('doc-highlight--high')
+    expect(getAllByText('Deposit: 10400').some((node) => node.className.includes('doc-highlight--high'))).toBe(true)
   })
 
   it('resets zoom when switching to another contract session', () => {
-    const { container, rerender } = render(
-      <DocPanel
-        review={buildReviewState({
-          status: 'complete',
-          sessionId: 'session-1',
-          filename: 'first-contract.docx',
-          contractText: 'Clause 1\nDeposit: 10400\n',
-        })}
-        selectedModel="gemma4"
-        availableModels={modelOptions}
-        onModelChange={vi.fn()}
-        onFileUpload={vi.fn()}
-      />,
-    )
+    const { container, rerender } = renderDocPanel({
+      status: 'complete',
+      sessionId: 'session-1',
+      filename: 'first-contract.docx',
+      contractText: 'Clause 1\nDeposit: 10400\n',
+    })
 
     const zoomButtons = container.querySelectorAll('.doc-panel__zoom-btn')
     fireEvent.click(zoomButtons[1] as HTMLButtonElement)
@@ -136,10 +230,12 @@ describe('DocPanel', () => {
           filename: 'second-contract.docx',
           contractText: 'Clause 2\nLate fee: 10%\n',
         })}
-        selectedModel="gemma4"
-        availableModels={modelOptions}
-        onModelChange={vi.fn()}
+        authToken="demo-token"
         onFileUpload={vi.fn()}
+        onOcrReady={vi.fn()}
+        onContractTextChange={vi.fn()}
+        onConfirmReview={vi.fn()}
+        onReset={vi.fn()}
       />,
     )
 

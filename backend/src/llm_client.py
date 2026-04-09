@@ -1,8 +1,10 @@
 """
-Shared LLM routing for review agents and chat Q&A.
+Shared LLM routing for review agents, chat Q&A, and image OCR.
 """
 from __future__ import annotations
 
+import base64
+import mimetypes
 import os
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -13,7 +15,7 @@ from openai import OpenAI
 
 from .config import get_settings
 
-DEFAULT_MODEL_KEY = "gemma4"
+DEFAULT_MODEL_KEY = "kimi"
 FALLBACK_MODEL_KEY = "gemma4"
 
 CLOUD_MODEL_LABELS = {
@@ -26,6 +28,25 @@ CLOUD_MODEL_LABELS = {
 LOCAL_MODEL_LABELS = {
     "gemma4": "Gemma4（免费模型）",
 }
+
+SUPPORTED_IMAGE_MIME_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+}
+
+DEFAULT_OCR_PROMPT = (
+    "请准确提取这张合同图片中的全部可见文字，尽量保留原有段落与换行结构。"
+    "不要总结，不要解释，不要补充，不要输出 Markdown 标题或代码块。"
+    "看不清的字可以保留原样或用□表示。"
+)
+
+OCR_CORRECTION_SYSTEM_PROMPT = (
+    "你是合同 OCR 校对助手。"
+    "你只能修正明显的错别字、标点、断行、条款编号和阅读顺序问题，"
+    "不能总结，不能解释，不能改写合同含义，不能补充原文不存在的内容。"
+    "如果某些字词看不清，就保留原样，不要猜测。"
+)
 
 
 @dataclass(frozen=True)
@@ -92,9 +113,7 @@ def _gemma_client() -> OpenAI:
 
 
 def available_models() -> list[dict[str, str]]:
-    models = [{"key": FALLBACK_MODEL_KEY, "label": LOCAL_MODEL_LABELS[FALLBACK_MODEL_KEY]}]
-    models.extend({"key": key, "label": label} for key, label in CLOUD_MODEL_LABELS.items())
-    return models
+    return [{"key": DEFAULT_MODEL_KEY, "label": CLOUD_MODEL_LABELS[DEFAULT_MODEL_KEY]}]
 
 
 def is_supported_model_key(model_key: str) -> bool:
@@ -134,7 +153,7 @@ def resolve_model(model: Optional[str]) -> ResolvedModel:
     return ResolvedModel(
         key=DEFAULT_MODEL_KEY,
         model_id=requested,
-        label=LOCAL_MODEL_LABELS.get(DEFAULT_MODEL_KEY, DEFAULT_MODEL_KEY),
+        label=CLOUD_MODEL_LABELS.get(DEFAULT_MODEL_KEY, DEFAULT_MODEL_KEY),
         is_local=False,
     )
 
@@ -202,16 +221,157 @@ def _ollama_native_chat_completion(model_id: str, request_kwargs: dict):
     )
 
 
+def normalize_image_mime_type(mime_type: Optional[str], filename: Optional[str] = None) -> str:
+    candidate = (mime_type or "").split(";", 1)[0].strip().lower()
+    if candidate in SUPPORTED_IMAGE_MIME_TYPES:
+        return candidate
+
+    guessed_type, _ = mimetypes.guess_type(filename or "")
+    guessed = (guessed_type or "").lower()
+    if guessed in SUPPORTED_IMAGE_MIME_TYPES:
+        return guessed
+
+    raise ValueError("只支持 JPG、PNG、WEBP 图片格式")
+
+
+def image_bytes_to_base64(image_bytes: bytes) -> str:
+    if not image_bytes:
+        raise ValueError("图片内容不能为空")
+    return base64.b64encode(image_bytes).decode("ascii")
+
+
+def _build_image_data_url(image_bytes: bytes, mime_type: str) -> str:
+    return f"data:{mime_type};base64,{image_bytes_to_base64(image_bytes)}"
+
+
+def _extract_response_text(response) -> str:
+    if not getattr(response, "choices", None):
+        return ""
+
+    content = getattr(response.choices[0].message, "content", "")
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        fragments: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+            else:
+                text = getattr(block, "text", None)
+            if isinstance(text, str) and text.strip():
+                fragments.append(text.strip())
+        return "\n".join(fragments).strip()
+
+    return ""
+
+
+def _sanitize_ocr_text(text: str) -> str:
+    sanitized = text.strip()
+    if sanitized.startswith("```"):
+        sanitized = sanitized.strip("`")
+        if "\n" in sanitized:
+            sanitized = sanitized.split("\n", 1)[1]
+    if sanitized.endswith("```"):
+        sanitized = sanitized[:-3].rstrip()
+    return sanitized.strip()
+
+
+def _cloud_vision_completion(
+    resolved_model: ResolvedModel,
+    prompt: str,
+    image_bytes: bytes,
+    mime_type: str,
+    max_tokens: int,
+    timeout: float,
+):
+    client = _get_client_for_resolved_model(resolved_model)
+    return _chat_completion(
+        client,
+        resolved_model.model_id,
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": _build_image_data_url(image_bytes, mime_type),
+                            },
+                        },
+                    ],
+                },
+            ],
+            "temperature": 0,
+            "max_tokens": max_tokens,
+            "timeout": timeout,
+        },
+    )
+
+
+def _ollama_native_vision_completion(
+    model_id: str,
+    prompt: str,
+    image_bytes: bytes,
+    max_tokens: int,
+    timeout: float,
+):
+    payload = {
+        "model": model_id,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt,
+                "images": [image_bytes_to_base64(image_bytes)],
+            }
+        ],
+        "stream": False,
+        "think": False,
+        "options": {
+            "temperature": 0,
+            "num_predict": max_tokens,
+        },
+    }
+
+    response = httpx.post(
+        f"{_ollama_api_base_url()}/api/chat",
+        json=payload,
+        timeout=httpx.Timeout(timeout, connect=min(timeout, 10.0)),
+    )
+    response.raise_for_status()
+
+    data = response.json()
+    message = data.get("message") or {}
+    content = (message.get("content") or "").strip()
+    if not content:
+        raise RuntimeError(f"Ollama model {model_id} returned an empty OCR response")
+
+    return SimpleNamespace(
+        model=data.get("model", model_id),
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    role="assistant",
+                    content=content,
+                )
+            )
+        ],
+    )
+
+
 def create_chat_completion(
     messages: list,
     model: Optional[str] = None,
     temperature: float = 0.1,
     max_tokens: int = 2048,
     timeout: float = 60.0,
+    allow_fallback: bool = False,
     **kwargs,
 ):
     """
-    Call the requested model and fall back to Gemma4 when the primary model fails.
+    Call the requested model. Fallback is opt-in for non-user-facing diagnostics only.
     """
     request_kwargs = {
         "messages": messages,
@@ -223,7 +383,7 @@ def create_chat_completion(
 
     primary = resolve_model(model)
     attempts = [primary]
-    if primary.key != FALLBACK_MODEL_KEY:
+    if allow_fallback and primary.key != FALLBACK_MODEL_KEY:
         attempts.append(resolve_model(FALLBACK_MODEL_KEY))
 
     errors: list[str] = []
@@ -247,6 +407,90 @@ def create_chat_completion(
             print(f"[LLM] Model call failed: {errors[-1]}", flush=True)
 
     raise RuntimeError("; ".join(errors) or "No LLM model is available")
+
+
+def extract_text_from_image(
+    image_bytes: bytes,
+    mime_type: Optional[str],
+    model: Optional[str] = None,
+    filename: Optional[str] = None,
+    prompt: str = DEFAULT_OCR_PROMPT,
+    max_tokens: int = 4096,
+    timeout: float = 90.0,
+) -> tuple[str, str]:
+    normalized_mime_type = normalize_image_mime_type(mime_type, filename)
+    resolved = resolve_model(model)
+
+    if resolved.is_local:
+        response = _ollama_native_vision_completion(
+            resolved.model_id,
+            prompt,
+            image_bytes,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+    else:
+        response = _cloud_vision_completion(
+            resolved,
+            prompt,
+            image_bytes,
+            normalized_mime_type,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+
+    extracted_text = _sanitize_ocr_text(_extract_response_text(response))
+    if not extracted_text:
+        raise RuntimeError(f"{resolved.label} 未返回可用的 OCR 文本")
+
+    used_model = getattr(response, "model", resolved.model_id) or resolved.model_id
+    print(f"[LLM] OCR using model: {resolved.label} ({used_model})", flush=True)
+    return extracted_text, used_model
+
+
+def correct_ocr_text_with_kimi(
+    raw_text: str,
+    *,
+    page_label: str | None = None,
+    low_confidence_lines: Optional[list[str]] = None,
+    timeout: float = 90.0,
+) -> tuple[str, str]:
+    if not raw_text.strip():
+        raise ValueError("OCR 原始文本不能为空")
+
+    hints = ""
+    if low_confidence_lines:
+        joined_hints = "\n".join(f"- {line}" for line in low_confidence_lines[:10])
+        hints = f"\n低置信度片段（优先检查，但不要臆测补全）：\n{joined_hints}\n"
+
+    label = page_label or "当前页"
+    user_prompt = (
+        f"请校对{label}的合同 OCR 结果。\n"
+        "要求：\n"
+        "1. 保留原文含义和合同格式。\n"
+        "2. 删除明显属于手机状态栏、截图界面、图片预览控件的噪音文字。\n"
+        "3. 仅输出校对后的纯文本，不要加标题、解释或代码块。"
+        f"{hints}\n"
+        "OCR 原文如下：\n"
+        f"{raw_text}"
+    )
+
+    response = create_chat_completion(
+        model="kimi",
+        messages=[
+            {"role": "system", "content": OCR_CORRECTION_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0,
+        max_tokens=min(max(len(raw_text) * 2, 2048), 8192),
+        timeout=timeout,
+    )
+    corrected_text = _sanitize_ocr_text(_extract_response_text(response))
+    if not corrected_text:
+        raise RuntimeError("Kimi 未返回可用的 OCR 校对文本")
+
+    used_model = getattr(response, "model", resolve_model("kimi").model_id) or resolve_model("kimi").model_id
+    return corrected_text, used_model
 
 
 def is_local_model_available() -> bool:

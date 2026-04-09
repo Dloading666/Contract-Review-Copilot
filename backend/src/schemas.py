@@ -1,10 +1,10 @@
-from pydantic import BaseModel, Field
 from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class ContractReviewRequest(BaseModel):
     contract_text: str = Field(..., description="The contract text to review")
-    model: Optional[str] = Field(None, description="Optional model key for this review session")
     session_id: Optional[str] = Field(None, description="Optional session ID for resuming")
 
 

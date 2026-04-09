@@ -2,13 +2,25 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libglib2.0-0 \
+        libgl1 \
+        libgomp1 \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy application source before install so packaging works in Docker
 COPY pyproject.toml .
 COPY src/ ./src/
 
 # Keep the install step compatible with environments where BuildKit is unavailable.
-RUN pip install --upgrade pip \
-    && pip install -e .
+# PaddlePaddle CPU wheels are published on the official Paddle index.
+RUN pip install --no-cache-dir --default-timeout=300 paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/ \
+    && pip install --no-cache-dir --default-timeout=300 -e .
 
 # .env is provided via env_file in docker-compose
 

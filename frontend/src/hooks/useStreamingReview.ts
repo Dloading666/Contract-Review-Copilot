@@ -10,7 +10,6 @@ import type {
 
 interface UseStreamingReviewOptions {
   enabled?: boolean
-  model?: string | null
   token?: string | null
 }
 
@@ -41,7 +40,7 @@ export function useStreamingReview(
   contractText: string,
   options: UseStreamingReviewOptions = {},
 ): UseStreamingReviewReturn {
-  const { enabled = true, model = null, token = null } = options
+  const { enabled = true, token = null } = options
   const [phase, setPhase] = useState<ReviewPhase>('idle')
   const [extractedEntities, setExtractedEntities] = useState<ExtractedEntity | null>(null)
   const [routingDecision, setRoutingDecision] = useState<RoutingDecision | null>(null)
@@ -51,14 +50,9 @@ export function useStreamingReview(
   const [error, setError] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const clientRef = useRef<{ abort: () => void } | null>(null)
-  const modelRef = useRef(model)
   const sessionIdRef = useRef(sessionId)
   const tokenRef = useRef(token)
   const startedRequestRef = useRef<string | null>(null)
-
-  useEffect(() => {
-    modelRef.current = model
-  }, [model])
 
   useEffect(() => {
     sessionIdRef.current = sessionId
@@ -197,7 +191,6 @@ export function useStreamingReview(
     setPhase('started')
     startStream(`${API_BASE}/review`, {
       contract_text: contractText,
-      ...(modelRef.current ? { model: modelRef.current } : {}),
       session_id: sessionId,
     })
 

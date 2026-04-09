@@ -117,9 +117,11 @@ export function ChatPanel({
     previousStatusRef.current = review.status
   }, [review.finalReport.length, review.status])
 
-  const formatTime = (seconds: number) => (seconds < 60
-    ? `${seconds}秒`
-    : `${Math.floor(seconds / 60)}分 ${seconds % 60}秒`)
+  const formatTime = (seconds: number) => (
+    seconds < 60
+      ? `${seconds}秒`
+      : `${Math.floor(seconds / 60)}分${seconds % 60}秒`
+  )
 
   const handleSend = () => {
     const message = inputValue.trim()
@@ -164,7 +166,7 @@ export function ChatPanel({
     } catch {
       setAutoFixSuggestions((prev) => ({
         ...prev,
-        [card.id]: `建议将“${card.clause}”条款修改为符合《民法典》等相关规定的表述。参考依据：${card.legalRef}。可优先采用这条建议：${card.suggestion}`,
+        [card.id]: `建议将「${card.clause}」条款修改为符合法律规定的表述。参考依据：${card.legalRef}。可优先采用这条建议：${card.suggestion}`,
       }))
     } finally {
       setLoadingFix(null)
@@ -176,6 +178,7 @@ export function ChatPanel({
   }
 
   const isReviewing = review.status === 'reviewing'
+  const isOcrReady = review.status === 'ocr_ready'
   const isBreakpoint = review.status === 'breakpoint'
   const isComplete = review.status === 'complete'
   const hasContent = review.status !== 'idle'
@@ -217,6 +220,7 @@ export function ChatPanel({
                 <span className={`chat-panel__status-dot ${isReviewing ? 'chat-panel__status-dot--pulse' : ''}`} />
                 <span>
                   {isReviewing && reviewingStatusText}
+                  {isOcrReady && '等待确认识别文字...'}
                   {isBreakpoint && '等待确认...'}
                   {isComplete && '审查完成'}
                   {review.status === 'error' && '处理失败'}
@@ -230,7 +234,7 @@ export function ChatPanel({
       </div>
 
       <div className="chat-panel__messages">
-        {hasContent && (
+        {hasContent && !isOcrReady && (
           <motion.div className="thinking-steps" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
             {review.thinkingSteps.map((step) => (
               <div
@@ -253,6 +257,12 @@ export function ChatPanel({
                 <span>{step.label}</span>
               </div>
             ))}
+          </motion.div>
+        )}
+
+        {isOcrReady && (
+          <motion.div className="ai-bubble" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            图片文字识别已完成，请先在右侧确认或修改识别结果，再开始合同分析。
           </motion.div>
         )}
 
@@ -423,7 +433,7 @@ export function ChatPanel({
                 )}
               </div>
               <div style={{ marginTop: 10, fontSize: 12, color: 'var(--color-ink-muted)' }}>
-                点击下方“确认，生成完整报告”继续
+                点击下方「确认，生成完整报告」继续
               </div>
             </div>
           </motion.div>
@@ -509,7 +519,7 @@ export function ChatPanel({
               <div className="chat-input-row">
                 <textarea
                   className="chat-input-textarea"
-                  placeholder="报告已生成，可以问我：押金风险在哪？这份合同怎么改？"
+                  placeholder="报告已生成，可以问我：押金风险在哪里？这份合同怎么改？"
                   value={inputValue}
                   onChange={(event) => setInputValue(event.target.value)}
                   onKeyDown={handleKeyDown}
@@ -638,6 +648,11 @@ export function ChatPanel({
                 重新上传
               </button>
             </div>
+          </div>
+        ) : isOcrReady ? (
+          <div className="chat-locked">
+            <span style={{ fontSize: 22 }}>OCR</span>
+            <span>图片文字已经提取完成，请先在右侧确认或修改文本，再开始合同分析。</span>
           </div>
         ) : (
           <div className="chat-locked">
