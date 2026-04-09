@@ -1,8 +1,8 @@
 """
-Contract Review Copilot — FastAPI Backend
-SSE streaming endpoint + LangGraph StateGraph orchestration
+Contract Review Copilot FastAPI backend.
 """
-import asyncio
+from __future__ import annotations
+
 import json
 import re
 import uuid
@@ -11,13 +11,16 @@ from io import BytesIO
 from typing import AsyncGenerator, Optional
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
+from . import auth
 from .cache import build_cache_key, close_redis_client, delete_json, get_json, get_ttl_seconds, set_json
 from .config import get_settings
-from .llm_client import DEFAULT_MODEL_KEY, available_models, create_chat_completion, is_supported_model_key, resolve_model
+from .graph.review_graph import run_aggregation_stream, run_review_stream
+from .llm_client import DEFAULT_MODEL_KEY, available_models, create_chat_completion, resolve_model
+from .ocr import UploadedContractFile, ingest_contract_files
 from .report_export import build_report_docx, build_report_download_name
 from .schemas import (
     ConfirmRequest,
@@ -28,11 +31,8 @@ from .schemas import (
     RegisterRequest,
     SendCodeRequest,
 )
-from .graph.review_graph import run_review_stream, run_aggregation_stream
-from . import auth
 
 
-# In-memory store for paused sessions: session_id -> {contract_text, issues}
 paused_sessions: dict[str, dict] = {}
 
 
@@ -66,12 +66,12 @@ def pop_paused_session(session_id: str) -> dict | None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("🚀 Contract Review Copilot API started")
+async def lifespan(_app: FastAPI):
+    print("Contract Review Copilot API started")
     yield
     paused_sessions.clear()
     close_redis_client()
-    print("👋 Contract Review Copilot API stopped")
+    print("Contract Review Copilot API stopped")
 
 
 app = FastAPI(
@@ -103,31 +103,30 @@ def format_sse(event_type: str, data: dict) -> bytes:
 
 
 def get_current_user(authorization: Optional[str]) -> Optional[dict]:
-    """Extract and validate user from Authorization: Bearer <token> header."""
-    if not authorization:
-        return None
-    if not authorization.startswith("Bearer "):
+    if not authorization or not authorization.startswith("Bearer "):
         return None
     token = authorization[7:]
     return auth.get_user_from_token(token)
 
 
 def require_current_user(authorization: Optional[str]) -> dict:
-    """Require a valid user token for protected endpoints."""
     user = get_current_user(authorization)
     if not user:
         raise HTTPException(status_code=401, detail="请先登录")
     return user
 
 
-# ── Auth Endpoints ────────────────────────────────────────────────
+async def _read_uploaded_contract_file(upload: UploadFile) -> UploadedContractFile:
+    return UploadedContractFile(
+        filename=upload.filename or "contract.bin",
+        content=await upload.read(),
+        content_type=upload.content_type,
+    )
+
 
 @app.post("/api/auth/send-code")
 async def send_code(body: SendCodeRequest):
-    """Send a verification code to the given email."""
     email = body.email.strip().lower()
-
-    # Validate email format
     if not re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email):
         return JSONResponse(status_code=400, content={"error": "无效的邮箱格式"})
 
@@ -135,7 +134,6 @@ async def send_code(body: SendCodeRequest):
     if not result.get("success"):
         return JSONResponse(status_code=500, content={"error": result.get("error", "发送失败")})
 
-    # In dev mode, return the code directly
     if "dev_code" in result:
         return {"success": True, "dev_code": result["dev_code"]}
     return {"success": True}
@@ -143,7 +141,6 @@ async def send_code(body: SendCodeRequest):
 
 @app.post("/api/auth/register")
 async def register(body: RegisterRequest):
-    """Register a new user with email verification code + password."""
     email = body.email.strip().lower()
     code = body.code.strip()
     password = body.password.strip()
@@ -153,7 +150,7 @@ async def register(body: RegisterRequest):
     if not re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email):
         return JSONResponse(status_code=400, content={"error": "无效的邮箱格式"})
     if len(password) < 6:
-        return JSONResponse(status_code=400, content={"error": "密码不能少于6位"})
+        return JSONResponse(status_code=400, content={"error": "密码不能少于 6 位"})
 
     result = auth.register_user(email, code, password)
     if not result.get("success"):
@@ -164,7 +161,6 @@ async def register(body: RegisterRequest):
 
 @app.post("/api/auth/login")
 async def login(body: LoginRequest):
-    """Login with email + password, return JWT token."""
     email = body.email.strip().lower()
     password = body.password.strip()
 
@@ -188,14 +184,11 @@ async def login(body: LoginRequest):
 
 @app.get("/api/auth/me")
 async def get_me(authorization: Optional[str] = Header(None)):
-    """Get current user info from JWT token."""
     user = get_current_user(authorization)
     if not user:
         return JSONResponse(status_code=401, content={"error": "未登录"})
     return {"user": user}
 
-
-# ── Protected Review Endpoints ────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
@@ -204,7 +197,6 @@ async def health():
 
 @app.get("/api/models")
 async def list_models():
-    """Return the chat models available to the frontend."""
     return {
         "models": available_models(),
         "default_model": DEFAULT_MODEL_KEY,
@@ -213,20 +205,17 @@ async def list_models():
 
 @app.post("/api/chat")
 async def chat(body: dict, authorization: Optional[str] = Header(None)):
-    """Answer user questions about the current review using the selected model."""
     require_current_user(authorization)
 
     message = body.get("message", "").strip()
-    model_key = (body.get("model") or DEFAULT_MODEL_KEY).strip()
     contract_text = body.get("contract_text", "")
     risk_summary = body.get("risk_summary", "")
+    model_key = DEFAULT_MODEL_KEY
 
     if not message:
         return JSONResponse(status_code=400, content={"error": "消息不能为空"})
-    if not is_supported_model_key(model_key):
-        return JSONResponse(status_code=400, content={"error": "不支持的模型"})
 
-    context_sections = []
+    context_sections: list[str] = []
     if contract_text:
         context_sections.append(f"合同原文（节选）：\n{contract_text[:3000]}")
     if risk_summary:
@@ -260,10 +249,40 @@ async def chat(body: dict, authorization: Optional[str] = Header(None)):
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
+@app.post("/api/ocr/ingest")
+async def ingest_contract_materials(
+    files: list[UploadFile] = File(...),
+    authorization: Optional[str] = Header(None),
+):
+    require_current_user(authorization)
+
+    if not files:
+        return JSONResponse(status_code=400, content={"error": "请选择要导入的合同材料"})
+
+    try:
+        uploaded_files = [await _read_uploaded_contract_file(file) for file in files]
+        result = ingest_contract_files(uploaded_files)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    return result.to_dict()
+
+
+@app.post("/api/ocr")
+@app.post("/api/ocr/extract")
+async def ocr_image(
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(None),
+):
+    return await ingest_contract_materials(files=[file], authorization=authorization)
+
+
 @app.post("/api/autofix")
 async def autofix_clause(body: dict, authorization: Optional[str] = Header(None)):
-    """Generate a suggested clause revision for a problematic clause."""
     from .agents.logic_review import generate_clause_fix
+
     require_current_user(authorization)
 
     clause = body.get("clause", "")
@@ -280,7 +299,6 @@ async def export_review_report_docx(
     body: ExportReportRequest,
     authorization: Optional[str] = Header(None),
 ):
-    """Export the generated report as a Word document."""
     require_current_user(authorization)
 
     paragraphs = [paragraph for paragraph in body.report_paragraphs if paragraph and paragraph.strip()]
@@ -304,13 +322,10 @@ async def create_review(
     body: ContractReviewRequest,
     authorization: Optional[str] = Header(None),
 ):
-    """Start a new contract review session. Returns SSE stream."""
     user = require_current_user(authorization)
 
     session_id = body.session_id or f"session-{uuid.uuid4().hex}"
-    model_key = (body.model or DEFAULT_MODEL_KEY).strip() or DEFAULT_MODEL_KEY
-    if not is_supported_model_key(model_key):
-        return JSONResponse(status_code=400, content={"error": "不支持的模型"})
+    model_key = DEFAULT_MODEL_KEY
 
     async def event_generator() -> AsyncGenerator[bytes, None]:
         try:
@@ -325,16 +340,18 @@ async def create_review(
 
                 if event_type == "breakpoint":
                     breakpoint_payload = event_data or {}
-                    store_paused_session(session_id, {
-                        "owner": user.get("email") or user.get("id"),
-                        "contract_text": body.contract_text,
-                        "issues": breakpoint_payload.get("issues", []),
-                        "model_key": model_key,
-                    })
+                    store_paused_session(
+                        session_id,
+                        {
+                            "owner": user.get("email") or user.get("id"),
+                            "contract_text": body.contract_text,
+                            "issues": breakpoint_payload.get("issues", []),
+                            "model_key": model_key,
+                        },
+                    )
                     return
-
-        except Exception as e:
-            yield format_sse("error", {"message": str(e)})
+        except Exception as exc:
+            yield format_sse("error", {"message": str(exc)})
 
     return StreamingResponse(
         event_generator(),
@@ -353,12 +370,12 @@ async def confirm_breakpoint(
     body: ConfirmRequest,
     authorization: Optional[str] = Header(None),
 ):
-    """Resume a paused review session and continue with aggregation."""
     user = require_current_user(authorization)
 
     session_data = load_paused_session(session_id)
     if session_data is None:
         raise HTTPException(status_code=404, detail="Session not found or already completed")
+
     session_owner = session_data.get("owner")
     if session_owner and session_owner != (user.get("email") or user.get("id")):
         raise HTTPException(status_code=403, detail="无权访问该审查会话")
@@ -382,8 +399,8 @@ async def confirm_breakpoint(
                 event_type = event.get("event", "message")
                 event_data = event.get("data", event)
                 yield format_sse(event_type, event_data)
-        except Exception as e:
-            yield format_sse("error", {"message": str(e)})
+        except Exception as exc:
+            yield format_sse("error", {"message": str(exc)})
 
     return StreamingResponse(
         event_generator(),
@@ -398,4 +415,5 @@ async def confirm_breakpoint(
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("src.main:app", host="0.0.0.0", port=8000, reload=True)

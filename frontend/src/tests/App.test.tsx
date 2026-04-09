@@ -1,12 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App, { buildThinkingSteps } from '../App'
+import { getDisclaimerAcceptanceStorageKey } from '../lib/disclaimer'
 
 const {
   confirmMock,
   useStreamingReviewMock,
   authState,
   fetchMock,
+  idleHookState,
+  completeHookState,
 } = vi.hoisted(() => {
   const confirmMock = vi.fn()
   const authState = {
@@ -60,21 +63,8 @@ const {
     contractText ? completeHookState : idleHookState
   ))
 
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString()
-
-    if (url === '/api/models') {
-      return {
-        ok: true,
-        json: async () => ({
-          default_model: 'gemma4',
-          models: [
-            { key: 'gemma4', label: 'Gemma4' },
-            { key: 'glm-5', label: 'GLM-5' },
-          ],
-        }),
-      } as Response
-    }
 
     if (url === '/api/chat') {
       return {
@@ -83,10 +73,10 @@ const {
       } as Response
     }
 
-    throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`)
+    throw new Error(`Unexpected fetch: ${url}`)
   })
 
-  return { confirmMock, useStreamingReviewMock, authState, fetchMock }
+  return { confirmMock, useStreamingReviewMock, authState, fetchMock, idleHookState, completeHookState }
 })
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -106,11 +96,12 @@ vi.mock('../components/ChatPanel', () => ({
     review,
     onSendMessage,
   }: {
-    review: { status: string }
+    review: { status: string; breakpointMessage?: string | null }
     onSendMessage: (message: string) => void
   }) => (
     <div>
       <div data-testid="chat-status">{review.status}</div>
+      <div data-testid="chat-breakpoint-message">{review.breakpointMessage ?? ''}</div>
       <button type="button" onClick={() => onSendMessage('Summarize the risks')}>
         send-message
       </button>
@@ -121,27 +112,32 @@ vi.mock('../components/ChatPanel', () => ({
 vi.mock('../components/DocPanel', () => ({
   DocPanel: ({
     review,
-    selectedModel,
-    availableModels,
-    onModelChange,
     onFileUpload,
+    onOcrReady,
+    onContractTextChange,
+    onConfirmReview,
     onNewConversation,
   }: {
     review: { status: string; filename: string }
-    selectedModel: string
-    availableModels: Array<{ key: string; label: string }>
-    onModelChange: (model: 'glm-5' | 'gemma4') => void
     onFileUpload: (text: string, filename: string) => void
+    onOcrReady: (text: string, filename: string, warnings?: string[]) => void
+    onContractTextChange: (text: string) => void
+    onConfirmReview: () => void
     onNewConversation?: () => void
   }) => (
     <div>
-      <div data-testid="doc-status">{`${review.status}:${review.filename || 'empty'}:${selectedModel}`}</div>
-      <div data-testid="model-options">{availableModels.map((option) => option.key).join(',')}</div>
-      <button type="button" onClick={() => onModelChange('glm-5')}>
-        switch-model
-      </button>
+      <div data-testid="doc-status">{`${review.status}:${review.filename || 'empty'}`}</div>
       <button type="button" onClick={() => onFileUpload('contract body', 'test-contract.docx')}>
         upload-file
+      </button>
+      <button type="button" onClick={() => onOcrReady('ocr text', 'contract-photo.png', ['ocr warning'])}>
+        ocr-ready
+      </button>
+      <button type="button" onClick={() => onContractTextChange('edited ocr text')}>
+        update-ocr-text
+      </button>
+      <button type="button" onClick={onConfirmReview}>
+        confirm-ocr
       </button>
       <button type="button" onClick={onNewConversation}>
         new-conversation
@@ -165,7 +161,10 @@ vi.mock('../pages/SettingsPage', () => ({
 describe('App new conversation flow', () => {
   beforeEach(() => {
     confirmMock.mockReset()
-    useStreamingReviewMock.mockClear()
+    useStreamingReviewMock.mockReset()
+    useStreamingReviewMock.mockImplementation((_sessionId: string, contractText: string) => (
+      contractText ? completeHookState : idleHookState
+    ))
     authState.isAuthenticated = true
     authState.login = vi.fn()
     authState.logout = vi.fn()
@@ -175,6 +174,28 @@ describe('App new conversation flow', () => {
     vi.stubGlobal('fetch', fetchMock)
     localStorage.clear()
     sessionStorage.clear()
+    localStorage.setItem(getDisclaimerAcceptanceStorageKey('demo@example.com'), 'accepted')
+  })
+
+  it('requires accepting the disclaimer before using the site on a new device', async () => {
+    localStorage.removeItem(getDisclaimerAcceptanceStorageKey('demo@example.com'))
+
+    render(<App />)
+
+    expect(screen.getByRole('dialog', { name: '免责声明' })).not.toBeNull()
+
+    const confirmButton = screen.getByRole('button', { name: '同意并继续' })
+    expect(confirmButton.getAttribute('disabled')).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '我已知悉并同意上述免责声明' }))
+    expect(confirmButton.getAttribute('disabled')).toBeNull()
+
+    fireEvent.click(confirmButton)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('doc-status').textContent).toContain('idle:empty')
+    })
+    expect(localStorage.getItem(getDisclaimerAcceptanceStorageKey('demo@example.com'))).toBe('accepted')
   })
 
   it('saves the current reviewed conversation into history before starting a new one', async () => {
@@ -214,30 +235,11 @@ describe('App new conversation flow', () => {
     expect(localStorage.getItem('reviewHistory')).toBeNull()
   })
 
-  it('keeps model selection in the upload area and uses it for chat requests', async () => {
+  it('starts review streaming without requesting or passing a model selector', async () => {
     render(<App />)
 
-    await waitFor(() => {
-      expect(screen.getByTestId('model-options').textContent).toContain('glm-5')
-    })
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/models', expect.anything())
 
-    fireEvent.click(screen.getByRole('button', { name: 'switch-model' }))
-    fireEvent.click(screen.getByRole('button', { name: 'send-message' }))
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/chat',
-        expect.objectContaining({
-          body: expect.stringContaining('"model":"glm-5"'),
-        }),
-      )
-    })
-  })
-
-  it('starts review streaming with the selected upload model', async () => {
-    render(<App />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'switch-model' }))
     fireEvent.click(screen.getByRole('button', { name: 'upload-file' }))
 
     await waitFor(() => {
@@ -246,15 +248,124 @@ describe('App new conversation flow', () => {
       >
 
       expect(
-          reviewCalls.some(
-            ([, contractText, options]) => (
-              contractText === 'contract body'
-              && options?.enabled === true
-              && options?.token === 'demo-token'
-              && options?.model === 'glm-5'
-            ),
+        reviewCalls.some(
+          ([, contractText, options]) => (
+            contractText === 'contract body'
+            && options?.enabled === true
+            && options?.token === 'demo-token'
+            && options?.model === undefined
           ),
+        ),
       ).toBe(true)
+    })
+  })
+
+  it('sends chat requests without a model field', async () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'send-message' }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/chat',
+        expect.objectContaining({
+          body: expect.not.stringContaining('"model"'),
+        }),
+      )
+    })
+  })
+
+  it('waits for OCR confirmation before starting the review stream', async () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'ocr-ready' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('doc-status').textContent).toContain('ocr_ready:contract-photo.png')
+    })
+
+    const reviewCallsBeforeConfirm = useStreamingReviewMock.mock.calls as Array<
+      [string, string, { enabled?: boolean; token?: string; model?: string }]
+    >
+    expect(
+      reviewCallsBeforeConfirm.some(
+        ([, contractText, options]) => contractText === 'ocr text' && options?.enabled === true,
+      ),
+    ).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'update-ocr-text' }))
+    fireEvent.click(screen.getByRole('button', { name: 'confirm-ocr' }))
+
+    await waitFor(() => {
+      const reviewCallsAfterConfirm = useStreamingReviewMock.mock.calls as Array<
+        [string, string, { enabled?: boolean; token?: string; model?: string }]
+      >
+      expect(
+        reviewCallsAfterConfirm.some(
+          ([, contractText, options]) => (
+            contractText === 'edited ocr text'
+            && options?.enabled === true
+            && options?.token === 'demo-token'
+          ),
+        ),
+      ).toBe(true)
+      expect(screen.getByTestId('doc-status').textContent).toContain('complete:contract-photo.png')
+    })
+  })
+
+  it('shows a no-risk breakpoint message when only the placeholder issue is present', async () => {
+    useStreamingReviewMock.mockImplementation((_sessionId: string, contractText: string) => (
+      contractText
+        ? {
+            phase: 'breakpoint',
+            extractedEntities: null,
+            routingDecision: null,
+            issues: [
+              {
+                clause: '整体评估',
+                issue: '未发现明显不公平条款。',
+                suggestion: '签约前仍建议逐条核对押金、违约责任和证据留存要求。',
+                level: 'low',
+                legal_reference: '《民法典》合同编',
+                matched_text: '',
+                risk_level: 1,
+              },
+            ],
+            breakpointData: {
+              needs_review: true,
+              question: '本次审查未发现明显不公平条款，是否继续生成完整的避坑指南报告？',
+              issues_count: 0,
+              critical_count: 0,
+              high_count: 0,
+              medium_count: 0,
+            },
+            reportParagraphs: [],
+            error: null,
+            confirm: confirmMock,
+            isStreaming: false,
+          }
+        : {
+            phase: 'idle',
+            extractedEntities: null,
+            routingDecision: null,
+            issues: [],
+            breakpointData: null,
+            reportParagraphs: [],
+            error: null,
+            confirm: confirmMock,
+            isStreaming: false,
+          }
+    ) as any)
+
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'upload-file' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-status').textContent).toBe('breakpoint')
+      expect(screen.getByTestId('chat-breakpoint-message').textContent).toBe(
+        '本次未检测到明显风险条款，是否继续生成完整的避坑指南报告？',
+      )
     })
   })
 
@@ -288,7 +399,7 @@ describe('App new conversation flow', () => {
     setItemSpy.mockRestore()
   })
 
-  it('resets the workspace when the signed-in user changes', async () => {
+  it('requires the next signed-in user to accept the disclaimer again', async () => {
     const { rerender } = render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: 'upload-file' }))
@@ -300,6 +411,13 @@ describe('App new conversation flow', () => {
     authState.user = { email: 'other@example.com', id: 'other-user' }
     authState.token = 'other-token'
     rerender(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: '免责声明' })).not.toBeNull()
+    })
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '我已知悉并同意上述免责声明' }))
+    fireEvent.click(screen.getByRole('button', { name: '同意并继续' }))
 
     await waitFor(() => {
       expect(screen.getByTestId('doc-status').textContent).toContain('idle:empty')

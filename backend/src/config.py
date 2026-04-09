@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     minimax_model: str = "MiniMax-M2.5"
     qwen_model: str = "qwen-plus"
     kimi_model: str = "kimi-k2.5"
-    primary_llm_model_key: str = "gemma4"
+    primary_llm_model_key: str = "kimi"
     gemma4_model: str = "gemma3"
     gemma4_base_url: str | None = None
     ollama_base_url: str = "http://localhost:11434/v1"

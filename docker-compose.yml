@@ -56,9 +56,10 @@ services:
       - LOG_LEVEL=INFO
       - DATABASE_URL=postgresql://contract_user:contract_pass@postgres:5432/contract_review
       - AUTO_SEED_LEGAL_KNOWLEDGE=1
+      - PADDLE_PDX_MODEL_SOURCE=BOS
       - REDIS_ENABLED=true
       - REDIS_URL=redis://redis:6379/0
-      - PRIMARY_LLM_MODEL_KEY=gemma4
+      - PRIMARY_LLM_MODEL_KEY=kimi
       - GEMMA4_BASE_URL=http://host.docker.internal:11434/v1
       - GEMMA4_MODEL=contract-gemma4:latest
       - SKIP_LLM_EXTRACTION=0

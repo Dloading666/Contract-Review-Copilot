@@ -218,20 +218,17 @@ describe('useStreamingReview', () => {
     )
   })
 
-  it('includes the selected model when starting a review stream', async () => {
+  it('does not include a model when starting a review stream', async () => {
     mockFetch.mockResolvedValue(new Response(createMockStream([])))
 
-    renderHook(() => useStreamingReview('test-session', '合同文本', { model: 'gemma4' }))
+    renderHook(() => useStreamingReview('test-session', '合同文本'))
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalled()
     })
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      '/api/review',
-      expect.objectContaining({
-        body: expect.stringContaining('"model":"gemma4"'),
-      }),
-    )
+    const request = mockFetch.mock.calls[0]?.[1] as { body?: string } | undefined
+    expect(request?.body).toBeDefined()
+    expect(request?.body).not.toContain('"model"')
   })
 })
