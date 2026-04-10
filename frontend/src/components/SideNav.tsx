@@ -1,7 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type SyntheticEvent } from 'react'
 import { MessageSquare, History, Settings } from 'lucide-react'
 import { loadPersistedReviewHistoryFromOwners } from '../lib/reviewHistory'
 import type { User } from '../contexts/AuthContext'
+import dogeImage from '../assets/branding/doge.png'
+
+function handleDogeImageError(event: SyntheticEvent<HTMLImageElement>) {
+  const image = event.currentTarget
+  if (image.dataset.fallbackApplied === 'true') return
+  image.dataset.fallbackApplied = 'true'
+  image.src = '/doge.png'
+}
 
 interface SideNavProps {
   user?: User | null
@@ -91,8 +99,9 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 8px', borderBottom: '4px solid black', background: 'var(--color-paper)' }}>
         <div style={{ position: 'relative' }}>
           <img
-            src="/doge.png"
+            src={dogeImage}
             alt="Doge"
+            onError={handleDogeImageError}
             style={{
               width: 56,
               height: 56,

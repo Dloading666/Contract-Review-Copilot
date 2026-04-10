@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type SyntheticEvent } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import {
   CheckSquare,
@@ -12,6 +12,15 @@ import {
   Wand2,
 } from 'lucide-react'
 import type { ReviewState, RiskCard } from '../App'
+import dogeImage from '../assets/branding/doge.png'
+
+function handleDogeImageError(event: SyntheticEvent<HTMLImageElement>) {
+  const image = event.currentTarget
+  if (image.dataset.fallbackApplied === 'true') return
+  image.dataset.fallbackApplied = 'true'
+  image.src = '/doge.png'
+}
+
 interface ChatPanelProps {
   review: ReviewState
   authToken?: string | null
@@ -210,8 +219,9 @@ export function ChatPanel({
       <div className="chat-panel__header">
         <div className="chat-panel__avatar" style={{ background: 'none', border: 'none', padding: 0 }}>
           <img
-            src="/doge.png"
+            src={dogeImage}
             alt="Doge"
+            onError={handleDogeImageError}
             style={{
               width: 52,
               height: 52,

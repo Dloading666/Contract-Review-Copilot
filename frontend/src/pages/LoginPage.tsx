@@ -1,7 +1,8 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useState, type SyntheticEvent } from 'react'
 import { motion } from 'motion/react'
 import { KeyRound, Lock, Mail, MessageSquareText, Smartphone } from 'lucide-react'
 import type { User } from '../contexts/AuthContext'
+import dogeImage from '../assets/branding/doge.png'
 
 interface LoginPageProps {
   onLogin: (token: string, user: User) => void
@@ -10,6 +11,13 @@ interface LoginPageProps {
 }
 
 type LoginMode = 'phone' | 'email'
+
+function handleDogeImageError(event: SyntheticEvent<HTMLImageElement>) {
+  const image = event.currentTarget
+  if (image.dataset.fallbackApplied === 'true') return
+  image.dataset.fallbackApplied = 'true'
+  image.src = '/doge.png'
+}
 
 export function LoginPage({ onLogin, onNavigateRegister, onNavigateLanding }: LoginPageProps) {
   const [mode, setMode] = useState<LoginMode>('phone')
@@ -131,7 +139,7 @@ export function LoginPage({ onLogin, onNavigateRegister, onNavigateLanding }: Lo
         className="auth-card"
       >
         <div className="auth-card__visual">
-          <img src="/doge.png" alt="Doge" className="auth-card__doge" />
+          <img src={dogeImage} alt="Doge" className="auth-card__doge" onError={handleDogeImageError} />
           <h1 className="auth-card__heading">Doge 合同审查助手</h1>
         </div>
 
