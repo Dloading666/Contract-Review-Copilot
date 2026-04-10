@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     from_email: str | None = None
 
+    aliyun_sms_access_key_id: str | None = None
+    aliyun_sms_access_key_secret: str | None = None
+    aliyun_sms_sign_name: str | None = None
+    aliyun_sms_template_code: str | None = None
+    aliyun_sms_region_id: str = "cn-hangzhou"
+    aliyun_sms_endpoint: str = "https://dysmsapi.aliyuncs.com"
+
     class Config:
         env_file = ".env"
         extra = "ignore"

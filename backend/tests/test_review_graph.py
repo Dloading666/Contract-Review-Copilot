@@ -62,7 +62,7 @@ async def test_run_review_stream_emits_breakpoint_sequence(monkeypatch):
     review_graph.get_review_graph.cache_clear()
 
     events = []
-    async for event in review_graph.run_review_stream("合同文本", "session-1", model_key="kimi"):
+    async for event in review_graph.run_review_stream("合同文本", "session-1", model_key="review"):
         events.append(event)
 
     assert [event["event"] for event in events] == [
@@ -75,7 +75,7 @@ async def test_run_review_stream_emits_breakpoint_sequence(monkeypatch):
     ]
     assert events[-1]["data"]["issues"][0]["clause"] == "押金条款"
     assert capture == {
-        "extract": "kimi",
-        "routing": "kimi",
-        "review": "kimi",
+        "extract": "review",
+        "routing": "review",
+        "review": "review",
     }

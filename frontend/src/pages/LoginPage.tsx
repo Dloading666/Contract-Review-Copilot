@@ -6,11 +6,12 @@ import type { User } from '../contexts/AuthContext'
 interface LoginPageProps {
   onLogin: (token: string, user: User) => void
   onNavigateRegister?: () => void
+  onNavigateLanding?: () => void
 }
 
 type LoginMode = 'phone' | 'email'
 
-export function LoginPage({ onLogin, onNavigateRegister }: LoginPageProps) {
+export function LoginPage({ onLogin, onNavigateRegister, onNavigateLanding }: LoginPageProps) {
   const [mode, setMode] = useState<LoginMode>('phone')
   const [phone, setPhone] = useState('')
   const [phoneCode, setPhoneCode] = useState('')
@@ -135,6 +136,13 @@ export function LoginPage({ onLogin, onNavigateRegister }: LoginPageProps) {
         </div>
 
         <div className="auth-card__form-pane">
+          <button
+            type="button"
+            className="auth-back-to-landing"
+            onClick={onNavigateLanding}
+          >
+            ← 返回首页
+          </button>
           <div className="auth-card__tabs">
             <button
               type="button"

@@ -50,7 +50,7 @@ def build_review_session(session_id: str, **overrides):
 
 
 class _FakeResponse:
-    def __init__(self, content: str, model: str = "kimi-k2.5"):
+    def __init__(self, content: str, model: str = "Qwen/Qwen3.5-4B"):
         self.model = model
         self.choices = [
             type(
@@ -95,13 +95,13 @@ def test_protected_endpoints_require_auth(client):
     assert response_export.status_code == 401
 
 
-def test_models_endpoint_returns_fixed_kimi_model(client):
+def test_models_endpoint_returns_current_review_model(client):
     response = client.get("/api/models")
 
     assert response.status_code == 200
     assert response.json() == {
-        "default_model": "kimi",
-        "models": [{"key": "kimi", "label": "Kimi K2.5"}],
+        "default_model": main.DEFAULT_MODEL_KEY,
+        "models": [{"key": main.DEFAULT_MODEL_KEY, "label": main.settings.review_model}],
     }
 
 
@@ -178,6 +178,40 @@ def test_email_login_returns_user_that_must_bind_phone(client, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["user"]["mustBindPhone"] is True
+
+
+def test_send_password_reset_code_uses_current_user_email(client, monkeypatch):
+    monkeypatch.setattr(main.auth, "get_user_from_token", lambda token: build_user() if token == "token-a" else None)
+    monkeypatch.setattr(
+        main.auth,
+        "send_password_reset_code_for_user",
+        lambda user_id: {"success": True, "dev_code": "654321"} if user_id == "user-1" else {"success": False},
+    )
+
+    response = client.post("/api/auth/security/send-password-code", headers=auth_header())
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "dev_code": "654321"}
+
+
+def test_reset_password_updates_current_user_password(client, monkeypatch):
+    monkeypatch.setattr(main.auth, "get_user_from_token", lambda token: build_user() if token == "token-a" else None)
+    monkeypatch.setattr(
+        main.auth,
+        "reset_password_with_email_code",
+        lambda user_id, code, new_password: {"success": True}
+        if user_id == "user-1" and code == "123456" and new_password == "newSecret123"
+        else {"success": False, "error": "验证码无效或已过期"},
+    )
+
+    response = client.post(
+        "/api/auth/security/reset-password",
+        json={"code": "123456", "new_password": "newSecret123"},
+        headers=auth_header(),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "message": "密码修改成功"}
 
 
 def test_bind_phone_returns_updated_user(client, monkeypatch):
@@ -403,7 +437,7 @@ def test_review_generates_unique_session_ids_and_streams_account_updates(client,
     assert len(captured_session_ids) == 2
     assert captured_session_ids[0] != captured_session_ids[1]
     assert all(re.fullmatch(r"session-[0-9a-f]{32}", session_id) for session_id in captured_session_ids)
-    assert captured_model_keys == ["kimi", "kimi"]
+    assert captured_model_keys == [main.DEFAULT_MODEL_KEY, main.DEFAULT_MODEL_KEY]
     assert all("event: review_started" in body for body in bodies)
     assert all("event: review_complete" in body for body in bodies)
     assert [status for _, status, _ in status_updates] == ["reviewing", "completed", "reviewing", "completed"]
@@ -476,7 +510,7 @@ def test_confirm_breakpoint_enforces_owner_and_streams_completion(client, monkey
     )
 
     async def fake_run_aggregation_stream(contract_text: str, session_id: str, issues: list[dict], model_key: str | None = None):
-        assert model_key == "kimi"
+        assert model_key == main.DEFAULT_MODEL_KEY
         assert issues[0]["clause"] == "deposit clause"
         yield {"event": "stream_resume", "data": {"session_id": session_id}}
         yield {"event": "review_complete", "data": {"session_id": session_id}}
@@ -584,7 +618,7 @@ def test_chat_endpoint_uses_review_session_billing_and_context(client, monkeypat
 
     def fake_create_chat_completion(**kwargs):
         captured.update(kwargs)
-        return _FakeResponse("answer from kimi")
+        return _FakeResponse("answer from review model")
 
     monkeypatch.setattr(main, "create_chat_completion", fake_create_chat_completion)
 
@@ -601,10 +635,10 @@ def test_chat_endpoint_uses_review_session_billing_and_context(client, monkeypat
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["reply"] == "answer from kimi"
+    assert payload["reply"] == "answer from review model"
     assert payload["chargedFen"] == 8
     assert payload["reviewSession"]["questionQuotaUsed"] == 16
-    assert captured["model"] == "kimi"
+    assert captured["model"] == main.DEFAULT_MODEL_KEY
     assert "deposit is not refundable" in captured["messages"][0]["content"]
 
 
@@ -648,7 +682,7 @@ def test_chat_rolls_back_charge_when_model_call_fails(client, monkeypatch):
     monkeypatch.setattr(
         main,
         "create_chat_completion",
-        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("kimi unavailable")),
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("review model unavailable")),
     )
     monkeypatch.setattr(
         main,
@@ -668,7 +702,7 @@ def test_chat_rolls_back_charge_when_model_call_fails(client, monkeypatch):
     )
 
     assert response.status_code == 500
-    assert rolled_back == [("txn-8", "kimi unavailable")]
+    assert rolled_back == [("txn-8", "review model unavailable")]
 
 
 def test_export_report_docx_returns_word_document(client, monkeypatch):

@@ -4,7 +4,7 @@ from src.agents import entity_extraction, logic_review
 
 
 class _FakeResponse:
-    def __init__(self, content: str, model: str = "kimi-k2.5"):
+    def __init__(self, content: str, model: str = "Qwen/Qwen3.5-4B"):
         self.model = model
         self.choices = [type("Choice", (), {"message": type("Message", (), {"content": content})()})()]
 

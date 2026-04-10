@@ -297,6 +297,18 @@ def send_verification_code(email: str) -> dict:
     return result
 
 
+def send_password_reset_code_for_user(user_id: str) -> dict:
+    user = get_user_by_id(user_id)
+    if not user:
+        return {"success": False, "error": "用户不存在"}
+
+    email = _normalize_email(str(user.get("email") or ""))
+    if not email:
+        return {"success": False, "error": "当前账号未绑定邮箱，暂不支持邮箱改密"}
+
+    return send_verification_code(email)
+
+
 def send_phone_verification_code(phone: str) -> dict:
     normalized_phone = normalize_phone(phone)
     code = generate_code()
@@ -405,6 +417,29 @@ def bind_phone_for_user(user_id: str, phone: str, code: str) -> dict:
     except (AccountStateError, ValueError) as exc:
         return {"success": False, "error": str(exc)}
 
+    _cache_legacy_aliases(user)
+    return {"success": True, "user": _build_public_user(user)}
+
+
+def reset_password_with_email_code(user_id: str, code: str, new_password: str) -> dict:
+    user = get_user_by_id(user_id)
+    if not user:
+        return {"success": False, "error": "用户不存在"}
+
+    email = _normalize_email(str(user.get("email") or ""))
+    if not email:
+        return {"success": False, "error": "当前账号未绑定邮箱，暂不支持邮箱改密"}
+
+    if len(new_password.strip()) < 6:
+        return {"success": False, "error": "密码不能少于 6 位"}
+
+    if not consume_code(email, code.strip(), kind="email"):
+        return {"success": False, "error": "验证码无效或已过期"}
+
+    password_hash = _hash_password(new_password.strip())
+    update_user_password_credentials(str(user["id"]), password_hash, "")
+    user["password_hash"] = password_hash
+    user["salt"] = ""
     _cache_legacy_aliases(user)
     return {"success": True, "user": _build_public_user(user)}
 

@@ -9,6 +9,7 @@ import { loadDisclaimerAcceptance, persistDisclaimerAcceptance } from './lib/dis
 import { useStreamingReview } from './hooks/useStreamingReview'
 import { loadPersistedReviewHistoryFromOwners, savePersistedReviewHistory } from './lib/reviewHistory'
 import { exportReportAsWord } from './lib/reportExport'
+import { LandingPage } from './pages/LandingPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -305,7 +306,7 @@ export default function App() {
   const { isAuthenticated, login, logout, user, token, updateUser, refreshUser } = useAuth()
   const historyOwnerKey = user?.id ?? null
   const historyOwnerCandidates = buildHistoryOwnerCandidates(user)
-  const [authView, setAuthView] = useState<'login' | 'register'>('login')
+  const [authView, setAuthView] = useState<'landing' | 'login' | 'register'>('landing')
   const [hasAcceptedDisclaimer, setHasAcceptedDisclaimer] = useState(() => loadDisclaimerAcceptance(historyOwnerKey))
   const [showSettings, setShowSettings] = useState(false)
   const [isExportingReport, setIsExportingReport] = useState(false)
@@ -570,10 +571,18 @@ export default function App() {
   }, [historyOwnerCandidates, persistCurrentReview, review])
 
   if (!isAuthenticated) {
+    if (authView === 'landing') {
+      return (
+        <LandingPage
+          onNavigateLogin={() => setAuthView('login')}
+          onNavigateRegister={() => setAuthView('register')}
+        />
+      )
+    }
     if (authView === 'register') {
       return <RegisterPage onNavigateLogin={() => setAuthView('login')} />
     }
-    return <LoginPage onLogin={login} onNavigateRegister={() => setAuthView('register')} />
+    return <LoginPage onLogin={login} onNavigateRegister={() => setAuthView('register')} onNavigateLanding={() => setAuthView('landing')} />
   }
 
   if (!hasAcceptedDisclaimer) {

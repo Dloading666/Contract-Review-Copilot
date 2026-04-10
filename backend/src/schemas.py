@@ -13,6 +13,10 @@ class SendCodeRequest(BaseModel):
     email: str = Field("", description="Email address used for verification")
 
 
+class PhoneSendCodeRequest(BaseModel):
+    phone: str = Field("", description="Phone number used for verification")
+
+
 class RegisterRequest(BaseModel):
     email: str = Field("", description="Email address used for registration")
     code: str = Field("", description="Verification code sent to the email")
@@ -22,6 +26,21 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field("", description="Email address used for login")
     password: str = Field("", description="Password for login")
+
+
+class PhoneLoginRequest(BaseModel):
+    phone: str = Field("", description="Phone number used for login")
+    code: str = Field("", description="SMS verification code used for login")
+
+
+class BindPhoneRequest(BaseModel):
+    phone: str = Field("", description="Phone number to bind")
+    code: str = Field("", description="SMS verification code used for phone binding")
+
+
+class SecurityResetPasswordRequest(BaseModel):
+    code: str = Field("", description="Email verification code used for password reset")
+    new_password: str = Field("", description="New password for the current account")
 
 
 class ConfirmRequest(BaseModel):
