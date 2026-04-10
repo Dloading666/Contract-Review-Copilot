@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, Plus, Upload, ZoomIn, ZoomOut } from 'lucide-react'
 import type { ReviewState, RiskCard } from '../App'
-import type { User } from '../contexts/AuthContext'
-
 interface DocPanelProps {
   review: ReviewState
   authToken?: string | null
-  currentUser?: User | null
   onFileUpload: (text: string, filename: string) => void
   onOcrReady: (text: string, filename: string, warnings?: string[]) => void
   onContractTextChange: (text: string) => void
@@ -175,7 +172,6 @@ function buildUploadProgressText(files: File[]) {
 export function DocPanel({
   review,
   authToken,
-  currentUser,
   onFileUpload,
   onOcrReady,
   onContractTextChange,
@@ -325,7 +321,6 @@ export function DocPanel({
         {isEmpty ? (
           <UploadArea
             authToken={authToken}
-            currentUser={currentUser}
             onFileUpload={onFileUpload}
             onOcrReady={onOcrReady}
           />
@@ -417,14 +412,12 @@ export function DocPanel({
 
 interface UploadAreaProps {
   authToken?: string | null
-  currentUser?: User | null
   onFileUpload: (text: string, filename: string) => void
   onOcrReady: (text: string, filename: string, warnings?: string[]) => void
 }
 
 function UploadArea({
   authToken,
-  currentUser,
   onFileUpload,
   onOcrReady,
 }: UploadAreaProps) {

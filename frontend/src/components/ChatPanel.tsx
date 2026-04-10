@@ -12,12 +12,9 @@ import {
   Wand2,
 } from 'lucide-react'
 import type { ReviewState, RiskCard } from '../App'
-import type { User } from '../contexts/AuthContext'
-
 interface ChatPanelProps {
   review: ReviewState
   authToken?: string | null
-  currentUser?: User | null
   onExportReport: () => void
   isExportingReport?: boolean
   onBreakpointConfirm: () => void
@@ -41,7 +38,6 @@ function isNoRiskPlaceholderCard(card: RiskCard) {
 export function ChatPanel({
   review,
   authToken,
-  currentUser,
   onExportReport,
   isExportingReport = false,
   onBreakpointConfirm,
@@ -199,7 +195,7 @@ export function ChatPanel({
     (canChatAboutReport && showChatComposer)
     || canChatWithoutReport
   ) && review.chatMessages.length > 0
-  const showQuestionQuotaBanner = false
+
   const highRiskCount = substantiveRiskCards.filter((card) => card.level === 'high').length
   const mediumRiskCount = substantiveRiskCards.filter((card) => card.level === 'medium').length
 

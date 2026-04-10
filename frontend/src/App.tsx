@@ -597,7 +597,6 @@ export default function App() {
           <ChatPanel
             review={review}
             authToken={token}
-            currentUser={user}
             onExportReport={handleExportReport}
             isExportingReport={isExportingReport}
             onBreakpointConfirm={handleBreakpointConfirm}
@@ -607,7 +606,6 @@ export default function App() {
           <DocPanel
             review={review}
             authToken={token}
-            currentUser={user}
             onFileUpload={handleFileUpload}
             onOcrReady={handleOcrReady}
             onContractTextChange={handleContractTextChange}
