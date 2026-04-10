@@ -103,8 +103,13 @@ def send_phone_verification_code(phone: str, _code: str = "") -> dict[str, Any]:
     """
     settings = get_settings()
 
+    # TemplateCode 使用系统内置模板（100001=登录注册），无需申请审核
+    # TemplateParam 中 ##code## 是占位符，由阿里云替换为实际验证码
+    template_code = (settings.aliyun_sms_template_code or "").strip() or "100001"
     params: dict[str, str] = {
         "PhoneNumber": phone,
+        "TemplateCode": template_code,
+        "TemplateParam": '{"code":"##code##","min":"5"}',
         "CountryCode": "86",
         "CodeLength": "6",
         "ValidTime": "300",
