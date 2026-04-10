@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 import secrets
 import urllib.parse
 from datetime import datetime, timezone
@@ -47,16 +46,18 @@ def _current_utc_timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def is_phone_verification_service_configured() -> bool:
-    settings = get_settings()
-    return all(
-        (
-            (settings.aliyun_sms_access_key_id or "").strip(),
-            (settings.aliyun_sms_access_key_secret or "").strip(),
-            (settings.aliyun_sms_sign_name or "").strip(),
-            (settings.aliyun_sms_template_code or "").strip(),
-        )
-    )
+def _base_params(access_key_id: str, action: str, region_id: str) -> dict[str, str]:
+    return {
+        "AccessKeyId": access_key_id,
+        "Action": action,
+        "Format": "JSON",
+        "RegionId": region_id,
+        "SignatureMethod": "HMAC-SHA1",
+        "SignatureNonce": secrets.token_hex(16),
+        "SignatureVersion": "1.0",
+        "Timestamp": _current_utc_timestamp(),
+        "Version": API_VERSION,
+    }
 
 
 def _request(action: str, extra_params: dict[str, str]) -> dict[str, Any]:
@@ -68,18 +69,7 @@ def _request(action: str, extra_params: dict[str, str]) -> dict[str, Any]:
     if not access_key_id or not access_key_secret:
         raise AliyunSmsError("SMS verification service is not configured")
 
-    params = {
-        "AccessKeyId": access_key_id,
-        "Action": action,
-        "Format": "JSON",
-        "RegionId": settings.aliyun_sms_region_id,
-        "SignatureMethod": "HMAC-SHA1",
-        "SignatureNonce": secrets.token_hex(16),
-        "SignatureVersion": "1.0",
-        "Timestamp": _current_utc_timestamp(),
-        "Version": API_VERSION,
-        **extra_params,
-    }
+    params = {**_base_params(access_key_id, action, settings.aliyun_sms_region_id), **extra_params}
     query = _build_signed_query(params, access_key_secret)
     request_url = f"{endpoint}/?{query}"
 
@@ -87,7 +77,7 @@ def _request(action: str, extra_params: dict[str, str]) -> dict[str, Any]:
         response = httpx.get(request_url, timeout=httpx.Timeout(15.0, connect=5.0))
         response.raise_for_status()
         payload = response.json()
-    except Exception as exc:  # pragma: no cover - network/config driven
+    except Exception as exc:
         raise AliyunSmsError(f"阿里云短信认证服务调用失败: {exc}") from exc
 
     if payload.get("Code") != "OK" or payload.get("Success") is False:
@@ -96,21 +86,25 @@ def _request(action: str, extra_params: dict[str, str]) -> dict[str, Any]:
     return payload
 
 
-def send_phone_verification_code(phone: str) -> dict[str, Any]:
+def is_phone_verification_service_configured() -> bool:
+    # 短信认证服务只需要 AccessKey，不需要签名和模板
     settings = get_settings()
-    sign_name = (settings.aliyun_sms_sign_name or "").strip()
-    template_code = (settings.aliyun_sms_template_code or "").strip()
-    scheme_name = (settings.aliyun_sms_scheme_name or "").strip()
+    return bool(
+        (settings.aliyun_sms_access_key_id or "").strip()
+        and (settings.aliyun_sms_access_key_secret or "").strip()
+    )
 
-    if not sign_name or not template_code:
-        raise AliyunSmsError("SMS verification service is not configured")
 
-    template_param = json.dumps({"code": "##code##", "min": "5"}, ensure_ascii=False, separators=(",", ":"))
-    params = {
+def send_phone_verification_code(phone: str, _code: str = "") -> dict[str, Any]:
+    """
+    发送短信验证码。使用阿里云短信认证服务（dypnsapi），
+    验证码由阿里云生成和管理，_code 参数保留用于接口兼容，不传给 Aliyun。
+    短信认证服务不需要签名和模板，参数从环境变量读取仅用于日志记录。
+    """
+    settings = get_settings()
+
+    params: dict[str, str] = {
         "PhoneNumber": phone,
-        "SignName": sign_name,
-        "TemplateCode": template_code,
-        "TemplateParam": template_param,
         "CountryCode": "86",
         "CodeLength": "6",
         "ValidTime": "300",
@@ -119,8 +113,6 @@ def send_phone_verification_code(phone: str) -> dict[str, Any]:
         "CodeType": "1",
         "AutoRetry": "1",
     }
-    if scheme_name:
-        params["SchemeName"] = scheme_name
     if settings.allow_dev_code_response:
         params["ReturnVerifyCode"] = "true"
 
@@ -130,7 +122,6 @@ def send_phone_verification_code(phone: str) -> dict[str, Any]:
         "success": True,
         "request_id": payload.get("RequestId", ""),
         "biz_id": model.get("BizId", ""),
-        "out_id": model.get("OutId", ""),
     }
     verify_code = model.get("VerifyCode")
     if isinstance(verify_code, str) and verify_code.strip():
@@ -139,17 +130,18 @@ def send_phone_verification_code(phone: str) -> dict[str, Any]:
 
 
 def check_phone_verification_code(phone: str, code: str) -> bool:
-    settings = get_settings()
-    scheme_name = (settings.aliyun_sms_scheme_name or "").strip()
-    params = {
+    """
+    通过阿里云短信认证服务验证用户提交的验证码。
+    """
+    params: dict[str, str] = {
         "PhoneNumber": phone,
         "VerifyCode": code,
         "CountryCode": "86",
         "CaseAuthPolicy": "1",
     }
-    if scheme_name:
-        params["SchemeName"] = scheme_name
-
-    payload = _request("CheckSmsVerifyCode", params)
+    try:
+        payload = _request("CheckSmsVerifyCode", params)
+    except AliyunSmsError:
+        return False
     model = payload.get("Model") or {}
     return model.get("VerifyResult") == "PASS"
