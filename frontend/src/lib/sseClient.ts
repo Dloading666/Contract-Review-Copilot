@@ -9,6 +9,8 @@ interface SSERequestOptions {
   headers?: Record<string, string>
 }
 
+class NonRetriableSSEError extends Error {}
+
 /**
  * SSE client using fetch API because the backend streams from POST endpoints.
  */
@@ -37,6 +39,42 @@ export function createSSEClient(
     }
   }
 
+  function processBufferedText(
+    chunk: string,
+    currentEventType: string,
+    dataLines: string[],
+  ): { buffer: string; currentEventType: string; dataLines: string[] } {
+    const lines = chunk.split('\n')
+    const remainder = lines.pop() ?? ''
+    let nextEventType = currentEventType
+    let nextDataLines = dataLines
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim()
+      if (!line) {
+        emitEvent(nextEventType, nextDataLines)
+        nextEventType = 'message'
+        nextDataLines = []
+        continue
+      }
+
+      if (line.startsWith('event:')) {
+        nextEventType = line.slice(6).trim()
+        continue
+      }
+
+      if (line.startsWith('data:')) {
+        nextDataLines = [...nextDataLines, line.slice(5).trim()]
+      }
+    }
+
+    return {
+      buffer: remainder,
+      currentEventType: nextEventType,
+      dataLines: nextDataLines,
+    }
+  }
+
   function connect() {
     if (aborted) return
     retryTimer = null
@@ -53,6 +91,9 @@ export function createSSEClient(
     })
       .then(async (res) => {
         if (!res.ok) {
+          if (res.status === 401 || res.status === 403 || res.status === 404) {
+            throw new NonRetriableSSEError(`HTTP ${res.status}`)
+          }
           throw new Error(`HTTP ${res.status}`)
         }
 
@@ -69,38 +110,33 @@ export function createSSEClient(
         while (!aborted) {
           const { done, value } = await reader.read()
           if (done) {
+            const flushed = processBufferedText(buffer + decoder.decode(), currentEventType, dataLines)
+            currentEventType = flushed.currentEventType
+            dataLines = flushed.dataLines
+            buffer = flushed.buffer
+            if (buffer.trim().startsWith('data:')) {
+              dataLines = [...dataLines, buffer.trim().slice(5).trim()]
+            } else if (buffer.trim().startsWith('event:')) {
+              currentEventType = buffer.trim().slice(6).trim()
+            }
             emitEvent(currentEventType, dataLines)
             return
           }
 
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() ?? ''
-
-          for (const rawLine of lines) {
-            const line = rawLine.trim()
-            if (!line) {
-              emitEvent(currentEventType, dataLines)
-              currentEventType = 'message'
-              dataLines = []
-              continue
-            }
-
-            if (line.startsWith('event:')) {
-              currentEventType = line.slice(6).trim()
-              continue
-            }
-
-            if (line.startsWith('data:')) {
-              dataLines.push(line.slice(5).trim())
-            }
-          }
+          const processed = processBufferedText(
+            buffer + decoder.decode(value, { stream: true }),
+            currentEventType,
+            dataLines,
+          )
+          buffer = processed.buffer
+          currentEventType = processed.currentEventType
+          dataLines = processed.dataLines
         }
       })
       .catch((error) => {
         if (aborted) return
 
-        if (retryCount < maxRetries) {
+        if (!(error instanceof NonRetriableSSEError) && retryCount < maxRetries) {
           retryCount += 1
           retryTimer = setTimeout(connect, 2 ** retryCount * 1000)
           return

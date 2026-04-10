@@ -12,10 +12,13 @@ import {
   Wand2,
 } from 'lucide-react'
 import type { ReviewState, RiskCard } from '../App'
+import type { User } from '../contexts/AuthContext'
 
 interface ChatPanelProps {
   review: ReviewState
   authToken?: string | null
+  currentUser?: User | null
+  onOpenRecharge?: () => void
   onExportReport: () => void
   isExportingReport?: boolean
   onBreakpointConfirm: () => void
@@ -39,6 +42,8 @@ function isNoRiskPlaceholderCard(card: RiskCard) {
 export function ChatPanel({
   review,
   authToken,
+  currentUser,
+  onOpenRecharge,
   onExportReport,
   isExportingReport = false,
   onBreakpointConfirm,
@@ -196,6 +201,10 @@ export function ChatPanel({
     (canChatAboutReport && showChatComposer)
     || canChatWithoutReport
   ) && review.chatMessages.length > 0
+  const remainingIncludedQuestions = review.reviewSession
+    ? Math.max(review.reviewSession.questionQuotaTotal - review.reviewSession.questionQuotaUsed, 0)
+    : 0
+  const showQuestionQuotaBanner = Boolean(review.reviewSession) && (canChatAboutReport || canChatWithoutReport)
   const highRiskCount = substantiveRiskCards.filter((card) => card.level === 'high').length
   const mediumRiskCount = substantiveRiskCards.filter((card) => card.level === 'medium').length
 
@@ -523,6 +532,20 @@ export function ChatPanel({
       </div>
 
       <div className="chat-panel__input">
+        {showQuestionQuotaBanner && review.reviewSession && (
+          <div className="chat-quota-banner">
+            <div className="chat-quota-banner__text">
+              本次合同剩余免费追问 <strong>{remainingIncludedQuestions}</strong> 次，超额后每问
+              <strong> ¥{(review.reviewSession.extraQuestionPriceFen / 100).toFixed(2)}</strong>
+            </div>
+            {remainingIncludedQuestions === 0 && currentUser && currentUser.walletBalanceFen < review.reviewSession.extraQuestionPriceFen && (
+              <button type="button" className="px-btn px-btn--orange chat-quota-banner__button" onClick={onOpenRecharge}>
+                去充值
+              </button>
+            )}
+          </div>
+        )}
+
         {canChatAboutReport ? (
           showChatComposer ? (
             <div className="chat-input-stack">

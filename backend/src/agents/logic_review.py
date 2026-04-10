@@ -337,7 +337,7 @@ def generate_clause_fix(clause: str, issue: str, suggestion: str, legal_ref: str
             ],
             temperature=0.3,
             max_tokens=512,
-            timeout=15.0,
+            timeout=30.0,
         )
         return response.choices[0].message.content.strip()
     except Exception as exc:
@@ -579,7 +579,7 @@ def review_clauses(
             ],
             temperature=0.1,
             max_tokens=2048,
-            timeout=15.0,
+            timeout=30.0,
         )
 
         result_text = response.choices[0].message.content.strip()

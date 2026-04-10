@@ -1,13 +1,15 @@
-﻿import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RoutingDecision } from './types'
 import { ChatPanel } from './components/ChatPanel'
 import { DisclaimerModal } from './components/DisclaimerModal'
 import { DocPanel } from './components/DocPanel'
+import { PhoneBindingGate } from './components/PhoneBindingGate'
 import { SideNav } from './components/SideNav'
-import { useAuth } from './contexts/AuthContext'
+import { WalletRechargeModal } from './components/WalletRechargeModal'
+import { useAuth, type User } from './contexts/AuthContext'
 import { loadDisclaimerAcceptance, persistDisclaimerAcceptance } from './lib/disclaimer'
 import { useStreamingReview } from './hooks/useStreamingReview'
-import { loadPersistedReviewHistory, savePersistedReviewHistory } from './lib/reviewHistory'
+import { loadPersistedReviewHistoryFromOwners, savePersistedReviewHistory } from './lib/reviewHistory'
 import { exportReportAsWord } from './lib/reportExport'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
@@ -53,6 +55,16 @@ export interface ChatMessage {
   content: string
 }
 
+export interface ReviewSessionSummary {
+  reviewSessionId: string
+  billingType: 'free_review' | 'wallet_paid'
+  questionQuotaTotal: number
+  questionQuotaUsed: number
+  extraQuestionPriceFen: number
+  reviewPriceFen: number
+  status: string
+}
+
 export interface ReviewState {
   status: ReviewStatus
   sessionId: string
@@ -67,6 +79,7 @@ export interface ReviewState {
   breakpointMessage: string | null
   errorMessage: string | null
   chatMessages: ChatMessage[]
+  reviewSession: ReviewSessionSummary | null
 }
 
 export interface ReviewHistoryEntry {
@@ -83,6 +96,12 @@ export interface ReviewHistoryEntry {
   breakpointMessage: string | null
   errorMessage: string | null
   chatMessages: ChatMessage[]
+  reviewSession: ReviewSessionSummary | null
+}
+
+interface PendingReviewStart {
+  text: string
+  filename: string
 }
 
 function createSessionId() {
@@ -119,6 +138,7 @@ function createInitialState(sessionId: string): ReviewState {
     breakpointMessage: null,
     errorMessage: null,
     chatMessages: createDefaultChatMessages(),
+    reviewSession: null,
   }
 }
 
@@ -145,7 +165,6 @@ function mapPhaseToStatus(phase: string): ReviewStatus {
 
 function mapEntities(extracted: any): ExtractedInfo | null {
   if (!extracted) return null
-
   return {
     lessor: extracted.parties?.lessor || extracted.lessor || '未知',
     lessee: extracted.parties?.lessee || extracted.lessee || '未知',
@@ -182,13 +201,109 @@ function normalizeRiskCard(card: any): RiskCard {
   }
 }
 
+function hasMeaningfulChat(chatMessages: ChatMessage[]) {
+  return chatMessages.some((message) => message.role === 'user') || chatMessages.length > 1
+}
+
+function shouldSaveReviewToHistory(review: ReviewState) {
+  return Boolean(
+    review.contractText.trim().length > 0
+    || review.filename.trim().length > 0
+    || review.extractedInfo
+    || review.routingDecision
+    || review.riskCards.length > 0
+    || review.finalReport.length > 0
+    || review.breakpointMessage
+    || review.errorMessage
+    || hasMeaningfulChat(review.chatMessages)
+  )
+}
+
+function createHistoryEntry(review: ReviewState): ReviewHistoryEntry {
+  return {
+    sessionId: review.sessionId,
+    status: review.status,
+    filename: review.filename,
+    date: new Date().toLocaleString('zh-CN'),
+    contractText: review.contractText,
+    ocrWarnings: review.ocrWarnings,
+    extractedInfo: review.extractedInfo,
+    routingDecision: review.routingDecision,
+    riskCards: review.riskCards,
+    finalReport: review.finalReport,
+    breakpointMessage: review.breakpointMessage,
+    errorMessage: review.errorMessage,
+    chatMessages: review.chatMessages,
+    reviewSession: review.reviewSession,
+  }
+}
+
+function buildHistoryOwnerCandidates(user?: User | null) {
+  return [user?.id ?? null, user?.phone ?? null, user?.email ?? null]
+}
+
+function loadHistoryEntries(ownerKeys?: Array<string | null | undefined>): ReviewHistoryEntry[] {
+  try {
+    const entries = loadPersistedReviewHistoryFromOwners<ReviewHistoryEntry>(ownerKeys)
+    return entries.map((entry) => ({
+      ...entry,
+      status: entry.status || 'complete',
+      filename: entry.filename || '未命名合同',
+      contractText: entry.contractText || '',
+      ocrWarnings: Array.isArray((entry as any).ocrWarnings)
+        ? (entry as any).ocrWarnings.filter((item: unknown): item is string => typeof item === 'string')
+        : [],
+      riskCards: Array.isArray(entry.riskCards)
+        ? entry.riskCards.map((card: any) => normalizeRiskCard(card))
+        : [],
+      finalReport: Array.isArray(entry.finalReport) ? entry.finalReport : [],
+      chatMessages: Array.isArray(entry.chatMessages) && entry.chatMessages.length > 0
+        ? entry.chatMessages
+        : createDefaultChatMessages(),
+      reviewSession: entry.reviewSession ?? null,
+    }))
+  } catch {
+    return []
+  }
+}
+
+function saveHistoryEntry(entry: ReviewHistoryEntry, ownerKey?: string | null) {
+  const history = loadHistoryEntries([ownerKey]).filter((item) => item.sessionId !== entry.sessionId)
+  history.unshift(entry)
+  if (history.length > 20) history.length = 20
+  savePersistedReviewHistory(history, ownerKey)
+}
+
+function canStartReview(user: User | null) {
+  return !!user && (user.freeReviewRemaining > 0 || user.walletBalanceFen >= 100)
+}
+
+function applyReviewDebitToUser(user: User, sessionId: string): { user: User; reviewSession: ReviewSessionSummary } {
+  const billingType = user.freeReviewRemaining > 0 ? 'free_review' : 'wallet_paid'
+  return {
+    user: {
+      ...user,
+      freeReviewRemaining: billingType === 'free_review' ? Math.max(user.freeReviewRemaining - 1, 0) : user.freeReviewRemaining,
+      walletBalanceFen: billingType === 'wallet_paid' ? Math.max(user.walletBalanceFen - 100, 0) : user.walletBalanceFen,
+    },
+    reviewSession: {
+      reviewSessionId: sessionId,
+      billingType,
+      questionQuotaTotal: 15,
+      questionQuotaUsed: 0,
+      extraQuestionPriceFen: 8,
+      reviewPriceFen: 100,
+      status: 'reserved',
+    },
+  }
+}
+
 export function buildThinkingSteps(
   phase: string,
   extracted: ExtractedInfo | null,
   routing: RoutingDecision | null,
 ) {
   type StepStatus = 'done' | 'active' | 'pending'
-
   const statuses: Record<string, StepStatus> = {
     parse: 'pending',
     extract: 'pending',
@@ -233,118 +348,18 @@ export function buildThinkingSteps(
   ]
 }
 
-function hasMeaningfulChat(chatMessages: ChatMessage[]) {
-  return chatMessages.some((message) => message.role === 'user') || chatMessages.length > 1
-}
-
-function shouldSaveReviewToHistory(review: ReviewState) {
-  return Boolean(
-    review.contractText.trim().length > 0
-    || review.filename.trim().length > 0
-    || review.extractedInfo
-    || review.routingDecision
-    || review.riskCards.length > 0
-    || review.finalReport.length > 0
-    || review.breakpointMessage
-    || review.errorMessage
-    || hasMeaningfulChat(review.chatMessages)
-  )
-}
-
-function createHistoryEntry(review: ReviewState): ReviewHistoryEntry {
-  return {
-    sessionId: review.sessionId,
-    status: review.status,
-    filename: review.filename,
-    date: new Date().toLocaleString('zh-CN'),
-    contractText: review.contractText,
-    ocrWarnings: review.ocrWarnings,
-    extractedInfo: review.extractedInfo,
-    routingDecision: review.routingDecision,
-    riskCards: review.riskCards,
-    finalReport: review.finalReport,
-    breakpointMessage: review.breakpointMessage,
-    errorMessage: review.errorMessage,
-    chatMessages: review.chatMessages,
-  }
-}
-
-function normalizeHistoryStatus(status: unknown): ReviewStatus {
-  if (
-    status === 'idle'
-    || status === 'uploading'
-    || status === 'ocr_ready'
-    || status === 'reviewing'
-    || status === 'breakpoint'
-    || status === 'complete'
-    || status === 'error'
-  ) {
-    return status
-  }
-  return 'complete'
-}
-
-function getRestoredHistoryStatus(entry: ReviewHistoryEntry): ReviewStatus {
-  if (entry.status === 'ocr_ready') {
-    return 'ocr_ready'
-  }
-  if (entry.status === 'breakpoint' && entry.breakpointMessage) {
-    return 'breakpoint'
-  }
-  if (entry.status === 'error' && entry.errorMessage) {
-    return 'error'
-  }
-  return 'complete'
-}
-
-function loadHistoryEntries(ownerKey?: string | null): ReviewHistoryEntry[] {
-  try {
-    const entries = loadPersistedReviewHistory<ReviewHistoryEntry>(ownerKey)
-
-    return entries.map((entry) => ({
-      sessionId: entry.sessionId,
-      status: normalizeHistoryStatus(entry.status),
-      filename: entry.filename || '未命名合同',
-      date: entry.date || '',
-      contractText: entry.contractText || '',
-      ocrWarnings: Array.isArray((entry as any).ocrWarnings)
-        ? (entry as any).ocrWarnings.filter((item: unknown): item is string => typeof item === 'string')
-        : [],
-      extractedInfo: entry.extractedInfo ?? null,
-      routingDecision: entry.routingDecision ?? null,
-      riskCards: Array.isArray(entry.riskCards)
-        ? entry.riskCards.map((card: any) => normalizeRiskCard(card))
-        : [],
-      finalReport: Array.isArray(entry.finalReport) ? entry.finalReport : [],
-      breakpointMessage: typeof entry.breakpointMessage === 'string' ? entry.breakpointMessage : null,
-      errorMessage: typeof entry.errorMessage === 'string' ? entry.errorMessage : null,
-      chatMessages: Array.isArray(entry.chatMessages) && entry.chatMessages.length > 0
-        ? entry.chatMessages
-        : createDefaultChatMessages(),
-    }))
-  } catch {
-    return []
-  }
-}
-
-function saveHistoryEntry(entry: ReviewHistoryEntry, ownerKey?: string | null) {
-  const history = loadHistoryEntries(ownerKey).filter((item) => item.sessionId !== entry.sessionId)
-  history.unshift(entry)
-  if (history.length > 20) {
-    history.length = 20
-  }
-  savePersistedReviewHistory(history, ownerKey)
-}
-
 export default function App() {
-  const { isAuthenticated, login, logout, user, token } = useAuth()
-  const historyOwnerKey = user?.email?.trim().toLowerCase() ?? null
+  const { isAuthenticated, login, logout, user, token, updateUser, refreshUser } = useAuth()
+  const historyOwnerKey = user?.id ?? null
+  const historyOwnerCandidates = buildHistoryOwnerCandidates(user)
   const [authView, setAuthView] = useState<'login' | 'register'>('login')
   const [hasAcceptedDisclaimer, setHasAcceptedDisclaimer] = useState(() => loadDisclaimerAcceptance(historyOwnerKey))
   const [showSettings, setShowSettings] = useState(false)
+  const [showRechargeModal, setShowRechargeModal] = useState(false)
   const [isExportingReport, setIsExportingReport] = useState(false)
   const [review, setReview] = useState<ReviewState>(() => createInitialState(createSessionId()))
   const [streamContractText, setStreamContractText] = useState('')
+  const [pendingReviewStart, setPendingReviewStart] = useState<PendingReviewStart | null>(null)
   const previousHistoryOwnerKeyRef = useRef<string | null>(historyOwnerKey)
   const prevPhaseRef = useRef<ReviewStatus>(review.status)
   const reviewRef = useRef(review)
@@ -353,11 +368,6 @@ export default function App() {
     enabled: hasAcceptedDisclaimer && review.status === 'reviewing',
     token,
   })
-
-  const handleDisclaimerAccept = useCallback(() => {
-    persistDisclaimerAcceptance(historyOwnerKey)
-    setHasAcceptedDisclaimer(true)
-  }, [historyOwnerKey])
 
   const persistCurrentReview = useCallback((currentReview: ReviewState) => {
     if (!historyOwnerKey || !shouldSaveReviewToHistory(currentReview)) return
@@ -369,206 +379,37 @@ export default function App() {
   }, [review])
 
   useEffect(() => {
-    if (previousHistoryOwnerKeyRef.current === historyOwnerKey) {
-      return
-    }
-
+    if (previousHistoryOwnerKeyRef.current === historyOwnerKey) return
     previousHistoryOwnerKeyRef.current = historyOwnerKey
     setShowSettings(false)
+    setShowRechargeModal(false)
+    setPendingReviewStart(null)
     setHasAcceptedDisclaimer(loadDisclaimerAcceptance(historyOwnerKey))
     setStreamContractText('')
     setReview(createInitialState(createSessionId()))
-
-    try {
-      sessionStorage.removeItem('lastReport')
-    } catch {
-      // Ignore storage errors.
-    }
   }, [historyOwnerKey])
 
-  const handleFileUpload = useCallback((text: string, filename: string) => {
-    const nextSessionId = createSessionId()
-    setStreamContractText(text)
+  useEffect(() => {
+    if (!pendingReviewStart || !user || !canStartReview(user)) return
+
+    const sessionId = createSessionId()
+    const debitResult = applyReviewDebitToUser(user, sessionId)
+    updateUser(debitResult.user)
+    setStreamContractText(pendingReviewStart.text)
     setReview({
-      ...createInitialState(nextSessionId),
+      ...createInitialState(sessionId),
       status: 'reviewing',
-      sessionId: nextSessionId,
-      contractText: text,
-      filename,
+      sessionId,
+      contractText: pendingReviewStart.text,
+      filename: pendingReviewStart.filename,
+      reviewSession: debitResult.reviewSession,
     })
-  }, [])
-
-  const handleOcrReady = useCallback((text: string, filename: string, warnings: string[] = []) => {
-    const nextSessionId = createSessionId()
-    setStreamContractText('')
-    setReview({
-      ...createInitialState(nextSessionId),
-      status: 'ocr_ready',
-      sessionId: nextSessionId,
-      contractText: text,
-      filename,
-      ocrWarnings: warnings,
-    })
-  }, [])
-
-  const handleContractTextChange = useCallback((text: string) => {
-    setReview((prev) => ({
-      ...prev,
-      contractText: text,
-    }))
-  }, [])
-
-  const handleConfirmOcrReview = useCallback(() => {
-    const text = review.contractText.trim()
-    if (!text) {
-      alert('请先确认识别出的合同文字后再开始分析。')
-      return
-    }
-
-    setStreamContractText(text)
-    setReview((prev) => ({
-      ...createInitialState(prev.sessionId),
-      status: 'reviewing',
-      sessionId: prev.sessionId,
-      contractText: text,
-      filename: prev.filename,
-    }))
-  }, [review.contractText])
-
-  const handleBreakpointConfirm = useCallback(() => {
-    hook.confirm()
-  }, [hook])
-
-  const handleNewConversation = useCallback(() => {
-    persistCurrentReview(review)
-    setStreamContractText('')
-    setReview(createInitialState(createSessionId()))
-  }, [persistCurrentReview, review])
-
-  const handleReset = useCallback(() => {
-    const newSessionId = createSessionId()
-    setStreamContractText('')
-    setReview(createInitialState(newSessionId))
-  }, [])
-
-  const handleExportReport = useCallback(() => {
-    if (review.finalReport.length === 0 || isExportingReport) return
-
-    setIsExportingReport(true)
-    exportReportAsWord({
-      filename: review.filename,
-      reportParagraphs: review.finalReport,
-      token,
-    })
-      .catch(() => {
-        alert('导出 Word 报告失败，请稍后重试。')
-      })
-      .finally(() => {
-        setIsExportingReport(false)
-      })
-  }, [isExportingReport, review.filename, review.finalReport, token])
-
-  const handleSendMessage = useCallback(async (message: string) => {
-    const normalizedMessage = message.trim()
-    if (!normalizedMessage) return
-
-    const userMsgId = `user-${Date.now()}`
-    const assistantMsgId = `assistant-${Date.now() + 1}`
-
-    setReview((prev) => ({
-        ...prev,
-        chatMessages: [
-          ...prev.chatMessages,
-          { id: userMsgId, role: 'user', content: normalizedMessage },
-          { id: assistantMsgId, role: 'assistant', content: '思考中...' },
-        ],
-      }))
-
-    try {
-      const riskSummary = review.riskCards
-        .map((card) => `[${card.level}] ${card.title}: ${card.issue}`)
-        .join('\n')
-
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          message: normalizedMessage,
-          contract_text: review.contractText,
-          risk_summary: riskSummary,
-        }),
-      })
-
-      let payload: { reply?: unknown; error?: unknown; detail?: unknown } = {}
-      try {
-        payload = await response.json() as { reply?: unknown; error?: unknown; detail?: unknown }
-      } catch {
-        payload = {}
-      }
-
-      const reply = typeof payload.reply === 'string'
-        ? payload.reply
-        : typeof payload.error === 'string'
-          ? payload.error
-          : typeof payload.detail === 'string'
-            ? payload.detail
-            : '获取回复失败'
-
-      setReview((prev) => ({
-        ...prev,
-        chatMessages: prev.chatMessages.map((chatMessage) => (
-          chatMessage.id === assistantMsgId
-            ? { ...chatMessage, content: reply }
-            : chatMessage
-        )),
-      }))
-    } catch {
-      setReview((prev) => ({
-        ...prev,
-        chatMessages: prev.chatMessages.map((chatMessage) => (
-          chatMessage.id === assistantMsgId
-            ? { ...chatMessage, content: '网络错误，请重试。' }
-            : chatMessage
-        )),
-      }))
-    }
-  }, [review.contractText, review.riskCards, token])
-
-  const handleSelectHistorySession = useCallback((sessionId: string) => {
-    const entry = loadHistoryEntries(historyOwnerKey).find((item) => item.sessionId === sessionId)
-    if (!entry) return
-
-    if (review.sessionId !== sessionId) {
-      persistCurrentReview(review)
-    }
-
-    const restoredStatus = getRestoredHistoryStatus(entry)
-    setStreamContractText('')
-    setReview({
-      ...createInitialState(entry.sessionId),
-      status: restoredStatus,
-      sessionId: entry.sessionId,
-      contractText: entry.contractText,
-      filename: entry.filename,
-      ocrWarnings: entry.ocrWarnings,
-      extractedInfo: entry.extractedInfo,
-      routingDecision: entry.routingDecision,
-      riskCards: entry.riskCards,
-      finalReport: entry.finalReport,
-      breakpointMessage: restoredStatus === 'breakpoint' ? entry.breakpointMessage : null,
-      errorMessage: restoredStatus === 'error' ? entry.errorMessage : null,
-      chatMessages: entry.chatMessages?.length ? entry.chatMessages : createDefaultChatMessages(),
-      thinkingSteps: buildThinkingSteps(restoredStatus, entry.extractedInfo, entry.routingDecision),
-    })
-  }, [historyOwnerKey, persistCurrentReview, review])
+    setPendingReviewStart(null)
+    setShowRechargeModal(false)
+  }, [pendingReviewStart, updateUser, user])
 
   useEffect(() => {
-    if (!streamContractText) {
-      return
-    }
+    if (!streamContractText) return
 
     setReview((prev) => {
       const nextExtractedInfo = mapEntities(hook.extractedEntities) ?? prev.extractedInfo
@@ -597,26 +438,222 @@ export default function App() {
         breakpointMessage: hook.error ? hook.error : nextBreakpointMessage,
         errorMessage: hook.error || null,
         thinkingSteps: buildThinkingSteps(hook.phase, nextExtractedInfo, nextRoutingDecision),
+        reviewSession: prev.reviewSession
+          ? {
+              ...prev.reviewSession,
+              status:
+                nextStatus === 'breakpoint'
+                  ? 'awaiting_confirmation'
+                  : nextStatus === 'complete'
+                    ? 'completed'
+                    : prev.reviewSession.status,
+            }
+          : prev.reviewSession,
       }
     })
-  }, [
-    hook.breakpointData,
-    hook.error,
-    hook.extractedEntities,
-    hook.issues,
-    hook.phase,
-    hook.reportParagraphs,
-    hook.routingDecision,
-    streamContractText,
-  ])
+  }, [hook.breakpointData, hook.error, hook.extractedEntities, hook.issues, hook.phase, hook.reportParagraphs, hook.routingDecision, streamContractText])
+
+  useEffect(() => {
+    if (hook.error) {
+      void refreshUser()
+    }
+  }, [hook.error, refreshUser])
 
   useEffect(() => {
     const prevPhase = prevPhaseRef.current
-    if (review.status === 'complete' && prevPhase !== 'complete' && review.filename && historyOwnerKey) {
+    const shouldPersistOnPhaseEntry = ['breakpoint', 'error', 'complete'].includes(review.status)
+    if (shouldPersistOnPhaseEntry && prevPhase !== review.status && review.filename && historyOwnerKey) {
       saveHistoryEntry(createHistoryEntry(reviewRef.current), historyOwnerKey)
+      void refreshUser()
     }
     prevPhaseRef.current = review.status
-  }, [historyOwnerKey, review.filename, review.status])
+  }, [historyOwnerKey, refreshUser, review.filename, review.status])
+
+  const handleDisclaimerAccept = useCallback(() => {
+    persistDisclaimerAcceptance(historyOwnerKey)
+    setHasAcceptedDisclaimer(true)
+  }, [historyOwnerKey])
+
+  const startReview = useCallback((text: string, filename: string) => {
+    if (!user) return
+    if (!canStartReview(user)) {
+      setPendingReviewStart({ text, filename })
+      setShowRechargeModal(true)
+      return
+    }
+
+    const sessionId = createSessionId()
+    const debitResult = applyReviewDebitToUser(user, sessionId)
+    updateUser(debitResult.user)
+    setStreamContractText(text)
+    setReview({
+      ...createInitialState(sessionId),
+      status: 'reviewing',
+      sessionId,
+      contractText: text,
+      filename,
+      reviewSession: debitResult.reviewSession,
+    })
+  }, [updateUser, user])
+
+  const handleFileUpload = useCallback((text: string, filename: string) => {
+    startReview(text, filename)
+  }, [startReview])
+
+  const handleOcrReady = useCallback((text: string, filename: string, warnings: string[] = []) => {
+    const nextSessionId = createSessionId()
+    setStreamContractText('')
+    setReview({
+      ...createInitialState(nextSessionId),
+      status: 'ocr_ready',
+      sessionId: nextSessionId,
+      contractText: text,
+      filename,
+      ocrWarnings: warnings,
+    })
+  }, [])
+
+  const handleContractTextChange = useCallback((text: string) => {
+    setReview((prev) => ({ ...prev, contractText: text }))
+  }, [])
+
+  const handleConfirmOcrReview = useCallback(() => {
+    const text = review.contractText.trim()
+    if (!text) {
+      alert('请先确认识别出的合同文字后再开始分析。')
+      return
+    }
+    startReview(text, review.filename)
+  }, [review.contractText, review.filename, startReview])
+
+  const handleBreakpointConfirm = useCallback(() => {
+    hook.confirm()
+  }, [hook])
+
+  const handleNewConversation = useCallback(() => {
+    persistCurrentReview(review)
+    setStreamContractText('')
+    setReview(createInitialState(createSessionId()))
+  }, [persistCurrentReview, review])
+
+  const handleReset = useCallback(() => {
+    setPendingReviewStart(null)
+    setStreamContractText('')
+    setReview(createInitialState(createSessionId()))
+  }, [])
+
+  const handleExportReport = useCallback(() => {
+    if (review.finalReport.length === 0 || isExportingReport) return
+    setIsExportingReport(true)
+    exportReportAsWord({
+      filename: review.filename,
+      reportParagraphs: review.finalReport,
+      token,
+    })
+      .catch(() => alert('导出 Word 报告失败，请稍后重试。'))
+      .finally(() => setIsExportingReport(false))
+  }, [isExportingReport, review.filename, review.finalReport, token])
+
+  const handleSendMessage = useCallback(async (message: string) => {
+    const normalizedMessage = message.trim()
+    if (!normalizedMessage || !review.reviewSession) return
+
+    const userMsgId = `user-${Date.now()}`
+    const assistantMsgId = `assistant-${Date.now() + 1}`
+
+    setReview((prev) => ({
+      ...prev,
+      chatMessages: [
+        ...prev.chatMessages,
+        { id: userMsgId, role: 'user', content: normalizedMessage },
+        { id: assistantMsgId, role: 'assistant', content: '思考中...' },
+      ],
+    }))
+
+    try {
+      const riskSummary = review.riskCards.map((card) => `[${card.level}] ${card.title}: ${card.issue}`).join('\n')
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          message: normalizedMessage,
+          contract_text: review.contractText,
+          risk_summary: riskSummary,
+          review_session_id: review.reviewSession.reviewSessionId,
+        }),
+      })
+
+      const payload = await response.json() as {
+        reply?: string
+        error?: string
+        user?: User
+        reviewSession?: ReviewSessionSummary
+      }
+
+      if (!response.ok) {
+        const reply = payload.error || '获取回复失败'
+        if (response.status === 402) {
+          setShowRechargeModal(true)
+        }
+        setReview((prev) => ({
+          ...prev,
+          chatMessages: prev.chatMessages.map((chatMessage) => (
+            chatMessage.id === assistantMsgId ? { ...chatMessage, content: reply } : chatMessage
+          )),
+        }))
+        return
+      }
+
+      if (payload.user) updateUser(payload.user)
+      setReview((prev) => ({
+        ...prev,
+        reviewSession: payload.reviewSession ?? prev.reviewSession,
+        chatMessages: prev.chatMessages.map((chatMessage) => (
+          chatMessage.id === assistantMsgId
+            ? { ...chatMessage, content: payload.reply ?? '获取回复失败' }
+            : chatMessage
+        )),
+      }))
+    } catch {
+      setReview((prev) => ({
+        ...prev,
+        chatMessages: prev.chatMessages.map((chatMessage) => (
+          chatMessage.id === assistantMsgId
+            ? { ...chatMessage, content: '网络错误，请重试。' }
+            : chatMessage
+        )),
+      }))
+    }
+  }, [review.contractText, review.reviewSession, review.riskCards, token, updateUser])
+
+  const handleSelectHistorySession = useCallback((sessionId: string) => {
+    const entry = loadHistoryEntries(historyOwnerCandidates).find((item) => item.sessionId === sessionId)
+    if (!entry) return
+    if (review.sessionId !== sessionId) {
+      persistCurrentReview(review)
+    }
+    setStreamContractText('')
+    setReview({
+      ...createInitialState(entry.sessionId),
+      status: entry.status,
+      sessionId: entry.sessionId,
+      contractText: entry.contractText,
+      filename: entry.filename,
+      ocrWarnings: entry.ocrWarnings,
+      extractedInfo: entry.extractedInfo,
+      routingDecision: entry.routingDecision,
+      riskCards: entry.riskCards,
+      finalReport: entry.finalReport,
+      breakpointMessage: entry.breakpointMessage,
+      errorMessage: entry.errorMessage,
+      chatMessages: entry.chatMessages?.length ? entry.chatMessages : createDefaultChatMessages(),
+      thinkingSteps: buildThinkingSteps(entry.status, entry.extractedInfo, entry.routingDecision),
+      reviewSession: entry.reviewSession ?? null,
+    })
+  }, [historyOwnerCandidates, persistCurrentReview, review])
 
   if (!isAuthenticated) {
     if (authView === 'register') {
@@ -629,49 +666,66 @@ export default function App() {
     return <DisclaimerModal onAccept={handleDisclaimerAccept} />
   }
 
-  if (showSettings) {
-    return <SettingsPage user={user} onBack={() => setShowSettings(false)} />
+  if (user?.mustBindPhone && token) {
+    return <PhoneBindingGate token={token} user={user} onBound={updateUser} onLogout={logout} />
+  }
+
+  if (showSettings && user && token) {
+    return <SettingsPage user={user} token={token} onUserUpdate={updateUser} onBack={() => setShowSettings(false)} />
   }
 
   return (
-    <div className="app-layout" style={{ flexDirection: 'row' }}>
-      <SideNav
-        user={user}
-        onLogout={logout}
-        onSelectHistorySession={handleSelectHistorySession}
-        onOpenSettings={() => setShowSettings(true)}
-      />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <main className="workspace">
-          <ChatPanel
-            review={review}
-            authToken={token}
-            onExportReport={handleExportReport}
-            isExportingReport={isExportingReport}
-            onBreakpointConfirm={handleBreakpointConfirm}
-            onReset={handleReset}
-            onSendMessage={handleSendMessage}
-          />
-          <DocPanel
-            review={review}
-            authToken={token}
-            onFileUpload={handleFileUpload}
-            onOcrReady={handleOcrReady}
-            onContractTextChange={handleContractTextChange}
-            onConfirmReview={handleConfirmOcrReview}
-            onReset={handleReset}
-            onNewConversation={handleNewConversation}
-          />
-        </main>
+    <>
+      <div className="app-layout" style={{ flexDirection: 'row' }}>
+        <SideNav
+          user={user}
+          onLogout={logout}
+          onSelectHistorySession={handleSelectHistorySession}
+          onOpenSettings={() => setShowSettings(true)}
+        />
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <main className="workspace">
+            <ChatPanel
+              review={review}
+              authToken={token}
+              currentUser={user}
+              onOpenRecharge={() => setShowRechargeModal(true)}
+              onExportReport={handleExportReport}
+              isExportingReport={isExportingReport}
+              onBreakpointConfirm={handleBreakpointConfirm}
+              onReset={handleReset}
+              onSendMessage={handleSendMessage}
+            />
+            <DocPanel
+              review={review}
+              authToken={token}
+              currentUser={user}
+              onOpenRecharge={() => setShowRechargeModal(true)}
+              onFileUpload={handleFileUpload}
+              onOcrReady={handleOcrReady}
+              onContractTextChange={handleContractTextChange}
+              onConfirmReview={handleConfirmOcrReview}
+              onReset={handleReset}
+              onNewConversation={handleNewConversation}
+            />
+          </main>
+        </div>
+        {review.status === 'reviewing' && (
+          <button className="fab" onClick={handleReset}>
+            重新扫描
+          </button>
+        )}
       </div>
-      {review.status === 'reviewing' && (
-        <button className="fab" onClick={handleReset}>
-          重新扫描
-        </button>
+
+      {user && (
+        <WalletRechargeModal
+          open={showRechargeModal}
+          token={token}
+          user={user}
+          onClose={() => setShowRechargeModal(false)}
+          onUserUpdate={updateUser}
+        />
       )}
-    </div>
+    </>
   )
 }
-
-
-

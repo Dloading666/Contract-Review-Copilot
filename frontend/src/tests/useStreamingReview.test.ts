@@ -142,7 +142,7 @@ describe('useStreamingReview', () => {
       '/api/review/confirm/test-session',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ confirmed: true }),
+        body: JSON.stringify({ confirmed: true, contract_text: '合同文本', issues: [] }),
       }),
     )
   })

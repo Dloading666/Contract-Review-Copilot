@@ -5,10 +5,10 @@ def test_check_breakpoint_skips_pause_for_no_risk_placeholder_issue():
     result = check_breakpoint(
         [
             {
-                "clause": "鏁翠綋璇勪及",
+                "clause": "整体评估",
                 "level": "low",
                 "risk_level": 1,
-                "issue": "鏈彂鐜版槑鏄句笉鍏钩",
+                "issue": "未发现明显不公平条款",
                 "suggestion": "Keep checking the contract before signing.",
                 "legal_reference": "Civil Code Contract Book",
             }
@@ -27,10 +27,10 @@ def test_check_breakpoint_counts_only_substantive_issues():
     result = check_breakpoint(
         [
             {
-                "clause": "鏁翠綋璇勪及",
+                "clause": "整体评估",
                 "level": "low",
                 "risk_level": 1,
-                "issue": "鏈彂鐜版槑鏄句笉鍏钩",
+                "issue": "未发现明显不公平条款",
                 "suggestion": "Keep checking the contract before signing.",
                 "legal_reference": "Civil Code Contract Book",
             },

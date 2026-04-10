@@ -7,7 +7,7 @@ def test_create_chat_completion_returns_cached_response(monkeypatch):
     monkeypatch.setattr(
         entity_extraction,
         'get_json',
-        lambda key: {'content': 'cached-response', 'model': 'glm-5'},
+        lambda key: {'content': 'cached-response', 'model': 'kimi-k2.5'},
     )
     monkeypatch.setattr(
         entity_extraction,
@@ -16,14 +16,14 @@ def test_create_chat_completion_returns_cached_response(monkeypatch):
     )
 
     response = entity_extraction.create_chat_completion(
-        model='glm-5',
+        model='kimi',
         messages=[{'role': 'user', 'content': 'hello'}],
         temperature=0.1,
         max_tokens=32,
     )
 
     assert response.choices[0].message.content == 'cached-response'
-    assert response.model == 'glm-5'
+    assert response.model == 'kimi-k2.5'
 
 
 def test_search_web_uses_cached_results(monkeypatch):

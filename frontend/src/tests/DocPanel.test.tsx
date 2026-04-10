@@ -24,6 +24,7 @@ function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
     breakpointMessage: null,
     errorMessage: null,
     chatMessages: [],
+    reviewSession: null,
     ...overrides,
   }
 }

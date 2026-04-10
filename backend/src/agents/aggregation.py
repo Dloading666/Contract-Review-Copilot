@@ -117,7 +117,7 @@ def generate_report(
             ],
             temperature=0.3,
             max_tokens=3072,
-            timeout=15.0,
+            timeout=60.0,
         )
 
         report_text = response.choices[0].message.content.strip()

@@ -2,52 +2,16 @@
 Entity Extraction Agent.
 Uses the shared LLM router with Redis-backed response caching.
 """
-import os
+import hashlib
 import json
-import httpx
+import os
 from types import SimpleNamespace
-from openai import OpenAI
 
 from ..cache import build_cache_key, get_json, get_ttl_seconds, set_json
 from ..llm_client import (
-    FALLBACK_MODEL_KEY,
-    check_model_status,
     create_chat_completion as _core_create_chat_completion,
-    get_client_for_model,
     get_primary_model_key,
 )
-
-PRIMARY_BASE_URL = "https://coding.dashscope.aliyuncs.com/v1"
-FALLBACK_MODEL = FALLBACK_MODEL_KEY
-
-
-def get_llm_client(api_key: str | None = None, base_url: str | None = None) -> OpenAI:
-    return OpenAI(
-        api_key=api_key or os.getenv("OPENAI_API_KEY", ""),
-        base_url=base_url or os.getenv("OPENAI_BASE_URL", PRIMARY_BASE_URL),
-        timeout=httpx.Timeout(30.0, connect=10.0),
-    )
-
-
-def get_fallback_llm_client() -> OpenAI:
-    client, _ = get_client_for_model(FALLBACK_MODEL_KEY)
-    return client
-
-
-def _chat_completion_cache_key(model: str, request_kwargs: dict) -> str:
-    cache_payload = {"model": model}
-    for field in (
-        "messages",
-        "temperature",
-        "max_tokens",
-        "top_p",
-        "presence_penalty",
-        "frequency_penalty",
-        "response_format",
-    ):
-        if field in request_kwargs:
-            cache_payload[field] = request_kwargs[field]
-    return build_cache_key("llm", cache_payload)
 
 
 def _cached_chat_completion(content: str, model: str):
@@ -64,25 +28,10 @@ def _cached_chat_completion(content: str, model: str):
     )
 
 
-def _store_cached_response(cache_key: str, response, fallback_model: str) -> None:
-    content = getattr(response.choices[0].message, "content", None)
-    if not content:
-        return
-
-    set_json(
-        cache_key,
-        {
-            "content": content,
-            "model": getattr(response, "model", fallback_model) or fallback_model,
-        },
-        get_ttl_seconds("llm"),
-    )
-
-
 def create_chat_completion(**kwargs):
     """
-    统一的 LLM 调用入口，复用共享路由并增加缓存。
-    当设置 ANTHROPIC_API_KEY 时，路由至 Claude（使用 legal skill 能力）。
+    统一的 LLM 调用入口，增加 Redis 缓存层。
+    当设置 ANTHROPIC_API_KEY 时，路由至 Claude。
     """
     from .legal_skill import _is_claude_enabled, create_claude_completion, _get_claude_model
     if _is_claude_enabled():
@@ -90,12 +39,8 @@ def create_chat_completion(**kwargs):
         messages = kwargs.pop("messages", [])
         return create_claude_completion(messages, model, **kwargs)
 
-    import hashlib
-    import json as json_module
-
     primary_model = kwargs.get("model", get_primary_model_key())
 
-    # 构建缓存 key
     cache_data = {
         "model": primary_model,
         "messages": kwargs.get("messages", []),
@@ -104,19 +49,16 @@ def create_chat_completion(**kwargs):
     }
     cache_key = build_cache_key("llm", {
         "model": primary_model,
-        "hash": hashlib.md5(json_module.dumps(cache_data, ensure_ascii=False).encode()).hexdigest()
+        "hash": hashlib.md5(json.dumps(cache_data, ensure_ascii=False).encode()).hexdigest(),
     })
 
-    # 检查缓存
     cached = get_json(cache_key)
     if cached and cached.get("content"):
         print(f"[LLM] 使用缓存: {primary_model}", flush=True)
         return _cached_chat_completion(cached["content"], cached.get("model", primary_model))
 
-    # 调用核心 LLM 实现（来自 llm_client）
-    response = _dual_llm_chat_completion(**kwargs)
+    response = _core_create_chat_completion(**kwargs)
 
-    # 存储缓存
     content = getattr(response.choices[0].message, "content", None)
     if content:
         set_json(
@@ -126,13 +68,6 @@ def create_chat_completion(**kwargs):
         )
 
     return response
-
-
-def _dual_llm_chat_completion(**kwargs):
-    """
-    核心 LLM 调用实现来自 llm_client.py。
-    """
-    return _core_create_chat_completion(**kwargs)
 
 
 EXTRACTION_PROMPT = """你是一个专业的法律文档分析助手。请从以下合同文本中提取关键信息，以JSON格式返回。
@@ -161,10 +96,8 @@ EXTRACTION_PROMPT = """你是一个专业的法律文档分析助手。请从以
 
 def extract_entities(contract_text: str, model_key: str | None = None) -> dict:
     """
-    Use GLM-5 to extract structured entities from contract text.
-    Falls back to regex-based extraction on error.
+    使用 LLM 从合同文本中提取结构化实体，失败时回退到正则匹配。
     """
-    # Skip LLM if environment variable is set
     if os.getenv("SKIP_LLM_EXTRACTION", "").lower() in ("1", "true", "yes"):
         return _regex_fallback(contract_text)
 
@@ -181,7 +114,6 @@ def extract_entities(contract_text: str, model_key: str | None = None) -> dict:
         )
         result_text = response.choices[0].message.content.strip()
 
-        # Parse JSON from response
         if "```json" in result_text:
             result_text = result_text.split("```json")[1].split("```")[0]
         elif "```" in result_text:
@@ -224,7 +156,7 @@ def extract_entities(contract_text: str, model_key: str | None = None) -> dict:
 
 
 def _regex_fallback(contract_text: str) -> dict:
-    """Fallback regex-based extraction when LLM is unavailable."""
+    """LLM 不可用时的正则回退提取。"""
     import re
 
     def parse_num(s):

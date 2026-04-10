@@ -9,51 +9,32 @@ class _FakeResponse:
         self.choices = [type("Choice", (), {"message": type("Message", (), {"content": content})()})()]
 
 
-def test_create_chat_completion_does_not_fallback_by_default(monkeypatch):
-    class _FailingClient:
-        def __init__(self):
-            self.chat = type("Chat", (), {"completions": self})()
-
-        def create(self, **kwargs):
-            raise RuntimeError("primary unavailable")
-
-    fallback_called = {"value": False}
-
-    monkeypatch.setattr(llm_client, "_get_client_for_resolved_model", lambda resolved: _FailingClient())
-    monkeypatch.setattr(
-        llm_client,
-        "_ollama_native_chat_completion",
-        lambda model_id, request_kwargs: fallback_called.update({"value": True}),
-    )
-
-    with pytest.raises(RuntimeError, match="primary unavailable"):
-        llm_client.create_chat_completion(
-            model="kimi",
-            messages=[{"role": "user", "content": "hello"}],
-            temperature=0.1,
-            max_tokens=32,
-        )
-
-    assert fallback_called["value"] is False
+def test_available_models_only_exposes_kimi():
+    assert llm_client.available_models() == [{"key": "kimi", "label": "Kimi K2.5"}]
 
 
-def test_create_chat_completion_can_opt_into_gemma_fallback(monkeypatch):
-    capture: dict = {}
+def test_resolve_model_defaults_to_kimi_cloud_route():
+    resolved = llm_client.resolve_model(None)
 
-    class _FailingClient:
-        def __init__(self):
-            self.chat = type("Chat", (), {"completions": self})()
+    assert resolved.key == "kimi"
+    assert resolved.label == "Kimi K2.5"
+    assert resolved.is_local is False
 
-        def create(self, **kwargs):
-            raise RuntimeError("primary unavailable")
 
-    monkeypatch.setattr(llm_client, "_get_client_for_resolved_model", lambda resolved: _FailingClient())
-    monkeypatch.setattr(
-        llm_client,
-        "_ollama_native_chat_completion",
-        lambda model_id, request_kwargs: capture.update({"model_id": model_id, "kwargs": request_kwargs})
-        or _FakeResponse("fallback ok", model_id),
-    )
+def test_create_chat_completion_uses_primary_model_once_even_with_allow_fallback(monkeypatch):
+    capture = {"calls": 0}
+
+    class _FakeClient:
+        chat = type("Chat", (), {"completions": None})()
+
+    def fake_chat_completion(client, model_id, request_kwargs):
+        capture["calls"] += 1
+        capture["model_id"] = model_id
+        capture["request_kwargs"] = request_kwargs
+        return _FakeResponse("ok", model_id)
+
+    monkeypatch.setattr(llm_client, "_get_client_for_resolved_model", lambda resolved: _FakeClient())
+    monkeypatch.setattr(llm_client, "_chat_completion", fake_chat_completion)
 
     response = llm_client.create_chat_completion(
         model="kimi",
@@ -63,9 +44,10 @@ def test_create_chat_completion_can_opt_into_gemma_fallback(monkeypatch):
         allow_fallback=True,
     )
 
-    assert response.choices[0].message.content == "fallback ok"
-    assert capture["model_id"] == llm_client.resolve_model(llm_client.FALLBACK_MODEL_KEY).model_id
-    assert capture["kwargs"]["messages"][0]["content"] == "hello"
+    assert response.choices[0].message.content == "ok"
+    assert capture["calls"] == 1
+    assert capture["model_id"] == llm_client.resolve_model("kimi").model_id
+    assert capture["request_kwargs"]["messages"][0]["content"] == "hello"
 
 
 def test_extract_text_from_image_uses_cloud_vision_format(monkeypatch):
@@ -93,33 +75,6 @@ def test_extract_text_from_image_uses_cloud_vision_format(monkeypatch):
     assert content[0]["type"] == "text"
     assert content[1]["type"] == "image_url"
     assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
-
-
-def test_extract_text_from_image_uses_ollama_images_field(monkeypatch):
-    capture: dict = {}
-
-    def fake_vision_completion(model_id, prompt, image_bytes, max_tokens, timeout):
-        capture["model_id"] = model_id
-        capture["prompt"] = prompt
-        capture["image_bytes"] = image_bytes
-        capture["max_tokens"] = max_tokens
-        capture["timeout"] = timeout
-        return _FakeResponse("押金：20000", model_id)
-
-    monkeypatch.setattr(llm_client, "_ollama_native_vision_completion", fake_vision_completion)
-
-    text, used_model = llm_client.extract_text_from_image(
-        image_bytes=b"local-image",
-        mime_type="image/webp",
-        model="gemma4",
-        filename="contract.webp",
-    )
-
-    assert text == "押金：20000"
-    assert used_model == capture["model_id"]
-    assert capture["model_id"] == llm_client.resolve_model("gemma4").model_id
-    assert capture["image_bytes"] == b"local-image"
-    assert capture["max_tokens"] == 4096
 
 
 def test_normalize_image_mime_type_rejects_unsupported_types():

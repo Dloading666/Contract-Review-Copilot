@@ -10,6 +10,20 @@ function buildScopedHistoryStorageKey(ownerKey?: string | null) {
   return normalizedOwnerKey ? `${HISTORY_STORAGE_KEY}:${normalizedOwnerKey}` : HISTORY_STORAGE_KEY
 }
 
+function normalizeOwnerKeys(ownerKeys?: Array<string | null | undefined>) {
+  const seen = new Set<string>()
+  const normalizedKeys: string[] = []
+
+  for (const ownerKey of ownerKeys ?? []) {
+    const normalized = normalizeOwnerKey(ownerKey)
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    normalizedKeys.push(normalized)
+  }
+
+  return normalizedKeys
+}
+
 function getLocalStorageSafe() {
   if (typeof window === 'undefined') return null
 
@@ -92,4 +106,21 @@ export function savePersistedReviewHistory<T>(entries: T[], ownerKey?: string | 
   }
 
   getSessionStorageSafe()?.setItem(storageKey, serializedEntries)
+}
+
+export function loadPersistedReviewHistoryFromOwners<T = unknown>(ownerKeys?: Array<string | null | undefined>): T[] {
+  const mergedEntries: T[] = []
+  const seenEntries = new Set<string>()
+
+  for (const ownerKey of normalizeOwnerKeys(ownerKeys)) {
+    const entries = loadPersistedReviewHistory<T>(ownerKey)
+    for (const entry of entries) {
+      const entryKey = JSON.stringify(entry)
+      if (seenEntries.has(entryKey)) continue
+      seenEntries.add(entryKey)
+      mergedEntries.push(entry)
+    }
+  }
+
+  return mergedEntries
 }

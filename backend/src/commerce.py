@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Lock
-from typing import Any
+from typing import Any, Literal
 
 from .config import get_settings
 from .vectorstore.connection import get_connection
@@ -134,6 +134,22 @@ def _transaction_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
     }
 
 
+def _column_is_not_null(cur, table_name: str, column_name: str) -> bool:
+    cur.execute(
+        """
+        SELECT is_nullable
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+          AND column_name = %s
+        LIMIT 1
+        """,
+        (table_name, column_name),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0] == "NO")
+
+
 def ensure_commerce_schema() -> None:
     global _SCHEMA_READY
     if _SCHEMA_READY:
@@ -162,7 +178,8 @@ def ensure_commerce_schema() -> None:
                     )
                     """
                 )
-                cur.execute("ALTER TABLE auth_users ALTER COLUMN email DROP NOT NULL")
+                if _column_is_not_null(cur, "auth_users", "email"):
+                    cur.execute("ALTER TABLE auth_users ALTER COLUMN email DROP NOT NULL")
                 cur.execute("ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS phone TEXT UNIQUE")
                 cur.execute(
                     "ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE"
@@ -247,7 +264,7 @@ def ensure_commerce_schema() -> None:
                         user_id TEXT NOT NULL REFERENCES auth_users(user_id) ON DELETE CASCADE,
                         filename TEXT NOT NULL DEFAULT '',
                         billing_type TEXT NOT NULL,
-                        review_price_fen INTEGER NOT NULL DEFAULT 300,
+                        review_price_fen INTEGER NOT NULL DEFAULT 100,
                         wallet_charge_fen INTEGER NOT NULL DEFAULT 0,
                         question_quota_total INTEGER NOT NULL DEFAULT 15,
                         question_quota_used INTEGER NOT NULL DEFAULT 0,
@@ -285,7 +302,15 @@ def _ensure_wallet_account(conn, user_id: str) -> None:
         )
 
 
-def _fetch_user(cur, where_clause: str, value: str) -> dict[str, Any] | None:
+_USER_LOOKUP_SQL: dict[Literal["user_id", "email", "phone"], str] = {
+    "user_id": "u.user_id = %s",
+    "email": "LOWER(u.email) = %s",
+    "phone": "u.phone = %s",
+}
+
+
+def _fetch_user(cur, lookup_field: Literal["user_id", "email", "phone"], value: str) -> dict[str, Any] | None:
+    where_clause = _USER_LOOKUP_SQL[lookup_field]
     cur.execute(
         f"""
         SELECT
@@ -315,7 +340,7 @@ def get_user_by_id(user_id: str) -> dict[str, Any] | None:
     ensure_commerce_schema()
     with get_connection() as conn:
         with conn.cursor() as cur:
-            return _fetch_user(cur, "u.user_id = %s", user_id)
+            return _fetch_user(cur, "user_id", user_id)
 
 
 def get_user_by_email(email: str) -> dict[str, Any] | None:
@@ -323,7 +348,7 @@ def get_user_by_email(email: str) -> dict[str, Any] | None:
     normalized_email = email.strip().lower()
     with get_connection() as conn:
         with conn.cursor() as cur:
-            return _fetch_user(cur, "LOWER(u.email) = %s", normalized_email)
+            return _fetch_user(cur, "email", normalized_email)
 
 
 def get_user_by_phone(phone: str) -> dict[str, Any] | None:
@@ -331,7 +356,68 @@ def get_user_by_phone(phone: str) -> dict[str, Any] | None:
     normalized_phone = phone.strip()
     with get_connection() as conn:
         with conn.cursor() as cur:
-            return _fetch_user(cur, "u.phone = %s", normalized_phone)
+            return _fetch_user(cur, "phone", normalized_phone)
+
+
+def update_user_password_credentials(user_id: str, password_hash: str, salt: str) -> None:
+    ensure_commerce_schema()
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE auth_users
+                    SET password_hash = %s,
+                        salt = %s,
+                        updated_at = NOW()
+                    WHERE user_id = %s
+                    """,
+                    (password_hash, salt, user_id),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def _restore_initial_free_reviews_if_eligible(user_id: str) -> dict[str, Any] | None:
+    ensure_commerce_schema()
+    settings = get_settings()
+
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+                user = _fetch_user(cur, "user_id", user_id)
+                if not user:
+                    return None
+                if not user.get("phone_verified") or int(user.get("free_review_remaining", 0)) > 0:
+                    return user
+
+                cur.execute(
+                    "SELECT EXISTS(SELECT 1 FROM review_sessions WHERE user_id = %s)",
+                    (user_id,),
+                )
+                has_review_sessions = bool(cur.fetchone()[0])
+                if has_review_sessions:
+                    return user
+
+                cur.execute(
+                    """
+                    UPDATE auth_users
+                    SET free_review_remaining = %s,
+                        updated_at = NOW()
+                    WHERE user_id = %s
+                      AND phone_verified = TRUE
+                      AND COALESCE(free_review_remaining, 0) <= 0
+                    """,
+                    (settings.free_review_count, user_id),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    return get_user_by_id(user_id)
 
 
 def create_email_user(
@@ -347,7 +433,7 @@ def create_email_user(
     with get_connection() as conn:
         try:
             with conn.cursor() as cur:
-                if _fetch_user(cur, "LOWER(u.email) = %s", normalized_email):
+                if _fetch_user(cur, "email", normalized_email):
                     raise AccountStateError("该邮箱已注册，请直接登录")
 
                 cur.execute(
@@ -388,7 +474,7 @@ def create_phone_user(*, user_id: str, phone: str) -> dict[str, Any]:
     with get_connection() as conn:
         try:
             with conn.cursor() as cur:
-                if _fetch_user(cur, "u.phone = %s", normalized_phone):
+                if _fetch_user(cur, "phone", normalized_phone):
                     raise AccountStateError("该手机号已绑定其他账户")
 
                 cur.execute(
@@ -425,17 +511,18 @@ def create_phone_user(*, user_id: str, phone: str) -> dict[str, Any]:
 def attach_phone_to_existing_user(user_id: str, phone: str) -> dict[str, Any]:
     ensure_commerce_schema()
     normalized_phone = phone.strip()
+    settings = get_settings()
 
     with get_connection() as conn:
         try:
             with conn.cursor() as cur:
-                user = _fetch_user(cur, "u.user_id = %s", user_id)
+                user = _fetch_user(cur, "user_id", user_id)
                 if not user:
                     raise ResourceNotFoundError("用户不存在")
                 if user.get("phone_verified"):
                     raise AccountStateError("当前账户已绑定手机号")
 
-                existing_phone_owner = _fetch_user(cur, "u.phone = %s", normalized_phone)
+                existing_phone_owner = _fetch_user(cur, "phone", normalized_phone)
                 if existing_phone_owner and existing_phone_owner["id"] != user_id:
                     raise AccountStateError("该手机号已绑定其他账户")
 
@@ -443,11 +530,15 @@ def attach_phone_to_existing_user(user_id: str, phone: str) -> dict[str, Any]:
                     """
                     UPDATE auth_users
                     SET phone = %s,
+                        free_review_remaining = CASE
+                            WHEN COALESCE(free_review_remaining, 0) > 0 THEN free_review_remaining
+                            ELSE %s
+                        END,
                         phone_verified = TRUE,
                         updated_at = NOW()
                     WHERE user_id = %s
                     """,
-                    (normalized_phone, user_id),
+                    (normalized_phone, settings.free_review_count, user_id),
                 )
                 _ensure_wallet_account(conn, user_id)
             conn.commit()
@@ -462,7 +553,7 @@ def attach_phone_to_existing_user(user_id: str, phone: str) -> dict[str, Any]:
 
 
 def get_account_summary(user_id: str) -> dict[str, Any]:
-    user = get_user_by_id(user_id)
+    user = _restore_initial_free_reviews_if_eligible(user_id)
     if not user:
         raise ResourceNotFoundError("用户不存在")
 
@@ -543,14 +634,15 @@ def create_recharge_order(
     description: str,
     code_url: str,
     provider_payload: dict[str, Any] | None = None,
+    order_id: str | None = None,
 ) -> dict[str, Any]:
     ensure_commerce_schema()
-    order_id = f"recharge-{uuid.uuid4().hex}"
+    order_id = order_id or f"recharge-{uuid.uuid4().hex}"
 
     with get_connection() as conn:
         try:
             with conn.cursor() as cur:
-                if not _fetch_user(cur, "u.user_id = %s", user_id):
+                if not _fetch_user(cur, "user_id", user_id):
                     raise ResourceNotFoundError("用户不存在")
                 cur.execute(
                     """
@@ -805,7 +897,7 @@ def reserve_review_session(
     with get_connection() as conn:
         try:
             with conn.cursor() as cur:
-                user = _fetch_user(cur, "u.user_id = %s", user_id)
+                user = _fetch_user(cur, "user_id", user_id)
                 if not user:
                     raise ResourceNotFoundError("用户不存在")
                 if user["account_status"] != "active":

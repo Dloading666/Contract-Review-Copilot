@@ -52,6 +52,8 @@ export function useStreamingReview(
   const clientRef = useRef<{ abort: () => void } | null>(null)
   const sessionIdRef = useRef(sessionId)
   const tokenRef = useRef(token)
+  const contractTextRef = useRef(contractText)
+  const issuesRef = useRef<ClauseIssue[]>([])
   const startedRequestRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -61,6 +63,14 @@ export function useStreamingReview(
   useEffect(() => {
     tokenRef.current = token
   }, [token])
+
+  useEffect(() => {
+    contractTextRef.current = contractText
+  }, [contractText])
+
+  useEffect(() => {
+    issuesRef.current = issues
+  }, [issues])
 
   const resetStreamingState = useCallback(() => {
     setPhase('idle')
@@ -168,7 +178,11 @@ export function useStreamingReview(
     setBreakpointData(null)
     setPhase('aggregation')
     setIsStreaming(true)
-    startStream(`${API_BASE}/review/confirm/${sessionIdRef.current}`, { confirmed: true })
+    startStream(`${API_BASE}/review/confirm/${sessionIdRef.current}`, {
+      confirmed: true,
+      contract_text: contractTextRef.current,
+      issues: issuesRef.current,
+    })
   }, [startStream])
 
   useEffect(() => {

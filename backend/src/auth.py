@@ -1,18 +1,8 @@
-"""
-JWT authentication for email/password login plus email verification code flows.
-
-User data persistence strategy:
-- PostgreSQL as the primary user store.
-- Redis as a cache / fast lookup layer.
-- In-memory dict as process-local cache.
-"""
-
 from __future__ import annotations
 
 import hashlib
 import hmac
 import json
-import os
 import secrets
 import smtplib
 import string
@@ -20,23 +10,47 @@ import time
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from threading import Lock
+from pathlib import Path
 from typing import Optional
 
 import jwt
+from passlib.context import CryptContext
 
+from .commerce import (
+    AccountStateError,
+    attach_phone_to_existing_user,
+    create_email_user,
+    create_phone_user,
+    get_account_summary,
+    get_user_by_email,
+    get_user_by_id,
+    get_user_by_phone,
+    update_user_password_credentials,
+)
 from .config import get_settings
-
-# JWT config
+from .providers.aliyun_sms import AliyunSmsError, send_phone_verification_code as send_phone_sms_code
 
 
 def _load_jwt_secret() -> str:
-    configured_secret = (get_settings().jwt_secret or "").strip()
+    settings = get_settings()
+    configured_secret = (settings.jwt_secret or "").strip()
     if configured_secret:
         return configured_secret
 
+    secret_file = (settings.jwt_secret_file or "").strip()
+    if not secret_file:
+        secret_file = str(Path(__file__).resolve().parents[1] / ".runtime" / "jwt_secret")
+
+    path = Path(secret_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        persisted_secret = path.read_text(encoding="utf-8").strip()
+        if persisted_secret:
+            return persisted_secret
+
     generated_secret = secrets.token_hex(32)
-    print("[Auth] JWT_SECRET not set; using an ephemeral per-process secret", flush=True)
+    path.write_text(generated_secret, encoding="utf-8")
+    print(f"[Auth] JWT secret persisted to {path}", flush=True)
     return generated_secret
 
 
@@ -44,23 +58,13 @@ JWT_SECRET = _load_jwt_secret()
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 
-# One-time verification code store: email -> {code, expire_at}
 _code_store: dict[str, dict] = {}
-
-# Process-local user cache
 _user_cache: dict[str, dict] = {}
-
-# Backward-compatible alias used by legacy tests.
 _user_store = _user_cache
-
-_REDIS_USER_PREFIX = "contract-review:user:"
-_PG_USER_TABLE_READY = False
-_PG_USER_TABLE_LOCK = Lock()
-_VERIFICATION_CODE_TTL_SECONDS = 300
+_PASSWORD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def _get_redis():
-    """Lazy import to avoid circular dependencies at module import time."""
     try:
         from .cache.redis_cache import get_redis_client
 
@@ -69,14 +73,41 @@ def _get_redis():
         return None
 
 
-def _verification_code_cache_key(email: str) -> str:
-    digest = hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
+def _code_cache_key(kind: str, identifier: str) -> str:
+    digest = hashlib.sha256(f"{kind}:{identifier}".encode("utf-8")).hexdigest()
     return f"contract-review:auth-code:{digest}"
 
 
-def _save_code_record(email: str, record: dict) -> None:
-    normalized_email = email.strip().lower()
-    _code_store[normalized_email] = record
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def normalize_phone(phone: str) -> str:
+    digits_only = "".join(ch for ch in phone if ch.isdigit())
+    if digits_only.startswith("86") and len(digits_only) > 11:
+        digits_only = digits_only[2:]
+    return digits_only
+
+
+def _code_store_key(kind: str, identifier: str) -> str:
+    return f"{kind}:{identifier}"
+
+
+def _purge_expired_code_records(now: float | None = None) -> None:
+    current_time = now or time.time()
+    expired_keys = [
+        key
+        for key, record in _code_store.items()
+        if current_time > float(record.get("expire_at", 0) or 0)
+    ]
+    for key in expired_keys:
+        _code_store.pop(key, None)
+
+
+def _save_code_record(kind: str, identifier: str, record: dict) -> None:
+    _purge_expired_code_records()
+    store_key = _code_store_key(kind, identifier)
+    _code_store[store_key] = record
 
     client = _get_redis()
     if client is None:
@@ -84,17 +115,18 @@ def _save_code_record(email: str, record: dict) -> None:
 
     try:
         client.setex(
-            _verification_code_cache_key(normalized_email),
-            _VERIFICATION_CODE_TTL_SECONDS,
+            _code_cache_key(kind, identifier),
+            get_settings().redis_auth_code_ttl_seconds,
             json.dumps(record, ensure_ascii=False),
         )
     except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"[Auth] Redis save verification code failed: {exc}")
+        print(f"[Auth] Redis save verification code failed: {exc}", flush=True)
 
 
-def _load_code_record(email: str) -> Optional[dict]:
-    normalized_email = email.strip().lower()
-    record = _code_store.get(normalized_email)
+def _load_code_record(kind: str, identifier: str) -> Optional[dict]:
+    _purge_expired_code_records()
+    store_key = _code_store_key(kind, identifier)
+    record = _code_store.get(store_key)
     if record:
         return record
 
@@ -103,266 +135,137 @@ def _load_code_record(email: str) -> Optional[dict]:
         return None
 
     try:
-        raw = client.get(_verification_code_cache_key(normalized_email))
+        raw = client.get(_code_cache_key(kind, identifier))
         if not raw:
             return None
         record = json.loads(raw)
         if isinstance(record, dict):
-            _code_store[normalized_email] = record
+            _code_store[store_key] = record
             return record
     except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"[Auth] Redis load verification code failed: {exc}")
+        print(f"[Auth] Redis load verification code failed: {exc}", flush=True)
 
     return None
 
 
-def _delete_code_record(email: str) -> None:
-    normalized_email = email.strip().lower()
-    _code_store.pop(normalized_email, None)
+def _delete_code_record(kind: str, identifier: str) -> None:
+    _code_store.pop(_code_store_key(kind, identifier), None)
 
     client = _get_redis()
     if client is None:
         return
 
     try:
-        client.delete(_verification_code_cache_key(normalized_email))
+        client.delete(_code_cache_key(kind, identifier))
     except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"[Auth] Redis delete verification code failed: {exc}")
+        print(f"[Auth] Redis delete verification code failed: {exc}", flush=True)
 
 
-def _save_user_to_redis(user_id: str, user: dict) -> None:
-    client = _get_redis()
-    if client is None:
-        return
-    try:
-        client.set(f"{_REDIS_USER_PREFIX}{user_id}", json.dumps(user, ensure_ascii=False))
-    except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"[Auth] Redis save user failed: {exc}")
+def _hash_password(password: str) -> str:
+    return _PASSWORD_CONTEXT.hash(password)
 
 
-def _load_user_from_redis(user_id: str) -> Optional[dict]:
-    client = _get_redis()
-    if client is None:
-        return None
-    try:
-        raw = client.get(f"{_REDIS_USER_PREFIX}{user_id}")
-        if raw:
-            return json.loads(raw)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"[Auth] Redis load user failed: {exc}")
-    return None
+def _verify_password(password: str, user: dict) -> bool:
+    stored_hash = str(user.get("password_hash", "") or "")
+    if not stored_hash:
+        return False
+
+    if stored_hash.startswith("$2"):
+        return bool(_PASSWORD_CONTEXT.verify(password, stored_hash))
+
+    legacy_hash = hashlib.sha256((str(user.get("salt", "")) + password).encode("utf-8")).hexdigest()
+    return hmac.compare_digest(legacy_hash, stored_hash)
 
 
-def _get_pg_connection_factory():
-    """Return backend vectorstore connection context manager factory."""
-    try:
-        from .vectorstore.connection import get_connection
-
-        return get_connection
-    except Exception:
-        return None
-
-
-def _format_created_at(created_at: object) -> str:
-    if isinstance(created_at, datetime):
-        return created_at.isoformat()
-    if isinstance(created_at, str) and created_at:
-        return created_at
-    return datetime.now().isoformat()
-
-
-def _ensure_pg_user_table() -> bool:
-    global _PG_USER_TABLE_READY
-    if _PG_USER_TABLE_READY:
-        return True
-
-    with _PG_USER_TABLE_LOCK:
-        if _PG_USER_TABLE_READY:
-            return True
-
-        connection_factory = _get_pg_connection_factory()
-        if connection_factory is None:
-            return False
-
-        try:
-            with connection_factory() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS auth_users (
-                            user_id TEXT PRIMARY KEY,
-                            email TEXT UNIQUE NOT NULL,
-                            password_hash TEXT NOT NULL,
-                            salt TEXT NOT NULL,
-                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                        )
-                        """
-                    )
-                conn.commit()
-
-            _PG_USER_TABLE_READY = True
-            return True
-        except Exception as exc:  # pragma: no cover - defensive logging
-            print(f"[Auth] PostgreSQL user table init failed: {exc}")
-            return False
-
-
-def _save_user_to_postgres(user_id: str, user: dict) -> None:
-    if not _ensure_pg_user_table():
+def _maybe_upgrade_legacy_password_hash(user: dict, password: str) -> None:
+    stored_hash = str(user.get("password_hash", "") or "")
+    if not stored_hash or stored_hash.startswith("$2"):
         return
 
-    connection_factory = _get_pg_connection_factory()
-    if connection_factory is None:
-        return
-
-    try:
-        with connection_factory() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO auth_users (user_id, email, password_hash, salt, created_at)
-                    VALUES (%s, %s, %s, %s, %s::timestamptz)
-                    ON CONFLICT (user_id) DO UPDATE
-                    SET
-                        email = EXCLUDED.email,
-                        password_hash = EXCLUDED.password_hash,
-                        salt = EXCLUDED.salt
-                    """,
-                    (
-                        user_id,
-                        user.get("email", ""),
-                        user.get("password_hash", ""),
-                        user.get("salt", ""),
-                        _format_created_at(user.get("created_at")),
-                    ),
-                )
-            conn.commit()
-    except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"[Auth] PostgreSQL save user failed: {exc}")
+    new_hash = _hash_password(password)
+    update_user_password_credentials(str(user["id"]), new_hash, "")
+    user["password_hash"] = new_hash
+    user["salt"] = ""
 
 
-def _load_user_from_postgres(user_id: str) -> Optional[dict]:
-    if not _ensure_pg_user_table():
-        return None
+def _make_email_user_id(email: str) -> str:
+    normalized_email = _normalize_email(email)
+    alias = normalized_email.split("@")[0] or "user"
+    safe_alias = "".join(ch for ch in alias if ch.isalnum() or ch in {"-", "_"})[:24] or "user"
+    return f"{safe_alias}_{secrets.token_hex(8)}"
 
-    connection_factory = _get_pg_connection_factory()
-    if connection_factory is None:
-        return None
 
-    try:
-        with connection_factory() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT email, password_hash, salt, created_at
-                    FROM auth_users
-                    WHERE user_id = %s
-                    LIMIT 1
-                    """,
-                    (user_id,),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return None
-                return {
-                    "email": row[0],
-                    "password_hash": row[1],
-                    "salt": row[2],
-                    "created_at": _format_created_at(row[3]),
-                }
-    except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"[Auth] PostgreSQL load user failed: {exc}")
-    return None
+def _make_phone_user_id(phone: str) -> str:
+    return f"phone_{secrets.token_hex(8)}"
+
+
+def _cache_legacy_aliases(user: dict) -> None:
+    user_id = user["id"]
+    _user_cache[user_id] = user
+
+    email = (user.get("email") or "").strip().lower()
+    if email:
+        local_alias = email.split("@", 1)[0]
+        if local_alias:
+            _user_cache[local_alias] = user
+
+    phone = (user.get("phone") or "").strip()
+    if phone:
+        _user_cache[f"phone:{phone}"] = user
 
 
 def _get_user(user_id: str) -> Optional[dict]:
-    """Get user from in-memory cache, Redis, then PostgreSQL."""
-    if user_id in _user_cache:
-        return _user_cache[user_id]
+    cached = _user_cache.get(user_id)
+    if cached:
+        return cached
 
-    user = _load_user_from_redis(user_id)
+    user = get_user_by_id(user_id)
     if user:
-        _user_cache[user_id] = user
-        _cache_legacy_user_alias(user_id, user)
-        # Opportunistic migration: old Redis-only users are moved to PostgreSQL.
-        _save_user_to_postgres(user_id, user)
-        return user
-
-    user = _load_user_from_postgres(user_id)
-    if user:
-        _user_cache[user_id] = user
-        _cache_legacy_user_alias(user_id, user)
-        _save_user_to_redis(user_id, user)
-        return user
-
-    return None
+        _cache_legacy_aliases(user)
+    return user
 
 
-def _cache_legacy_user_alias(user_id: str, user: dict) -> None:
-    """Mirror the user under its email local-part for backward-compatible cache lookups."""
-    email = (user.get("email") or "").strip().lower()
-    if not email:
-        return
-
-    alias = email.split("@", 1)[0]
-    if not alias or alias == user_id:
-        return
-
-    cached = _user_cache.get(alias)
-    if cached and cached.get("email") not in ("", email):
-        return
-
-    _user_cache[alias] = user
+def _build_public_user(user: dict) -> dict:
+    summary = get_account_summary(user["id"])
+    summary["email"] = user.get("email")
+    return summary
 
 
-def _put_user(user_id: str, user: dict) -> None:
-    """Write-through to memory, Redis and PostgreSQL."""
-    _user_cache[user_id] = user
-    _cache_legacy_user_alias(user_id, user)
-    _save_user_to_redis(user_id, user)
-    _save_user_to_postgres(user_id, user)
-
-
-def _cache_user_without_db(user_id: str, user: dict) -> None:
-    """Cache-only write (for JWT recovery / legacy no-password paths)."""
-    _user_cache[user_id] = user
-    _cache_legacy_user_alias(user_id, user)
-    _save_user_to_redis(user_id, user)
-
-
-def _hash_password(password: str, salt: str) -> str:
-    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
-
-
-def _make_user_id(email: str) -> str:
-    return email.split("@")[0] + "_" + hashlib.md5(email.encode()).hexdigest()[:6]
+def _create_token(user: dict) -> str:
+    expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
+    payload = {
+        "sub": user["id"],
+        "email": user.get("email"),
+        "phone": user.get("phone"),
+        "exp": expire,
+        "iat": datetime.utcnow(),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
 def generate_code() -> str:
     return "".join(secrets.choice(string.digits) for _ in range(6))
 
 
-def send_verification_code(email: str) -> dict:
-    code = generate_code()
-    expire_at = time.time() + _VERIFICATION_CODE_TTL_SECONDS
-    _save_code_record(email, {"code": code, "expire_at": expire_at})
-
-    smtp_host = os.getenv("SMTP_HOST", "")
-    smtp_user = os.getenv("SMTP_USER", "")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_password = os.getenv("SMTP_PASSWORD", "")
-    from_email = os.getenv("FROM_EMAIL", smtp_user)
+def _send_email_code(email: str, code: str) -> dict:
+    settings = get_settings()
+    smtp_host = (settings.smtp_host or "").strip()
+    smtp_user = (settings.smtp_user or "").strip()
+    smtp_port = int(settings.smtp_port or 587)
+    smtp_password = (settings.smtp_password or "").strip()
+    from_email = (settings.from_email or smtp_user).strip()
 
     if not smtp_host or not smtp_user:
-        print(f"[Auth] Dev mode - verification code for {email}: {code}")
-        return {"success": True, "dev_code": code}
+        print(f"[Auth] Dev mode - verification code for {email}: {code}", flush=True)
+        if settings.allow_dev_code_response:
+            return {"success": True, "dev_code": code}
+        return {"success": False, "error": "Email verification service is not configured"}
 
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = "[Contract Review Copilot] Verification Code"
         msg["From"] = from_email
         msg["To"] = email
-
         html_body = f"""
         <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
             <h1 style="color: #ff8c00; font-size: 20px;">Contract Review Copilot</h1>
@@ -373,113 +276,162 @@ def send_verification_code(email: str) -> dict:
         </div>
         """
         msg.attach(MIMEText(html_body, "html"))
-
         with smtplib.SMTP(smtp_host, smtp_port) as server:
             server.starttls()
             server.login(smtp_user, smtp_password)
             server.sendmail(from_email, [email], msg.as_string())
-
         return {"success": True}
     except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"[Auth] Failed to send email: {exc}")
-        print(f"[Auth] Dev fallback - verification code for {email}: {code}")
-        return {"success": True, "dev_code": code}
+        print(f"[Auth] Failed to send email: {exc}", flush=True)
+        return {"success": False, "error": "Failed to send verification email"}
 
 
-def verify_code_only(email: str, code: str) -> bool:
-    record = _load_code_record(email)
+def send_verification_code(email: str) -> dict:
+    normalized_email = _normalize_email(email)
+    code = generate_code()
+    expire_at = time.time() + get_settings().redis_auth_code_ttl_seconds
+    _save_code_record("email", normalized_email, {"code": code, "expire_at": expire_at})
+    result = _send_email_code(normalized_email, code)
+    if not result.get("success"):
+        _delete_code_record("email", normalized_email)
+    return result
+
+
+def send_phone_verification_code(phone: str) -> dict:
+    normalized_phone = normalize_phone(phone)
+    code = generate_code()
+    expire_at = time.time() + get_settings().redis_auth_code_ttl_seconds
+    _save_code_record("phone", normalized_phone, {"code": code, "expire_at": expire_at})
+    try:
+        result = send_phone_sms_code(normalized_phone, code)
+        if not result.get("success"):
+            _delete_code_record("phone", normalized_phone)
+        return result
+    except AliyunSmsError as exc:
+        print(f"[Auth] SMS send failed: {exc}", flush=True)
+        _delete_code_record("phone", normalized_phone)
+        return {"success": False, "error": str(exc)}
+
+
+def verify_code_only(identifier: str, code: str, *, kind: str = "email") -> bool:
+    normalized_identifier = normalize_phone(identifier) if kind == "phone" else _normalize_email(identifier)
+    record = _load_code_record(kind, normalized_identifier)
     if not record:
         return False
-    if time.time() > record["expire_at"]:
-        _delete_code_record(email)
+    if time.time() > float(record.get("expire_at", 0)):
+        _delete_code_record(kind, normalized_identifier)
         return False
-    return hmac.compare_digest(str(record["code"]), str(code))
+    return hmac.compare_digest(str(record.get("code", "")), str(code))
 
 
-def consume_code(email: str, code: str) -> bool:
-    if not verify_code_only(email, code):
+def consume_code(identifier: str, code: str, *, kind: str = "email") -> bool:
+    normalized_identifier = normalize_phone(identifier) if kind == "phone" else _normalize_email(identifier)
+    if not verify_code_only(normalized_identifier, code, kind=kind):
         return False
-    _delete_code_record(email)
+    _delete_code_record(kind, normalized_identifier)
     return True
 
 
 def register_user(email: str, code: str, password: str) -> dict:
-    """
-    Register a new user with email verification.
-    Returns {"success": True} or {"success": False, "error": "..."}.
-    """
-    user_id = _make_user_id(email)
-    if _get_user(user_id) is not None:
+    normalized_email = _normalize_email(email)
+    if get_user_by_email(normalized_email):
         return {"success": False, "error": "该邮箱已注册，请直接登录"}
 
-    if not consume_code(email, code):
+    if not consume_code(normalized_email, code, kind="email"):
         return {"success": False, "error": "验证码无效或已过期"}
 
     if len(password) < 6:
         return {"success": False, "error": "密码不能少于6位"}
 
-    salt = secrets.token_hex(16)
-    password_hash = _hash_password(password, salt)
+    password_hash = _hash_password(password)
+    try:
+        user = create_email_user(
+            user_id=_make_email_user_id(normalized_email),
+            email=normalized_email,
+            password_hash=password_hash,
+            salt="",
+        )
+    except AccountStateError as exc:
+        return {"success": False, "error": str(exc)}
 
-    user = {
-        "email": email,
-        "password_hash": password_hash,
-        "salt": salt,
-        "created_at": datetime.now().isoformat(),
-    }
-    _put_user(user_id, user)
-
-    print(f"[Auth] Registered new user: {email}")
-    return {"success": True}
+    _cache_legacy_aliases(user)
+    return {"success": True, "user": _build_public_user(user)}
 
 
 def login_with_password(email: str, password: str) -> Optional[str]:
-    """Authenticate with email + password. Returns JWT token or None."""
-    user_id = _make_user_id(email)
-    user = _get_user(user_id)
+    normalized_email = _normalize_email(email)
+    user = get_user_by_email(normalized_email)
     if not user:
         return None
 
-    expected = _hash_password(password, user.get("salt", ""))
-    if not hmac.compare_digest(expected, user.get("password_hash", "")):
+    if not _verify_password(password, user):
         return None
 
-    expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
-    return jwt.encode(
-        {
-            "sub": user_id,
-            "email": email,
-            "exp": expire,
-            "iat": datetime.utcnow(),
-        },
-        JWT_SECRET,
-        algorithm=JWT_ALGORITHM,
-    )
+    _maybe_upgrade_legacy_password_hash(user, password)
+    _cache_legacy_aliases(user)
+    return _create_token(user)
+
+
+def login_with_phone_code(phone: str, code: str) -> dict:
+    normalized_phone = normalize_phone(phone)
+    if not consume_code(normalized_phone, code, kind="phone"):
+        return {"success": False, "error": "验证码无效或已过期"}
+
+    user = get_user_by_phone(normalized_phone)
+    if not user:
+        try:
+            user = create_phone_user(
+                user_id=_make_phone_user_id(normalized_phone),
+                phone=normalized_phone,
+            )
+        except AccountStateError as exc:
+            return {"success": False, "error": str(exc)}
+
+    _cache_legacy_aliases(user)
+    return {
+        "success": True,
+        "token": _create_token(user),
+        "user": _build_public_user(user),
+    }
+
+
+def bind_phone_for_user(user_id: str, phone: str, code: str) -> dict:
+    normalized_phone = normalize_phone(phone)
+    if not consume_code(normalized_phone, code, kind="phone"):
+        return {"success": False, "error": "验证码无效或已过期"}
+
+    try:
+        user = attach_phone_to_existing_user(user_id, normalized_phone)
+    except (AccountStateError, ValueError) as exc:
+        return {"success": False, "error": str(exc)}
+
+    _cache_legacy_aliases(user)
+    return {"success": True, "user": _build_public_user(user)}
 
 
 def verify_code(email: str, code: str) -> Optional[str]:
-    """
-    Legacy code-only login path for backward compatibility.
-    """
-    if not consume_code(email, code):
+    normalized_email = _normalize_email(email)
+    if not consume_code(normalized_email, code, kind="email"):
         return None
 
-    user_id = _make_user_id(email)
-    if _get_user(user_id) is None:
-        recovered = {
-            "email": email,
-            "password_hash": "",
-            "salt": "",
-            "created_at": datetime.now().isoformat(),
-        }
-        _cache_user_without_db(user_id, recovered)
+    user = get_user_by_email(normalized_email)
+    if not user:
+        salt = ""
+        password_hash = ""
+        try:
+            user = create_email_user(
+                user_id=_make_email_user_id(normalized_email),
+                email=normalized_email,
+                password_hash=password_hash,
+                salt=salt,
+            )
+        except AccountStateError:
+            user = get_user_by_email(normalized_email)
+    if not user:
+        return None
 
-    expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
-    return jwt.encode(
-        {"sub": user_id, "email": email, "exp": expire, "iat": datetime.utcnow()},
-        JWT_SECRET,
-        algorithm=JWT_ALGORITHM,
-    )
+    _cache_legacy_aliases(user)
+    return _create_token(user)
 
 
 def decode_token(token: str) -> Optional[dict]:
@@ -495,19 +447,11 @@ def get_user_from_token(token: str) -> Optional[dict]:
         return None
 
     user_id = payload.get("sub")
-    email = payload.get("email")
-    if not user_id or not email:
+    if not user_id:
         return None
 
     user = _get_user(user_id)
-    if user:
-        return {"id": user_id, "email": user["email"], "created_at": user.get("created_at")}
+    if not user:
+        return None
 
-    recovered = {
-        "email": email,
-        "password_hash": "",
-        "salt": "",
-        "created_at": datetime.now().isoformat(),
-    }
-    _cache_user_without_db(user_id, recovered)
-    return {"id": user_id, "email": email, "created_at": recovered["created_at"]}
+    return _build_public_user(user)

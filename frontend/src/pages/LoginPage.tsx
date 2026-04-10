@@ -1,187 +1,248 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { motion } from 'motion/react'
-import { Mail, Lock, Eye, EyeOff } from 'lucide-react'
+import { KeyRound, Lock, Mail, MessageSquareText, Smartphone } from 'lucide-react'
+import type { User } from '../contexts/AuthContext'
 
 interface LoginPageProps {
-  onLogin: (token: string, user: { email: string; id: string }) => void
+  onLogin: (token: string, user: User) => void
   onNavigateRegister?: () => void
 }
 
+type LoginMode = 'phone' | 'email'
+
 export function LoginPage({ onLogin, onNavigateRegister }: LoginPageProps) {
+  const [mode, setMode] = useState<LoginMode>('phone')
+  const [phone, setPhone] = useState('')
+  const [phoneCode, setPhoneCode] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [sendingCode, setSendingCode] = useState(false)
+  const [countdown, setCountdown] = useState(0)
+  const [devCode, setDevCode] = useState('')
   const [error, setError] = useState('')
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!email.trim()) { setError('请输入邮箱地址'); return }
-    if (!password) { setError('请输入密码'); return }
+  const startCountdown = useCallback(() => {
+    setCountdown(60)
+    const timer = setInterval(() => {
+      setCountdown((value) => {
+        if (value <= 1) {
+          clearInterval(timer)
+          return 0
+        }
+        return value - 1
+      })
+    }, 1000)
+  }, [])
 
-    setLoading(true)
+  const handleSendPhoneCode = useCallback(async () => {
+    const normalizedPhone = phone.replace(/\D/g, '').slice(-11)
+    if (!/^1\d{10}$/.test(normalizedPhone)) {
+      setError('请输入有效的 11 位手机号')
+      return
+    }
+
+    setSendingCode(true)
     setError('')
     try {
-      const res = await fetch('/api/auth/login', {
+      const response = await fetch('/api/auth/phone/send-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: normalizedPhone }),
+      })
+      const payload = await response.json() as { error?: string; dev_code?: string }
+      if (!response.ok) {
+        setError(payload.error || '验证码发送失败')
+        return
+      }
+      setDevCode(payload.dev_code ?? '')
+      startCountdown()
+    } catch {
+      setError('网络错误，请稍后重试')
+    } finally {
+      setSendingCode(false)
+    }
+  }, [phone, startCountdown])
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setLoading(true)
+    setError('')
+
+    try {
+      if (mode === 'phone') {
+        const normalizedPhone = phone.replace(/\D/g, '').slice(-11)
+        if (!/^1\d{10}$/.test(normalizedPhone)) {
+          setError('请输入有效的 11 位手机号')
+          return
+        }
+        if (!phoneCode.trim()) {
+          setError('请输入短信验证码')
+          return
+        }
+
+        const response = await fetch('/api/auth/phone/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: normalizedPhone, code: phoneCode.trim() }),
+        })
+        const payload = await response.json() as { error?: string; token?: string; user?: User }
+        if (!response.ok || !payload.token || !payload.user) {
+          setError(payload.error || '手机号登录失败')
+          return
+        }
+        onLogin(payload.token, payload.user)
+        return
+      }
+
+      if (!email.trim()) {
+        setError('请输入邮箱地址')
+        return
+      }
+      if (!password.trim()) {
+        setError('请输入密码')
+        return
+      }
+
+      const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error || '邮箱或密码错误'); return }
-      localStorage.setItem('auth_token', data.token)
-      localStorage.setItem('auth_user', JSON.stringify(data.user))
-      onLogin(data.token, data.user)
+      const payload = await response.json() as { error?: string; token?: string; user?: User }
+      if (!response.ok || !payload.token || !payload.user) {
+        setError(payload.error || '邮箱登录失败')
+        return
+      }
+      onLogin(payload.token, payload.user)
     } catch {
-      setError('网络错误，请检查连接后重试')
+      setError('网络错误，请稍后重试')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 24,
-    }}>
+    <div className="auth-shell">
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        style={{
-          width: '100%',
-          maxWidth: 760,
-          border: '4px solid black',
-          boxShadow: '8px 8px 0px 0px rgba(0,0,0,1)',
-          display: 'flex',
-          flexDirection: 'row',
-          background: 'var(--color-paper)',
-          overflow: 'hidden',
-        }}
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="auth-card"
       >
-        {/* Form side */}
-        <div style={{ flex: 1, padding: '48px 44px', display: 'flex', flexDirection: 'column', gap: 28 }}>
-          <div>
-            <h1 style={{
-              fontFamily: 'var(--font-header)',
-              fontSize: 18,
-              color: 'var(--color-ink)',
-              lineHeight: 1.5,
-              marginBottom: 10,
-            }}>
-              Doge 合规助手登录
-            </h1>
-            <p style={{ fontFamily: 'var(--font-ui)', fontSize: 11, color: 'var(--color-ink-soft)', lineHeight: 1.6 }}>
-              输入邮箱和密码，安全登录
-            </p>
+        <div className="auth-card__visual">
+          <img src="/doge.png" alt="Doge" className="auth-card__doge" />
+          <h1 className="auth-card__heading">Doge 合同审查助手</h1>
+        </div>
+
+        <div className="auth-card__form-pane">
+          <div className="auth-card__tabs">
+            <button
+              type="button"
+              className={`auth-tab${mode === 'phone' ? ' auth-tab--active' : ''}`}
+              onClick={() => {
+                setMode('phone')
+                setError('')
+              }}
+            >
+              <Smartphone size={16} />
+              手机号登录
+            </button>
+            <button
+              type="button"
+              className={`auth-tab${mode === 'email' ? ' auth-tab--active' : ''}`}
+              onClick={() => {
+                setMode('email')
+                setError('')
+              }}
+            >
+              <Mail size={16} />
+              邮箱登录
+            </button>
           </div>
 
-          <form style={{ display: 'flex', flexDirection: 'column', gap: 20 }} onSubmit={handleSubmit}>
-            {/* Email */}
-            <Field label="邮箱地址">
-              <InputWrap icon={<Mail size={18} />}>
-                <input
-                  type="email"
-                  className="pixel-input pixel-input--literal"
-                  placeholder="your@email.com"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  autoComplete="email"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  style={{ paddingLeft: 44, fontSize: 13 }}
-                />
-              </InputWrap>
-            </Field>
+          <form className="auth-form" onSubmit={handleSubmit}>
+            {mode === 'phone' ? (
+              <>
+                <AuthField label="手机号">
+                  <span className="auth-field__icon"><Smartphone size={16} /></span>
+                  <input
+                    className="pixel-input pixel-input--literal auth-field__input"
+                    placeholder="请输入 11 位手机号"
+                    value={phone}
+                    onChange={(event) => setPhone(event.target.value.replace(/\D/g, '').slice(0, 11))}
+                  />
+                </AuthField>
 
-            {/* Password */}
-            <Field label="密码">
-              <InputWrap icon={<Lock size={18} />} right={
-                <button type="button" onClick={() => setShowPassword(v => !v)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 12px', color: 'var(--color-ink-muted)', display: 'flex', alignItems: 'center' }}>
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              }>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  className="pixel-input pixel-input--literal"
-                  placeholder="请输入密码"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  style={{ paddingLeft: 44, paddingRight: 44, fontSize: 13 }}
-                />
-              </InputWrap>
-            </Field>
-
-            {/* Remember / forgot */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 700 }}>
-                <input type="checkbox" style={{ width: 16, height: 16, border: '2px solid black', accentColor: 'black' }} />
-                记住我
-              </label>
-              <span style={{ fontFamily: 'var(--font-ui)', fontSize: 11, fontWeight: 700, borderBottom: '2px solid black', cursor: 'pointer' }}>
-                忘记密码?
-              </span>
-            </div>
-
-            {error && (
-              <div style={{ border: '3px solid var(--color-red)', background: 'var(--color-red-light)', padding: '10px 14px', fontFamily: 'var(--font-ui)', fontSize: 10, color: 'var(--color-red)', lineHeight: 1.6 }}>
-                {error}
-              </div>
+                <div className="auth-code-row">
+                  <AuthField label="短信验证码">
+                    <span className="auth-field__icon"><MessageSquareText size={16} /></span>
+                    <input
+                      className="pixel-input pixel-input--literal auth-field__input"
+                      placeholder="请输入 6 位验证码"
+                      value={phoneCode}
+                      onChange={(event) => setPhoneCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                    />
+                  </AuthField>
+                  <button
+                    type="button"
+                    className="pixel-button auth-code-row__button"
+                    onClick={handleSendPhoneCode}
+                    disabled={sendingCode || countdown > 0}
+                  >
+                    {countdown > 0 ? `${countdown}s` : sendingCode ? '发送中...' : '获取验证码'}
+                  </button>
+                </div>
+                {devCode && <div className="auth-dev-code">开发模式验证码：{devCode}</div>}
+              </>
+            ) : (
+              <>
+                <AuthField label="邮箱地址">
+                  <span className="auth-field__icon"><Mail size={16} /></span>
+                  <input
+                    className="pixel-input pixel-input--literal auth-field__input"
+                    placeholder="name@example.com"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                  />
+                </AuthField>
+                <AuthField label="密码">
+                  <span className="auth-field__icon"><Lock size={16} /></span>
+                  <input
+                    type="password"
+                    className="pixel-input pixel-input--literal auth-field__input"
+                    placeholder="请输入密码"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                  />
+                </AuthField>
+              </>
             )}
 
-            <button
-              type="submit"
-              className="pixel-button"
-              disabled={loading}
-              style={{ width: '100%', padding: '16px 0', fontSize: 16, marginTop: 4, background: 'var(--color-green)', color: 'white', fontFamily: 'var(--font-ui)', textTransform: 'none', letterSpacing: 'normal' }}
-            >
-              {loading ? <span style={{ width: 18, height: 18, border: '3px solid rgba(255,255,255,0.4)', borderTopColor: 'white', display: 'inline-block', animation: 'login-spin 0.6s steps(4) infinite' }} /> : '安全登录'}
+            {error && <div className="auth-error">{error}</div>}
+
+            <button type="submit" className="pixel-button auth-submit" disabled={loading}>
+              <KeyRound size={16} />
+              {loading ? '登录中...' : mode === 'phone' ? '手机号登录' : '邮箱登录'}
             </button>
           </form>
 
-          <div style={{ fontFamily: 'var(--font-ui)', fontSize: 12, textAlign: 'center', marginTop: 4 }}>
-            <span>没有帐号? </span>
-            <button type="button" onClick={onNavigateRegister}
-              style={{ background: 'none', border: 'none', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font-ui)', fontSize: 12, borderBottom: '2px solid black', padding: 0 }}>
-              立即注册
+          <div className="auth-footer">
+            <span>需要一个辅助邮箱账户？</span>
+            <button type="button" className="auth-link-button" onClick={onNavigateRegister}>
+              去邮箱注册
             </button>
           </div>
-        </div>
-
-        {/* Doge side */}
-        <div style={{ width: '36%', background: 'var(--color-cream-darker)', borderLeft: '4px solid black', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <img src="/doge.png" alt="Doge" style={{ width: '100%', height: 'auto', objectFit: 'contain', imageRendering: 'pixelated' }} />
         </div>
       </motion.div>
     </div>
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function AuthField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <label style={{ fontFamily: 'var(--font-ui)', fontSize: 10, fontWeight: 700, textTransform: 'none', letterSpacing: 'normal', color: 'var(--color-ink-soft)' }}>
-        {label}
-      </label>
-      {children}
-    </div>
-  )
-}
-
-function InputWrap({ icon, right, children }: { icon: React.ReactNode; right?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-      <span style={{ position: 'absolute', left: 12, color: 'var(--color-ink-muted)', pointerEvents: 'none', display: 'flex', alignItems: 'center', zIndex: 1 }}>{icon}</span>
-      <div style={{ flex: 1 }}>{children}</div>
-      {right && <span style={{ position: 'absolute', right: 0, display: 'flex', alignItems: 'center', height: '100%' }}>{right}</span>}
-    </div>
+    <label className="auth-field">
+      <span className="auth-field__label">{label}</span>
+      <div className="auth-field__control">{children}</div>
+    </label>
   )
 }

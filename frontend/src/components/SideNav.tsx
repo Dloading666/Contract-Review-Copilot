@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { MessageSquare, History, Settings } from 'lucide-react'
-import { loadPersistedReviewHistory } from '../lib/reviewHistory'
+import { loadPersistedReviewHistoryFromOwners } from '../lib/reviewHistory'
+import type { User } from '../contexts/AuthContext'
 
 interface SideNavProps {
-  user?: { email: string; id: string } | null
+  user?: User | null
   onLogout?: () => void
   onSelectHistorySession?: (sessionId: string) => void
   onOpenSettings?: () => void
@@ -24,7 +25,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
 
   const loadHistoryItems = () => {
     try {
-      const parsed = loadPersistedReviewHistory<HistoryListItem>(user?.email)
+      const parsed = loadPersistedReviewHistoryFromOwners<HistoryListItem>([user?.id, user?.phone, user?.email])
       setHistoryItems(parsed)
     } catch {
       setHistoryItems([])
@@ -215,7 +216,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
 
       {/* Footer: settings + logout */}
       <div style={{ borderTop: '4px solid black' }}>
-        {user?.email && (
+        {(user?.phone || user?.email) && (
           <div style={{
             padding: '8px 8px',
             fontFamily: 'var(--font-pixel)',
@@ -227,7 +228,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
             color: 'var(--color-ink-soft)',
             lineHeight: 1.6,
           }}>
-            {user.email}
+            {user.phone || user.email}
           </div>
         )}
         <button

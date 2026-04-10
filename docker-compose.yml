@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: contract_review
       POSTGRES_USER: contract_user
-      POSTGRES_PASSWORD: contract_pass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/db/init:/docker-entrypoint-initdb.d:ro
@@ -20,10 +20,13 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: ['sh', '-c', 'redis-server --requirepass "$REDIS_PASSWORD"']
     ports:
       - '6379:6379'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" ping']
       interval: 5s
       timeout: 5s
       retries: 12
@@ -54,21 +57,25 @@ services:
         condition: service_healthy
     environment:
       - LOG_LEVEL=INFO
-      - DATABASE_URL=postgresql://contract_user:contract_pass@postgres:5432/contract_review
+      - DATABASE_URL=postgresql://contract_user:${POSTGRES_PASSWORD}@postgres:5432/contract_review
       - AUTO_SEED_LEGAL_KNOWLEDGE=1
       - PADDLE_PDX_MODEL_SOURCE=BOS
       - REDIS_ENABLED=true
-      - REDIS_URL=redis://redis:6379/0
-      - PRIMARY_LLM_MODEL_KEY=kimi
-      - GEMMA4_BASE_URL=http://host.docker.internal:11434/v1
-      - GEMMA4_MODEL=contract-gemma4:latest
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_SECRET_FILE=/app/data/jwt_secret
+      - ALLOW_DEV_CODE_RESPONSE=false
+      - OPENAI_BASE_URL=https://api.siliconflow.cn/v1
       - SKIP_LLM_EXTRACTION=0
       - SKIP_LLM_ROUTING=0
       - SKIP_LLM_REVIEW=0
       - SKIP_LLM_REPORT=0
     env_file:
       - ./backend/.env
+    volumes:
+      - backend_data:/app/data
     restart: unless-stopped
 
 volumes:
   postgres_data:
+  backend_data:

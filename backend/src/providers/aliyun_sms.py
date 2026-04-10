@@ -53,7 +53,9 @@ def send_phone_verification_code(phone: str, code: str) -> dict:
 
     if not access_key_id or not access_key_secret or not sign_name or not template_code:
         print(f"[SMS] Dev mode - verification code for {phone}: {code}", flush=True)
-        return {"success": True, "dev_code": code}
+        if settings.allow_dev_code_response:
+            return {"success": True, "dev_code": code}
+        return {"success": False, "error": "SMS verification service is not configured"}
 
     params = {
         "AccessKeyId": access_key_id,

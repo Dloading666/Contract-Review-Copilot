@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../components/ChatPanel'
 import type { ReviewState } from '../App'
 
-const noRiskTitle = '鏁翠綋璇勪及'
-const noRiskIssue = '鏈彂鐜版槑鏄句笉鍏钩'
+const noRiskTitle = '整体评估'
+const noRiskIssue = '未发现明显不公平条款'
 
 function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
   return {
@@ -34,6 +34,7 @@ function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
     chatMessages: [
       { id: 'assistant-1', role: 'assistant', content: 'Welcome, ask anything about the contract.' },
     ],
+    reviewSession: null,
     ...overrides,
   }
 }

@@ -1,200 +1,168 @@
-import { useState } from 'react'
-import { ShieldCheck, Bell, Palette, Monitor, Upload } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ArrowLeft, BadgeCheck, Mail, Smartphone, Wallet } from 'lucide-react'
+import type { User } from '../contexts/AuthContext'
+import { WalletRechargeModal } from '../components/WalletRechargeModal'
+
+interface WalletTransaction {
+  transaction_id: string
+  transaction_type: string
+  amount_fen: number
+  balance_after_fen: number
+  created_at?: string
+  description?: string
+}
+
+interface RechargeOrder {
+  order_id: string
+  amount_fen: number
+  status: string
+  created_at?: string
+}
 
 interface SettingsPageProps {
-  user?: { email: string; id: string } | null
+  user: User
+  token: string
+  onUserUpdate: (user: User) => void
   onBack: () => void
 }
 
-export function SettingsPage({ user, onBack }: SettingsPageProps) {
-  const [activeTab, setActiveTab] = useState<'personal' | 'security' | 'prefs'>('personal')
+function fenToYuan(amountFen: number) {
+  return (amountFen / 100).toFixed(amountFen % 100 === 0 ? 0 : 2)
+}
+
+export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPageProps) {
+  const [transactions, setTransactions] = useState<WalletTransaction[]>([])
+  const [orders, setOrders] = useState<RechargeOrder[]>([])
+  const [showRechargeModal, setShowRechargeModal] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadSummary = async () => {
+      try {
+        const response = await fetch('/api/account/summary', {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        const payload = await response.json() as {
+          user?: User
+          recentTransactions?: WalletTransaction[]
+          recentRechargeOrders?: RechargeOrder[]
+        }
+        if (!response.ok || cancelled) return
+        if (payload.user) onUserUpdate(payload.user)
+        if (payload.recentTransactions) setTransactions(payload.recentTransactions)
+        if (payload.recentRechargeOrders) setOrders(payload.recentRechargeOrders)
+      } catch {
+        // Ignore summary refresh errors in the settings shell.
+      }
+    }
+
+    void loadSummary()
+    return () => {
+      cancelled = true
+    }
+  }, [onUserUpdate, token])
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'var(--color-cream)',
-      backgroundImage: 'radial-gradient(var(--color-cream-darker) 1.5px, transparent 1.5px)',
-      backgroundSize: '20px 20px',
-      padding: 32,
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-    }}>
-      <div style={{ width: '100%', maxWidth: 800, display: 'flex', flexDirection: 'column', gap: 24 }}>
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <img
-              src="/doge.png"
-              alt="Doge"
-              style={{ width: 48, height: 48, border: '4px solid black', objectFit: 'contain', imageRendering: 'pixelated', background: 'white', padding: 2 }}
-            />
-            <h1 style={{ fontFamily: 'var(--font-header)', fontSize: 14, color: 'var(--color-ink)' }}>
-              Doge 合规助手 设置
-            </h1>
-          </div>
-          <button
-            className="pixel-button"
-            onClick={onBack}
-            style={{ background: 'var(--color-blue)', color: 'white' }}
-          >
-            返回对话
-          </button>
-        </div>
-
-        {/* Card */}
-        <div style={{ border: '4px solid black', boxShadow: '4px 4px 0 rgba(0,0,0,1)', background: 'var(--color-paper)', overflow: 'hidden' }}>
-          {/* Tabs */}
-          <div style={{ display: 'flex', borderBottom: '4px solid black', background: '#f0f0f0' }}>
-            {(['personal', 'security', 'prefs'] as const).map((tab, i) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                style={{
-                  padding: '16px 32px',
-                  fontFamily: 'var(--font-pixel)',
-                  fontSize: 9,
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  border: 'none',
-                  borderRight: i < 2 ? '4px solid black' : 'none',
-                  background: activeTab === tab ? 'var(--color-orange)' : 'transparent',
-                  color: activeTab === tab ? 'white' : 'var(--color-ink)',
-                  cursor: 'pointer',
-                  transition: 'background 0.1s',
-                }}
-              >
-                {tab === 'personal' ? '个人资料' : tab === 'security' ? '账号安全' : '界面偏好'}
-              </button>
-            ))}
-          </div>
-
-          {/* Content */}
-          <div style={{ padding: 32, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 48 }}>
-            {/* Left col */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                <img
-                  src="/doge.png"
-                  alt="Avatar"
-                  style={{ width: 80, height: 80, border: '4px solid black', objectFit: 'contain', background: 'white', imageRendering: 'pixelated' }}
-                />
-                <button
-                  className="pixel-button"
-                  style={{ background: 'var(--color-blue)', color: 'white', display: 'flex', alignItems: 'center', gap: 6 }}
-                >
-                  <Upload size={14} /> 上传头像
-                </button>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <label style={{ fontFamily: 'var(--font-pixel)', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-ink-soft)' }}>
-                  姓名
-                </label>
-                <input className="pixel-input" placeholder="像素姓名" />
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <label style={{ fontFamily: 'var(--font-pixel)', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-ink-soft)' }}>
-                  邮箱
-                </label>
-                <input className="pixel-input" placeholder={user?.email || 'wow@doge.com'} disabled />
-              </div>
-            </div>
-
-            {/* Right col */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-              {/* Toggle: 双重验证 */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-pixel)', fontSize: 9, fontWeight: 700 }}>
-                  <ShieldCheck size={18} /> 双重验证
-                </div>
-                <PixelToggle on color="var(--color-blue)" />
-              </div>
-
-              {/* Toggle: 邮件通知 */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-pixel)', fontSize: 9, fontWeight: 700 }}>
-                  <Bell size={18} /> 邮件通知
-                </div>
-                <PixelToggle on color="var(--color-green)" />
-              </div>
-
-              {/* Slider: 像素缩放 */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-pixel)', fontSize: 9, fontWeight: 700 }}>
-                  <Palette size={18} /> 像素缩放
-                </div>
-                <PixelSlider value={75} />
-              </div>
-
-              {/* Radio: 主题 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-pixel)', fontSize: 9, fontWeight: 700 }}>
-                  <Monitor size={18} /> 主题
-                </div>
-                <div style={{ display: 'flex', gap: 16 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-pixel)', fontSize: 9, cursor: 'pointer' }}>
-                    <input type="radio" name="theme" defaultChecked style={{ width: 14, height: 14, accentColor: 'black' }} /> 亮色
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-pixel)', fontSize: 9, cursor: 'pointer' }}>
-                    <input type="radio" name="theme" style={{ width: 14, height: 14, accentColor: 'black' }} /> 暗黑
-                  </label>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer buttons */}
-          <div style={{ padding: '24px 32px', borderTop: '4px solid black', display: 'flex', justifyContent: 'flex-end', gap: 16, background: '#f5f5f5' }}>
-            <button className="pixel-button" style={{ padding: '12px 48px', background: 'var(--color-orange)', color: 'white' }}>
-              保存设置
-            </button>
-            <button className="pixel-button" onClick={onBack} style={{ padding: '12px 48px', background: 'var(--color-blue)', color: 'white' }}>
-              取消
-            </button>
-          </div>
+    <div className="account-page">
+      <div className="account-page__header">
+        <button type="button" className="pixel-button account-page__back" onClick={onBack}>
+          <ArrowLeft size={16} />
+          返回工作台
+        </button>
+        <div>
+          <h1 className="account-page__title">账户中心</h1>
+          <p className="account-page__subtitle">查看手机号绑定状态、剩余免费次数、钱包余额和最近流水。</p>
         </div>
       </div>
-    </div>
-  )
-}
 
-function PixelToggle({ on, color }: { on: boolean; color: string }) {
-  return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6,
-      background: on ? color : 'var(--color-cream-dark)',
-      color: 'white',
-      padding: '4px 8px',
-      border: '2px solid black',
-      fontFamily: 'var(--font-pixel)',
-      fontSize: 8,
-      fontWeight: 700,
-    }}>
-      {on ? '开启' : '关闭'}
-      <div style={{ width: 14, height: 14, background: 'white', border: '2px solid black' }} />
-    </div>
-  )
-}
+      <div className="account-page__grid">
+        <section className="account-card">
+          <div className="account-card__title">身份信息</div>
+          <div className="account-card__list">
+            <div className="account-card__row">
+              <span className="account-card__label"><Smartphone size={14} /> 手机号</span>
+              <span>{user.phone || '未绑定'}</span>
+            </div>
+            <div className="account-card__row">
+              <span className="account-card__label"><Mail size={14} /> 邮箱</span>
+              <span>{user.email || '未设置'}</span>
+            </div>
+            <div className="account-card__row">
+              <span className="account-card__label"><BadgeCheck size={14} /> 账号状态</span>
+              <span>{user.mustBindPhone ? '待绑定手机号' : '已激活'}</span>
+            </div>
+          </div>
+        </section>
 
-function PixelSlider({ value }: { value: number }) {
-  const pct = `${value}%`
-  return (
-    <div style={{ position: 'relative', height: 24, background: '#e0e0e0', border: '4px solid black' }}>
-      <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, background: 'var(--color-blue)', width: pct, borderRight: '4px solid black' }} />
-      <div style={{
-        position: 'absolute',
-        left: pct,
-        top: '50%',
-        transform: 'translate(-50%, -50%)',
-        width: 16,
-        height: 32,
-        background: 'var(--color-orange)',
-        border: '4px solid black',
-      }} />
+        <section className="account-card">
+          <div className="account-card__title">权益摘要</div>
+          <div className="account-metrics">
+            <div className="account-metric">
+              <div className="account-metric__value">{user.freeReviewRemaining}</div>
+              <div className="account-metric__label">剩余免费完整审查</div>
+            </div>
+            <div className="account-metric">
+              <div className="account-metric__value">¥{fenToYuan(user.walletBalanceFen)}</div>
+              <div className="account-metric__label">钱包余额</div>
+            </div>
+          </div>
+          <button type="button" className="pixel-button account-card__cta" onClick={() => setShowRechargeModal(true)}>
+            <Wallet size={16} />
+            微信扫码充值
+          </button>
+        </section>
+
+        <section className="account-card account-card--wide">
+          <div className="account-card__title">最近钱包流水</div>
+          <div className="account-table">
+            {transactions.length === 0 ? (
+              <div className="account-table__empty">暂无钱包流水</div>
+            ) : (
+              transactions.map((item) => (
+                <div key={item.transaction_id} className="account-table__row">
+                  <div>
+                    <div className="account-table__main">{item.description || item.transaction_type}</div>
+                    <div className="account-table__sub">{item.created_at || ''}</div>
+                  </div>
+                  <div className={item.amount_fen >= 0 ? 'account-table__amount account-table__amount--positive' : 'account-table__amount account-table__amount--negative'}>
+                    {item.amount_fen >= 0 ? '+' : '-'}¥{fenToYuan(Math.abs(item.amount_fen))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="account-card account-card--wide">
+          <div className="account-card__title">最近充值订单</div>
+          <div className="account-table">
+            {orders.length === 0 ? (
+              <div className="account-table__empty">暂无充值订单</div>
+            ) : (
+              orders.map((order) => (
+                <div key={order.order_id} className="account-table__row">
+                  <div>
+                    <div className="account-table__main">{order.order_id}</div>
+                    <div className="account-table__sub">{order.created_at || ''}</div>
+                  </div>
+                  <div className={`account-order-status account-order-status--${order.status}`}>
+                    ¥{fenToYuan(order.amount_fen)} · {order.status}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+
+      <WalletRechargeModal
+        open={showRechargeModal}
+        token={token}
+        user={user}
+        onClose={() => setShowRechargeModal(false)}
+        onUserUpdate={onUserUpdate}
+      />
     </div>
   )
 }

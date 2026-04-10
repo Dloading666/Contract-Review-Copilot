@@ -2,8 +2,10 @@
 LangGraph StateGraph — Contract Review Pipeline
 Orchestrates: extraction -> routing -> retrieval -> review -> breakpoint -> aggregation
 """
+import atexit
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Any, AsyncGenerator
 
@@ -16,10 +18,13 @@ from ..agents.logic_review import review_clauses
 from ..agents.breakpoint import check_breakpoint
 from ..agents.aggregation import generate_report
 
+_GRAPH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="review-graph")
+atexit.register(_GRAPH_EXECUTOR.shutdown, wait=False, cancel_futures=True)
+
 
 async def _run_sync(func: Any, *args: Any) -> Any:
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, lambda: func(*args))
+    return await loop.run_in_executor(_GRAPH_EXECUTOR, lambda: func(*args))
 
 
 async def entity_extraction_node(state: ReviewState) -> dict:

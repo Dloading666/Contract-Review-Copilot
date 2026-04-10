@@ -1984,3 +1984,615 @@ body {
     display: none;
   }
 }
+
+.auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--color-cream);
+}
+
+.auth-card {
+  width: min(980px, 100%);
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  border: 4px solid black;
+  box-shadow: 8px 8px 0 rgba(0,0,0,1);
+  background: var(--color-paper);
+  overflow: hidden;
+}
+
+.auth-card--narrow {
+  width: min(620px, 100%);
+  grid-template-columns: 1fr;
+}
+
+.auth-card__visual {
+  background: linear-gradient(180deg, #ffcf7d 0%, #ffa640 100%);
+  border-right: 4px solid black;
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.auth-card__doge {
+  width: 120px;
+  height: 120px;
+  border: 4px solid black;
+  background: white;
+  padding: 6px;
+  image-rendering: pixelated;
+}
+
+.auth-card__visual-badge {
+  border: 3px solid black;
+  background: white;
+  padding: 6px 10px;
+  font-family: var(--font-pixel);
+  font-size: 11px;
+}
+
+.auth-card__heading {
+  margin: 0;
+  font-family: var(--font-header);
+  font-size: 16px;
+}
+
+.auth-card__subheading {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.auth-card__form-pane {
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.auth-card__form-pane--full {
+  max-width: 540px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.auth-card__tabs {
+  display: flex;
+  gap: 10px;
+}
+
+.auth-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 3px solid black;
+  background: white;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.auth-tab--active {
+  background: var(--color-blue);
+  color: white;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auth-field__label {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-ink-soft);
+}
+
+.auth-field__control {
+  position: relative;
+}
+
+.auth-field__icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-ink-muted);
+  pointer-events: none;
+}
+
+.auth-field__input {
+  padding-left: 42px;
+  font-size: 13px;
+}
+
+.auth-field__input--plain {
+  padding-left: 14px;
+}
+
+.auth-code-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.auth-code-row__button {
+  height: 48px;
+  background: var(--color-orange);
+  color: white;
+}
+
+.auth-dev-code,
+.auth-error,
+.auth-success,
+.binding-summary {
+  border: 3px solid black;
+  padding: 10px 12px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.auth-dev-code {
+  background: var(--color-orange-light);
+  color: var(--color-orange);
+}
+
+.auth-error {
+  background: var(--color-red-light);
+  color: var(--color-red);
+}
+
+.auth-success {
+  background: #e9fff1;
+  color: #198754;
+}
+
+.auth-submit {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--color-green);
+  color: white;
+}
+
+.auth-footer,
+.auth-register-copy {
+  font-family: var(--font-ui);
+}
+
+.auth-register-copy h1 {
+  margin: 0 0 8px;
+  font-family: var(--font-header);
+  font-size: 16px;
+}
+
+.auth-register-copy p,
+.auth-footer {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.auth-link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-blue);
+  cursor: pointer;
+}
+
+.auth-link-button--solo {
+  align-self: center;
+}
+
+.auth-back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.upload-area__account {
+  width: 100%;
+  border: 3px solid black;
+  background: rgba(255,255,255,0.85);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.upload-area__account-title {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.upload-area__account-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.upload-area__account-grid > div {
+  border: 2px solid black;
+  background: white;
+  padding: 10px 8px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.upload-area__account-grid strong {
+  font-family: var(--font-header);
+  font-size: 16px;
+}
+
+.upload-area__account-grid span,
+.upload-area__account-hint {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.upload-area__recharge-btn {
+  align-self: flex-start;
+}
+
+.chat-quota-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 3px solid black;
+  background: #eef5ff;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.chat-quota-banner__text {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.wallet-modal__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 300;
+}
+
+.wallet-modal {
+  width: min(560px, 100%);
+  border: 4px solid black;
+  background: var(--color-paper);
+  box-shadow: 8px 8px 0 rgba(0,0,0,1);
+}
+
+.wallet-modal__header,
+.wallet-modal__body {
+  padding: 20px;
+}
+
+.wallet-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 4px solid black;
+}
+
+.wallet-modal__title {
+  font-family: var(--font-header);
+  font-size: 16px;
+}
+
+.wallet-modal__subtitle {
+  margin-top: 4px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.wallet-modal__close {
+  width: 36px;
+  height: 36px;
+  border: 3px solid black;
+  background: white;
+  cursor: pointer;
+}
+
+.wallet-amount-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wallet-amount-picker__label,
+.wallet-payment-state__amount {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.wallet-amount-picker__quick-list {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wallet-amount-chip {
+  border: 3px solid black;
+  background: white;
+  padding: 8px 12px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wallet-amount-chip--active {
+  background: var(--color-orange);
+  color: white;
+}
+
+.wallet-amount-picker__input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-header);
+  font-size: 18px;
+}
+
+.wallet-amount-picker__input {
+  flex: 1;
+}
+
+.wallet-amount-picker__hint,
+.wallet-payment-state__copy,
+.account-page__subtitle {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--color-ink-soft);
+}
+
+.wallet-modal__submit {
+  margin-top: 16px;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--color-green);
+  color: white;
+}
+
+.wallet-payment-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.wallet-payment-state__qr {
+  padding: 16px;
+  border: 3px solid black;
+  background: #fff8e8;
+}
+
+.wallet-payment-state__status {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.wallet-payment-state__status--paid {
+  color: #198754;
+}
+
+.account-page {
+  min-height: 100vh;
+  padding: 28px;
+  background: var(--color-cream);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.account-page__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.account-page__back {
+  background: var(--color-blue);
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-page__title {
+  margin: 0 0 8px;
+  font-family: var(--font-header);
+  font-size: 18px;
+}
+
+.account-page__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.account-card {
+  border: 4px solid black;
+  background: var(--color-paper);
+  box-shadow: 6px 6px 0 rgba(0,0,0,1);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.account-card--wide {
+  grid-column: span 2;
+}
+
+.account-card__title {
+  font-family: var(--font-header);
+  font-size: 15px;
+}
+
+.account-card__list,
+.account-table {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.account-card__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.account-card__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.account-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.account-metric {
+  border: 3px solid black;
+  background: white;
+  padding: 14px;
+}
+
+.account-metric__value {
+  font-family: var(--font-header);
+  font-size: 18px;
+}
+
+.account-metric__label,
+.account-table__sub {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--color-ink-soft);
+}
+
+.account-card__cta {
+  align-self: flex-start;
+  background: var(--color-orange);
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-table__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border: 3px solid black;
+  background: white;
+  padding: 12px;
+}
+
+.account-table__main {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.account-table__amount,
+.account-order-status {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.account-table__amount--positive,
+.account-order-status--paid {
+  color: #198754;
+}
+
+.account-table__amount--negative {
+  color: var(--color-red);
+}
+
+.account-order-status--pending {
+  color: var(--color-orange);
+}
+
+.account-table__empty {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+
+@media (max-width: 900px) {
+  .auth-card {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-card__visual {
+    border-right: none;
+    border-bottom: 4px solid black;
+  }
+
+  .account-page__grid,
+  .account-metrics,
+  .upload-area__account-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-card--wide {
+    grid-column: span 1;
+  }
+}

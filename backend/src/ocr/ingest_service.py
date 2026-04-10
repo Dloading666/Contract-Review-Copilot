@@ -106,14 +106,14 @@ def _correct_page_text(raw_text: str, page_index: int, low_confidence_lines: lis
         )
         return corrected_text, used_model, warnings
     except Exception:
-        warnings.append(f"第 {page_index} 页 Kimi 校对失败，已回退到原始 OCR 结果。")
+        warnings.append(f"第 {page_index} 页 OCR 校对失败，已回退到原始识别结果。")
         return raw_text, None, warnings
 
 
 def _ingest_image_files(files: list[UploadedContractFile], *, display_name: str, source_type: str) -> ContractIngestResult:
     pages: list[IngestedPageResult] = []
     global_warnings: list[str] = []
-    used_model = "kimi"
+    used_model = "unknown"
 
     for page_index, file in enumerate(files, start=1):
         ocr_result = extract_contract_text_from_image(

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { loadPersistedReviewHistory, savePersistedReviewHistory } from './reviewHistory'
+import { loadPersistedReviewHistory, loadPersistedReviewHistoryFromOwners, savePersistedReviewHistory } from './reviewHistory'
 
 describe('reviewHistory storage', () => {
   beforeEach(() => {
@@ -50,5 +50,23 @@ describe('reviewHistory storage', () => {
     ]))
 
     expect(loadPersistedReviewHistory<{ sessionId: string }>('scoped@example.com')).toEqual([])
+  })
+
+  it('loads history from multiple owner aliases', () => {
+    savePersistedReviewHistory([
+      { sessionId: 'session-email', filename: 'email.docx', date: '2026/04/08 10:00:00' },
+    ], 'legacy@example.com')
+    savePersistedReviewHistory([
+      { sessionId: 'session-phone', filename: 'phone.docx', date: '2026/04/08 11:00:00' },
+    ], '13800138000')
+
+    expect(loadPersistedReviewHistoryFromOwners<{ sessionId: string }>([
+      'user-123',
+      '13800138000',
+      'legacy@example.com',
+    ])).toEqual([
+      { sessionId: 'session-phone', filename: 'phone.docx', date: '2026/04/08 11:00:00' },
+      { sessionId: 'session-email', filename: 'email.docx', date: '2026/04/08 10:00:00' },
+    ])
   })
 })
