@@ -6,17 +6,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import Iterable
 
-from PyPDF2 import PdfReader
 from docx import Document
 
-from ..llm_client import correct_ocr_text_with_kimi
-from .paddle_service import SUPPORTED_IMAGE_MIME_TYPES, extract_contract_text_from_image
+from ..llm_client import extract_text_from_image
 
 SUPPORTED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 SUPPORTED_TEXT_EXTENSIONS = {"txt", "docx", "pdf"}
-MIN_PDF_TEXT_LENGTH = 120
 
 
 @dataclass(frozen=True)
@@ -65,7 +61,7 @@ def _decode_text_file(file: UploadedContractFile) -> str:
             return file.content.decode(encoding).strip()
         except UnicodeDecodeError:
             continue
-    raise ValueError(f"{file.filename} 无法按文本文件读取，请检查编码。")
+    raise ValueError(f"{file.filename} 无法按文本文件读取，请检查编码格式。")
 
 
 def _extract_docx_text(file: UploadedContractFile) -> str:
@@ -92,57 +88,41 @@ def _build_display_name(files: list[UploadedContractFile]) -> str:
     return f"{Path(files[0].filename).stem} 等 {len(files)} 页图片"
 
 
-def _build_low_confidence_warning(page_index: int, count: int) -> str:
-    return f"第 {page_index} 页有 {count} 行低置信度文字，建议重点核对。"
+def _extract_text_from_uploaded_image(file: UploadedContractFile) -> tuple[str, str]:
+    return extract_text_from_image(
+        image_bytes=file.content,
+        mime_type=file.content_type,
+        filename=file.filename,
+    )
 
 
-def _correct_page_text(raw_text: str, page_index: int, low_confidence_lines: list[str]) -> tuple[str, str | None, list[str]]:
-    warnings: list[str] = []
-    try:
-        corrected_text, used_model = correct_ocr_text_with_kimi(
-            raw_text,
-            page_label=f"第 {page_index} 页",
-            low_confidence_lines=low_confidence_lines,
-        )
-        return corrected_text, used_model, warnings
-    except Exception:
-        warnings.append(f"第 {page_index} 页 OCR 校对失败，已回退到原始识别结果。")
-        return raw_text, None, warnings
-
-
-def _ingest_image_files(files: list[UploadedContractFile], *, display_name: str, source_type: str) -> ContractIngestResult:
+def _ingest_image_files(
+    files: list[UploadedContractFile],
+    *,
+    display_name: str,
+    source_type: str,
+) -> ContractIngestResult:
     pages: list[IngestedPageResult] = []
-    global_warnings: list[str] = []
-    used_model = "unknown"
+    warnings: list[str] = []
+    used_model: str | None = None
 
     for page_index, file in enumerate(files, start=1):
-        ocr_result = extract_contract_text_from_image(
-            image_bytes=file.content,
-            mime_type=file.content_type,
-            filename=file.filename,
-        )
-        corrected_text, corrected_model, correction_warnings = _correct_page_text(
-            ocr_result.text,
-            page_index,
-            ocr_result.low_confidence_lines,
-        )
-        if corrected_model:
-            used_model = corrected_model
+        try:
+            page_text, page_model = _extract_text_from_uploaded_image(file)
+        except Exception as exc:
+            warnings.append(f"第 {page_index} 页 OCR 失败：{exc}")
+            continue
 
-        page_warnings = [*ocr_result.warnings, *correction_warnings]
-        if ocr_result.low_confidence_lines:
-            page_warnings.append(_build_low_confidence_warning(page_index, len(ocr_result.low_confidence_lines)))
-
+        used_model = page_model
         pages.append(
             IngestedPageResult(
                 page_index=page_index,
                 filename=file.filename,
-                text=corrected_text,
-                average_confidence=ocr_result.average_confidence,
-                warnings=page_warnings,
+                text=page_text,
+                average_confidence=None,
+                warnings=[],
             )
         )
-        global_warnings.extend(page_warnings)
 
     merged_text = "\n\n".join(page.text.strip() for page in pages if page.text.strip()).strip()
     if not merged_text:
@@ -154,26 +134,8 @@ def _ingest_image_files(files: list[UploadedContractFile], *, display_name: str,
         used_ocr_model=used_model,
         merged_text=merged_text,
         pages=pages,
-        warnings=global_warnings,
+        warnings=warnings,
     )
-
-
-def _extract_pdf_text_pages(file: UploadedContractFile) -> list[str]:
-    reader = PdfReader(BytesIO(file.content))
-    pages: list[str] = []
-    for page in reader.pages:
-        pages.append((page.extract_text() or "").strip())
-    return pages
-
-
-def _is_meaningful_pdf_text(page_texts: Iterable[str]) -> bool:
-    page_list = list(page_texts)
-    merged_text = "\n\n".join(text for text in page_list if text.strip())
-    if len(merged_text) < MIN_PDF_TEXT_LENGTH:
-        return False
-
-    non_empty_pages = sum(1 for text in page_list if len(text.strip()) >= 20)
-    return non_empty_pages >= max(1, len(page_list) // 2)
 
 
 def _render_pdf_to_images(file: UploadedContractFile) -> list[UploadedContractFile]:
@@ -210,10 +172,14 @@ def ingest_contract_files(files: list[UploadedContractFile]) -> ContractIngestRe
 
     all_images = all(file.extension in SUPPORTED_IMAGE_EXTENSIONS for file in files)
     if len(files) > 1 and not all_images:
-        raise ValueError("一次只支持批量上传多张图片；TXT、DOCX、PDF 请单独上传。")
+        raise ValueError("一次仅支持批量上传多张图片；TXT、DOCX、PDF 请单独上传。")
 
     if all_images:
-        return _ingest_image_files(files, display_name=_build_display_name(files), source_type="image_batch")
+        return _ingest_image_files(
+            files,
+            display_name=_build_display_name(files),
+            source_type="image_batch",
+        )
 
     file = files[0]
     extension = file.extension
@@ -226,7 +192,15 @@ def ingest_contract_files(files: list[UploadedContractFile]) -> ContractIngestRe
             display_name=file.filename,
             used_ocr_model=None,
             merged_text=text,
-            pages=[IngestedPageResult(page_index=1, filename=file.filename, text=text, average_confidence=None, warnings=[])],
+            pages=[
+                IngestedPageResult(
+                    page_index=1,
+                    filename=file.filename,
+                    text=text,
+                    average_confidence=None,
+                    warnings=[],
+                )
+            ],
             warnings=[],
         )
 
@@ -239,35 +213,22 @@ def ingest_contract_files(files: list[UploadedContractFile]) -> ContractIngestRe
             display_name=file.filename,
             used_ocr_model=None,
             merged_text=text,
-            pages=[IngestedPageResult(page_index=1, filename=file.filename, text=text, average_confidence=None, warnings=[])],
-            warnings=[],
-        )
-
-    if extension == "pdf":
-        text_pages = _extract_pdf_text_pages(file)
-        if _is_meaningful_pdf_text(text_pages):
-            page_results = [
+            pages=[
                 IngestedPageResult(
-                    page_index=index,
+                    page_index=1,
                     filename=file.filename,
                     text=text,
                     average_confidence=None,
                     warnings=[],
                 )
-                for index, text in enumerate(text_pages, start=1)
-                if text.strip()
-            ]
-            merged_text = "\n\n".join(page.text for page in page_results).strip()
-            return ContractIngestResult(
-                source_type="pdf_text",
-                display_name=file.filename,
-                used_ocr_model=None,
-                merged_text=merged_text,
-                pages=page_results,
-                warnings=[],
-            )
+            ],
+            warnings=[],
+        )
 
+    if extension == "pdf":
         rendered_files = _render_pdf_to_images(file)
+        if not rendered_files:
+            raise RuntimeError("PDF 未能渲染出可识别页面。")
         return _ingest_image_files(rendered_files, display_name=file.filename, source_type="pdf_ocr")
 
-    raise ValueError("仅支持 TXT、DOCX、PDF 和 JPG/PNG/WEBP 合同材料。")
+    raise ValueError("仅支持 TXT、DOCX、PDF 以及 JPG/PNG/WEBP 合同材料。")

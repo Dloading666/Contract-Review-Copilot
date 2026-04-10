@@ -1,8 +1,9 @@
 import type { ComponentProps } from 'react'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { DocPanel } from '../components/DocPanel'
+
 import type { ReviewState } from '../App'
+import { DocPanel } from '../components/DocPanel'
 
 function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
   return {
@@ -71,20 +72,12 @@ describe('DocPanel', () => {
         source_type: 'image_batch',
         display_name: '合同照片 等 2 页图片',
         merged_text: '甲方：张三\n乙方：李四',
-        warnings: ['第 2 页有 1 行低置信度文字，建议重点核对。'],
+        warnings: ['第 2 页 OCR 失败：vision OCR unavailable'],
       }),
     }))
     vi.stubGlobal('fetch', fetchMock)
 
-    const { container } = renderDocPanel(
-      {},
-      {
-        authToken: 'demo-token',
-        onFileUpload,
-        onOcrReady,
-      },
-    )
-
+    const { container } = renderDocPanel({}, { authToken: 'demo-token', onFileUpload, onOcrReady })
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
     const imageFiles = [
       new File(['fake-image-1'], 'contract-1.png', { type: 'image/png' }),
@@ -105,19 +98,19 @@ describe('DocPanel', () => {
       expect(onOcrReady).toHaveBeenCalledWith(
         '甲方：张三\n乙方：李四',
         '合同照片 等 2 页图片',
-        ['第 2 页有 1 行低置信度文字，建议重点核对。'],
+        ['第 2 页 OCR 失败：vision OCR unavailable'],
       )
       expect(onFileUpload).not.toHaveBeenCalled()
     })
   })
 
-  it('uploads a PDF through the ingest endpoint and starts review immediately when text extraction succeeds', async () => {
+  it('uploads a PDF through the ingest endpoint and waits for OCR confirmation', async () => {
     const onFileUpload = vi.fn()
     const onOcrReady = vi.fn()
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({
-        source_type: 'pdf_text',
+        source_type: 'pdf_ocr',
         display_name: 'lease.pdf',
         merged_text: '第一条 租赁用途\n第二条 租金',
         warnings: [],
@@ -132,7 +125,33 @@ describe('DocPanel', () => {
     fireEvent.change(fileInput, { target: { files: [pdfFile] } })
 
     await waitFor(() => {
-      expect(onFileUpload).toHaveBeenCalledWith('第一条 租赁用途\n第二条 租金', 'lease.pdf')
+      expect(onOcrReady).toHaveBeenCalledWith('第一条 租赁用途\n第二条 租金', 'lease.pdf', [])
+      expect(onFileUpload).not.toHaveBeenCalled()
+    })
+  })
+
+  it('uploads txt content directly without waiting for OCR confirmation', async () => {
+    const onFileUpload = vi.fn()
+    const onOcrReady = vi.fn()
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        source_type: 'txt',
+        display_name: 'lease.txt',
+        merged_text: '租赁合同正文',
+        warnings: [],
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { container } = renderDocPanel({}, { onFileUpload, onOcrReady })
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    const txtFile = new File(['contract'], 'lease.txt', { type: 'text/plain' })
+
+    fireEvent.change(fileInput, { target: { files: [txtFile] } })
+
+    await waitFor(() => {
+      expect(onFileUpload).toHaveBeenCalledWith('租赁合同正文', 'lease.txt')
       expect(onOcrReady).not.toHaveBeenCalled()
     })
   })
@@ -146,7 +165,7 @@ describe('DocPanel', () => {
         status: 'ocr_ready',
         filename: 'contract-photo.png',
         contractText: '甲方：张三\n乙方：李四',
-        ocrWarnings: ['第 1 页检测到截图状态栏噪音，请删除无关文字。'],
+        ocrWarnings: ['第 1 页 OCR 失败：vision OCR unavailable'],
       },
       {
         onContractTextChange,
@@ -158,12 +177,10 @@ describe('DocPanel', () => {
     const confirmButton = container.querySelector('.doc-panel__footer-right .px-btn--green') as HTMLButtonElement
 
     expect(textarea.value).toBe('甲方：张三\n乙方：李四')
-    expect(getByText('第 1 页检测到截图状态栏噪音，请删除无关文字。')).not.toBeNull()
+    expect(getByText('第 1 页 OCR 失败：vision OCR unavailable')).not.toBeNull()
     expect(confirmButton.disabled).toBe(false)
 
-    fireEvent.change(textarea, {
-      target: { value: '修订后的 OCR 文本' },
-    })
+    fireEvent.change(textarea, { target: { value: '修订后的 OCR 文本' } })
     fireEvent.click(confirmButton)
 
     expect(onContractTextChange).toHaveBeenCalledWith('修订后的 OCR 文本')

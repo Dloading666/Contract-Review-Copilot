@@ -1,7 +1,8 @@
 """
-SiliconFlow LLM 客户端（OpenAI 兼容）。
-- 推理/审查/问答：Qwen/Qwen3.5-4B
-- 图片 OCR：PaddlePaddle/PaddleOCR-VL-1.5
+SiliconFlow LLM client using the OpenAI-compatible API.
+
+- Review/chat model: configured via `review_model`
+- OCR model: configured via `ocr_model`
 """
 from __future__ import annotations
 
@@ -15,7 +16,6 @@ from openai import OpenAI
 
 from .config import get_settings
 
-# 向后兼容常量，agents 里的代码通过这些 key 调用
 DEFAULT_MODEL_KEY = "review"
 FALLBACK_MODEL_KEY = DEFAULT_MODEL_KEY
 
@@ -26,15 +26,15 @@ SUPPORTED_IMAGE_MIME_TYPES = {
 }
 
 DEFAULT_OCR_PROMPT = (
-    "请准确提取这张合同图片中的全部可见文字，尽量保留原有段落与换行结构。"
+    "请准确提取这张合同图片中的全部可见文字，尽量保留原有段落、换行和条款编号。"
     "不要总结，不要解释，不要补充，不要输出 Markdown 标题或代码块。"
-    "看不清的字可以保留原样或用□表示。"
+    "看不清的字可以保留原样，或用“□”表示。"
 )
 
 OCR_CORRECTION_SYSTEM_PROMPT = (
     "你是合同 OCR 校对助手。"
     "你只能修正明显的错别字、标点、断行、条款编号和阅读顺序问题。"
-    "不能总结，不能解释，不能改写合同含义，不能补充原文不存在的内容。"
+    "不能总结，不能解释，不能改写合同含义，也不能补充原文中不存在的内容。"
     "如果某些字词看不清，就保留原样，不要猜测。"
 )
 
@@ -53,13 +53,12 @@ def _get_client() -> OpenAI:
 
 
 def _resolve_model_id(model: Optional[str]) -> str:
-    """将模型 key 映射到实际模型 ID。"""
     settings = get_settings()
     if not model or model in (DEFAULT_MODEL_KEY, FALLBACK_MODEL_KEY):
         return settings.review_model
     if model == "ocr":
         return settings.ocr_model
-    return model  # 当作字面模型 ID 直接使用
+    return model
 
 
 def available_models() -> list[dict[str, str]]:
@@ -71,16 +70,18 @@ def normalize_image_mime_type(mime_type: Optional[str], filename: Optional[str] 
     candidate = (mime_type or "").split(";", 1)[0].strip().lower()
     if candidate in SUPPORTED_IMAGE_MIME_TYPES:
         return candidate
+
     guessed_type, _ = mimetypes.guess_type(filename or "")
     guessed = (guessed_type or "").lower()
     if guessed in SUPPORTED_IMAGE_MIME_TYPES:
         return guessed
-    raise ValueError("只支持 JPG、PNG、WEBP 图片格式")
+
+    raise ValueError("只支持 JPG、PNG、WEBP 图片格式。")
 
 
 def image_bytes_to_base64(image_bytes: bytes) -> str:
     if not image_bytes:
-        raise ValueError("图片内容不能为空")
+        raise ValueError("图片内容不能为空。")
     return base64.b64encode(image_bytes).decode("ascii")
 
 
@@ -91,6 +92,7 @@ def _build_image_data_url(image_bytes: bytes, mime_type: str) -> str:
 def _extract_response_text(response) -> str:
     if not getattr(response, "choices", None):
         return ""
+
     content = getattr(response.choices[0].message, "content", "")
     if isinstance(content, str):
         return content.strip()
@@ -124,7 +126,7 @@ def create_chat_completion(
     allow_fallback: bool = False,
     **kwargs,
 ):
-    """调用 SiliconFlow 推理模型。allow_fallback 保留签名兼容性，无实际效果。"""
+    """Call the configured SiliconFlow text model."""
     del allow_fallback
     model_id = _resolve_model_id(model)
     client = _get_client()
@@ -148,9 +150,9 @@ def extract_text_from_image(
     max_tokens: int = 4096,
     timeout: float = 90.0,
 ) -> tuple[str, str]:
+    del model
     normalized_mime_type = normalize_image_mime_type(mime_type, filename)
     settings = get_settings()
-    # OCR 固定使用视觉模型
     model_id = settings.ocr_model
 
     client = _get_client()
@@ -175,30 +177,30 @@ def extract_text_from_image(
 
     extracted_text = _sanitize_ocr_text(_extract_response_text(response))
     if not extracted_text:
-        raise RuntimeError(f"{model_id} 未返回可用的 OCR 文本")
+        raise RuntimeError(f"{model_id} 未返回可用的 OCR 文本。")
 
     used_model = getattr(response, "model", model_id) or model_id
     print(f"[LLM] OCR using model: {used_model}", flush=True)
     return extracted_text, used_model
 
 
-def correct_ocr_text_with_kimi(
+def correct_ocr_text(
     raw_text: str,
     *,
     page_label: str | None = None,
     low_confidence_lines: Optional[list[str]] = None,
     timeout: float = 90.0,
 ) -> tuple[str, str]:
-    """OCR 文本校对（函数名保留向后兼容，实际使用推理模型）。"""
+    """Retained for compatibility when OCR text correction is needed."""
     if not raw_text.strip():
-        raise ValueError("OCR 原始文本不能为空")
+        raise ValueError("OCR 原始文本不能为空。")
 
     hints = ""
     if low_confidence_lines:
         joined_hints = "\n".join(f"- {line}" for line in low_confidence_lines[:10])
         hints = f"\n低置信度片段（优先检查，但不要臆测补全）：\n{joined_hints}\n"
 
-    label = page_label or "当前页"
+    label = page_label or "当前页面"
     user_prompt = (
         f"请校对{label}的合同 OCR 结果。\n"
         "要求：\n"
@@ -221,7 +223,7 @@ def correct_ocr_text_with_kimi(
     )
     corrected_text = _sanitize_ocr_text(_extract_response_text(response))
     if not corrected_text:
-        raise RuntimeError("模型未返回可用的 OCR 校对文本")
+        raise RuntimeError("模型未返回可用的 OCR 校对文本。")
 
     settings = get_settings()
     used_model = getattr(response, "model", settings.review_model) or settings.review_model

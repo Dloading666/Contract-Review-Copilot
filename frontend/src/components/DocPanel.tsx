@@ -154,16 +154,16 @@ function buildUploadProgressText(files: File[]) {
   }
 
   if (files.length > 1 && files.every((file) => isImageFilename(file.name))) {
-    return `正在按顺序识别 ${files.length} 张合同图片，并用 Kimi 校对文字...`
+    return `正在按顺序识别 ${files.length} 张合同图片，并进行文字校对...`
   }
 
   const extension = getFileExtension(files[0].name)
   if (IMAGE_EXTENSIONS.has(extension)) {
-    return '正在识别合同图片，并用 Kimi 校对文字...'
+    return '正在识别合同图片，并进行文字校对...'
   }
 
   if (extension === 'pdf') {
-    return '正在解析 PDF；如为扫描件，会逐页识别并用 Kimi 校对...'
+    return '正在逐页识别 PDF 内容，并提取文字...'
   }
 
   return '正在导入合同内容...'
@@ -400,7 +400,7 @@ export function DocPanel({
               <>
                 <span className="doc-panel__footer-dot" />
                 <span>已加载</span>
-                <span style={{ color: 'var(--color-ink-muted)' }}>智审内核 Kimi K2.5</span>
+                <span style={{ color: 'var(--color-ink-muted)' }}>智审内核已就绪</span>
               </>
             )}
           </div>
@@ -477,10 +477,10 @@ function UploadArea({
       const sourceType = typeof payload.source_type === 'string' ? payload.source_type : ''
       const warnings = extractWarnings(payload)
 
-      if (sourceType === 'image_batch' || sourceType === 'pdf_ocr') {
-        onOcrReady(mergedText, displayName, warnings)
-      } else {
+      if (sourceType === 'txt' || sourceType === 'docx') {
         onFileUpload(mergedText, displayName)
+      } else {
+        onOcrReady(mergedText, displayName, warnings)
       }
     } catch (error) {
       console.error('File ingest error:', error)
