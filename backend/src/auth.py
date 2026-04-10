@@ -28,7 +28,12 @@ from .commerce import (
     update_user_password_credentials,
 )
 from .config import get_settings
-from .providers.aliyun_sms import AliyunSmsError, send_phone_verification_code as send_phone_sms_code
+from .providers.aliyun_sms import (
+    AliyunSmsError,
+    check_phone_verification_code as check_phone_sms_code,
+    is_phone_verification_service_configured,
+    send_phone_verification_code as send_phone_sms_code,
+)
 
 
 def _load_jwt_secret() -> str:
@@ -311,22 +316,28 @@ def send_password_reset_code_for_user(user_id: str) -> dict:
 
 def send_phone_verification_code(phone: str) -> dict:
     normalized_phone = normalize_phone(phone)
-    code = generate_code()
-    expire_at = time.time() + get_settings().redis_auth_code_ttl_seconds
-    _save_code_record("phone", normalized_phone, {"code": code, "expire_at": expire_at})
+    if _use_local_phone_dev_codes():
+        code = generate_code()
+        expire_at = time.time() + get_settings().redis_auth_code_ttl_seconds
+        _save_code_record("phone", normalized_phone, {"code": code, "expire_at": expire_at})
+        print(f"[SMS] Dev mode - verification code for {normalized_phone}: {code}", flush=True)
+        return {"success": True, "dev_code": code}
     try:
-        result = send_phone_sms_code(normalized_phone, code)
-        if not result.get("success"):
-            _delete_code_record("phone", normalized_phone)
-        return result
+        return send_phone_sms_code(normalized_phone)
     except AliyunSmsError as exc:
         print(f"[Auth] SMS send failed: {exc}", flush=True)
-        _delete_code_record("phone", normalized_phone)
         return {"success": False, "error": str(exc)}
+
+
+def _use_local_phone_dev_codes() -> bool:
+    settings = get_settings()
+    return settings.allow_dev_code_response and not is_phone_verification_service_configured()
 
 
 def verify_code_only(identifier: str, code: str, *, kind: str = "email") -> bool:
     normalized_identifier = normalize_phone(identifier) if kind == "phone" else _normalize_email(identifier)
+    if kind == "phone" and not _use_local_phone_dev_codes():
+        return check_phone_sms_code(normalized_identifier, code)
     record = _load_code_record(kind, normalized_identifier)
     if not record:
         return False
@@ -338,6 +349,8 @@ def verify_code_only(identifier: str, code: str, *, kind: str = "email") -> bool
 
 def consume_code(identifier: str, code: str, *, kind: str = "email") -> bool:
     normalized_identifier = normalize_phone(identifier) if kind == "phone" else _normalize_email(identifier)
+    if kind == "phone" and not _use_local_phone_dev_codes():
+        return verify_code_only(normalized_identifier, code, kind=kind)
     if not verify_code_only(normalized_identifier, code, kind=kind):
         return False
     _delete_code_record(kind, normalized_identifier)
@@ -386,8 +399,11 @@ def login_with_password(email: str, password: str) -> Optional[str]:
 
 def login_with_phone_code(phone: str, code: str) -> dict:
     normalized_phone = normalize_phone(phone)
-    if not consume_code(normalized_phone, code, kind="phone"):
-        return {"success": False, "error": "验证码无效或已过期"}
+    try:
+        if not consume_code(normalized_phone, code, kind="phone"):
+            return {"success": False, "error": "验证码无效或已过期"}
+    except AliyunSmsError as exc:
+        return {"success": False, "error": str(exc)}
 
     user = get_user_by_phone(normalized_phone)
     if not user:
@@ -409,8 +425,11 @@ def login_with_phone_code(phone: str, code: str) -> dict:
 
 def bind_phone_for_user(user_id: str, phone: str, code: str) -> dict:
     normalized_phone = normalize_phone(phone)
-    if not consume_code(normalized_phone, code, kind="phone"):
-        return {"success": False, "error": "验证码无效或已过期"}
+    try:
+        if not consume_code(normalized_phone, code, kind="phone"):
+            return {"success": False, "error": "验证码无效或已过期"}
+    except AliyunSmsError as exc:
+        return {"success": False, "error": str(exc)}
 
     try:
         user = attach_phone_to_existing_user(user_id, normalized_phone)
@@ -490,3 +509,4 @@ def get_user_from_token(token: str) -> Optional[dict]:
         return None
 
     return _build_public_user(user)
+
