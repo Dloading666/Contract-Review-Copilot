@@ -3,10 +3,8 @@ import type { RoutingDecision } from './types'
 import { ChatPanel } from './components/ChatPanel'
 import { DisclaimerModal } from './components/DisclaimerModal'
 import { DocPanel } from './components/DocPanel'
-import { PhoneBindingGate } from './components/PhoneBindingGate'
 import { SideNav } from './components/SideNav'
-import { WalletRechargeModal } from './components/WalletRechargeModal'
-import { useAuth, type User } from './contexts/AuthContext'
+import { useAuth } from './contexts/AuthContext'
 import { loadDisclaimerAcceptance, persistDisclaimerAcceptance } from './lib/disclaimer'
 import { useStreamingReview } from './hooks/useStreamingReview'
 import { loadPersistedReviewHistoryFromOwners, savePersistedReviewHistory } from './lib/reviewHistory'
@@ -16,12 +14,6 @@ import { RegisterPage } from './pages/RegisterPage'
 import { SettingsPage } from './pages/SettingsPage'
 
 export type ReviewStatus = 'idle' | 'uploading' | 'ocr_ready' | 'reviewing' | 'breakpoint' | 'complete' | 'error'
-export type ModelKey = 'kimi'
-
-export interface ModelOption {
-  key: ModelKey
-  label: string
-}
 
 export interface ThinkingStep {
   id: string
@@ -55,16 +47,6 @@ export interface ChatMessage {
   content: string
 }
 
-export interface ReviewSessionSummary {
-  reviewSessionId: string
-  billingType: 'free_review' | 'wallet_paid'
-  questionQuotaTotal: number
-  questionQuotaUsed: number
-  extraQuestionPriceFen: number
-  reviewPriceFen: number
-  status: string
-}
-
 export interface ReviewState {
   status: ReviewStatus
   sessionId: string
@@ -79,7 +61,6 @@ export interface ReviewState {
   breakpointMessage: string | null
   errorMessage: string | null
   chatMessages: ChatMessage[]
-  reviewSession: ReviewSessionSummary | null
 }
 
 export interface ReviewHistoryEntry {
@@ -96,7 +77,6 @@ export interface ReviewHistoryEntry {
   breakpointMessage: string | null
   errorMessage: string | null
   chatMessages: ChatMessage[]
-  reviewSession: ReviewSessionSummary | null
 }
 
 interface PendingReviewStart {
@@ -138,7 +118,6 @@ function createInitialState(sessionId: string): ReviewState {
     breakpointMessage: null,
     errorMessage: null,
     chatMessages: createDefaultChatMessages(),
-    reviewSession: null,
   }
 }
 
@@ -234,12 +213,11 @@ function createHistoryEntry(review: ReviewState): ReviewHistoryEntry {
     breakpointMessage: review.breakpointMessage,
     errorMessage: review.errorMessage,
     chatMessages: review.chatMessages,
-    reviewSession: review.reviewSession,
   }
 }
 
-function buildHistoryOwnerCandidates(user?: User | null) {
-  return [user?.id ?? null, user?.phone ?? null, user?.email ?? null]
+function buildHistoryOwnerCandidates(user?: { id?: string; email?: string | null } | null) {
+  return [user?.id ?? null, user?.email ?? null]
 }
 
 function loadHistoryEntries(ownerKeys?: Array<string | null | undefined>): ReviewHistoryEntry[] {
@@ -260,7 +238,6 @@ function loadHistoryEntries(ownerKeys?: Array<string | null | undefined>): Revie
       chatMessages: Array.isArray(entry.chatMessages) && entry.chatMessages.length > 0
         ? entry.chatMessages
         : createDefaultChatMessages(),
-      reviewSession: entry.reviewSession ?? null,
     }))
   } catch {
     return []
@@ -272,30 +249,6 @@ function saveHistoryEntry(entry: ReviewHistoryEntry, ownerKey?: string | null) {
   history.unshift(entry)
   if (history.length > 20) history.length = 20
   savePersistedReviewHistory(history, ownerKey)
-}
-
-function canStartReview(user: User | null) {
-  return !!user && (user.freeReviewRemaining > 0 || user.walletBalanceFen >= 100)
-}
-
-function applyReviewDebitToUser(user: User, sessionId: string): { user: User; reviewSession: ReviewSessionSummary } {
-  const billingType = user.freeReviewRemaining > 0 ? 'free_review' : 'wallet_paid'
-  return {
-    user: {
-      ...user,
-      freeReviewRemaining: billingType === 'free_review' ? Math.max(user.freeReviewRemaining - 1, 0) : user.freeReviewRemaining,
-      walletBalanceFen: billingType === 'wallet_paid' ? Math.max(user.walletBalanceFen - 100, 0) : user.walletBalanceFen,
-    },
-    reviewSession: {
-      reviewSessionId: sessionId,
-      billingType,
-      questionQuotaTotal: 15,
-      questionQuotaUsed: 0,
-      extraQuestionPriceFen: 8,
-      reviewPriceFen: 100,
-      status: 'reserved',
-    },
-  }
 }
 
 export function buildThinkingSteps(
@@ -355,7 +308,6 @@ export default function App() {
   const [authView, setAuthView] = useState<'login' | 'register'>('login')
   const [hasAcceptedDisclaimer, setHasAcceptedDisclaimer] = useState(() => loadDisclaimerAcceptance(historyOwnerKey))
   const [showSettings, setShowSettings] = useState(false)
-  const [showRechargeModal, setShowRechargeModal] = useState(false)
   const [isExportingReport, setIsExportingReport] = useState(false)
   const [review, setReview] = useState<ReviewState>(() => createInitialState(createSessionId()))
   const [streamContractText, setStreamContractText] = useState('')
@@ -382,7 +334,6 @@ export default function App() {
     if (previousHistoryOwnerKeyRef.current === historyOwnerKey) return
     previousHistoryOwnerKeyRef.current = historyOwnerKey
     setShowSettings(false)
-    setShowRechargeModal(false)
     setPendingReviewStart(null)
     setHasAcceptedDisclaimer(loadDisclaimerAcceptance(historyOwnerKey))
     setStreamContractText('')
@@ -390,11 +341,8 @@ export default function App() {
   }, [historyOwnerKey])
 
   useEffect(() => {
-    if (!pendingReviewStart || !user || !canStartReview(user)) return
-
+    if (!pendingReviewStart) return
     const sessionId = createSessionId()
-    const debitResult = applyReviewDebitToUser(user, sessionId)
-    updateUser(debitResult.user)
     setStreamContractText(pendingReviewStart.text)
     setReview({
       ...createInitialState(sessionId),
@@ -402,11 +350,9 @@ export default function App() {
       sessionId,
       contractText: pendingReviewStart.text,
       filename: pendingReviewStart.filename,
-      reviewSession: debitResult.reviewSession,
     })
     setPendingReviewStart(null)
-    setShowRechargeModal(false)
-  }, [pendingReviewStart, updateUser, user])
+  }, [pendingReviewStart])
 
   useEffect(() => {
     if (!streamContractText) return
@@ -438,17 +384,6 @@ export default function App() {
         breakpointMessage: hook.error ? hook.error : nextBreakpointMessage,
         errorMessage: hook.error || null,
         thinkingSteps: buildThinkingSteps(hook.phase, nextExtractedInfo, nextRoutingDecision),
-        reviewSession: prev.reviewSession
-          ? {
-              ...prev.reviewSession,
-              status:
-                nextStatus === 'breakpoint'
-                  ? 'awaiting_confirmation'
-                  : nextStatus === 'complete'
-                    ? 'completed'
-                    : prev.reviewSession.status,
-            }
-          : prev.reviewSession,
       }
     })
   }, [hook.breakpointData, hook.error, hook.extractedEntities, hook.issues, hook.phase, hook.reportParagraphs, hook.routingDecision, streamContractText])
@@ -475,16 +410,7 @@ export default function App() {
   }, [historyOwnerKey])
 
   const startReview = useCallback((text: string, filename: string) => {
-    if (!user) return
-    if (!canStartReview(user)) {
-      setPendingReviewStart({ text, filename })
-      setShowRechargeModal(true)
-      return
-    }
-
     const sessionId = createSessionId()
-    const debitResult = applyReviewDebitToUser(user, sessionId)
-    updateUser(debitResult.user)
     setStreamContractText(text)
     setReview({
       ...createInitialState(sessionId),
@@ -492,9 +418,8 @@ export default function App() {
       sessionId,
       contractText: text,
       filename,
-      reviewSession: debitResult.reviewSession,
     })
-  }, [updateUser, user])
+  }, [])
 
   const handleFileUpload = useCallback((text: string, filename: string) => {
     startReview(text, filename)
@@ -556,7 +481,7 @@ export default function App() {
 
   const handleSendMessage = useCallback(async (message: string) => {
     const normalizedMessage = message.trim()
-    if (!normalizedMessage || !review.reviewSession) return
+    if (!normalizedMessage) return
 
     const userMsgId = `user-${Date.now()}`
     const assistantMsgId = `assistant-${Date.now() + 1}`
@@ -582,22 +507,14 @@ export default function App() {
           message: normalizedMessage,
           contract_text: review.contractText,
           risk_summary: riskSummary,
-          review_session_id: review.reviewSession.reviewSessionId,
+          review_session_id: review.sessionId,
         }),
       })
 
-      const payload = await response.json() as {
-        reply?: string
-        error?: string
-        user?: User
-        reviewSession?: ReviewSessionSummary
-      }
+      const payload = await response.json() as { reply?: string; error?: string }
 
       if (!response.ok) {
         const reply = payload.error || '获取回复失败'
-        if (response.status === 402) {
-          setShowRechargeModal(true)
-        }
         setReview((prev) => ({
           ...prev,
           chatMessages: prev.chatMessages.map((chatMessage) => (
@@ -607,10 +524,8 @@ export default function App() {
         return
       }
 
-      if (payload.user) updateUser(payload.user)
       setReview((prev) => ({
         ...prev,
-        reviewSession: payload.reviewSession ?? prev.reviewSession,
         chatMessages: prev.chatMessages.map((chatMessage) => (
           chatMessage.id === assistantMsgId
             ? { ...chatMessage, content: payload.reply ?? '获取回复失败' }
@@ -627,7 +542,7 @@ export default function App() {
         )),
       }))
     }
-  }, [review.contractText, review.reviewSession, review.riskCards, token, updateUser])
+  }, [review.contractText, review.riskCards, review.sessionId, token])
 
   const handleSelectHistorySession = useCallback((sessionId: string) => {
     const entry = loadHistoryEntries(historyOwnerCandidates).find((item) => item.sessionId === sessionId)
@@ -651,7 +566,6 @@ export default function App() {
       errorMessage: entry.errorMessage,
       chatMessages: entry.chatMessages?.length ? entry.chatMessages : createDefaultChatMessages(),
       thinkingSteps: buildThinkingSteps(entry.status, entry.extractedInfo, entry.routingDecision),
-      reviewSession: entry.reviewSession ?? null,
     })
   }, [historyOwnerCandidates, persistCurrentReview, review])
 
@@ -666,66 +580,48 @@ export default function App() {
     return <DisclaimerModal onAccept={handleDisclaimerAccept} />
   }
 
-  if (user?.mustBindPhone && token) {
-    return <PhoneBindingGate token={token} user={user} onBound={updateUser} onLogout={logout} />
-  }
-
   if (showSettings && user && token) {
     return <SettingsPage user={user} token={token} onUserUpdate={updateUser} onBack={() => setShowSettings(false)} />
   }
 
   return (
-    <>
-      <div className="app-layout" style={{ flexDirection: 'row' }}>
-        <SideNav
-          user={user}
-          onLogout={logout}
-          onSelectHistorySession={handleSelectHistorySession}
-          onOpenSettings={() => setShowSettings(true)}
-        />
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <main className="workspace">
-            <ChatPanel
-              review={review}
-              authToken={token}
-              currentUser={user}
-              onOpenRecharge={() => setShowRechargeModal(true)}
-              onExportReport={handleExportReport}
-              isExportingReport={isExportingReport}
-              onBreakpointConfirm={handleBreakpointConfirm}
-              onReset={handleReset}
-              onSendMessage={handleSendMessage}
-            />
-            <DocPanel
-              review={review}
-              authToken={token}
-              currentUser={user}
-              onOpenRecharge={() => setShowRechargeModal(true)}
-              onFileUpload={handleFileUpload}
-              onOcrReady={handleOcrReady}
-              onContractTextChange={handleContractTextChange}
-              onConfirmReview={handleConfirmOcrReview}
-              onReset={handleReset}
-              onNewConversation={handleNewConversation}
-            />
-          </main>
-        </div>
-        {review.status === 'reviewing' && (
-          <button className="fab" onClick={handleReset}>
-            重新扫描
-          </button>
-        )}
+    <div className="app-layout" style={{ flexDirection: 'row' }}>
+      <SideNav
+        user={user}
+        onLogout={logout}
+        onSelectHistorySession={handleSelectHistorySession}
+        onOpenSettings={() => setShowSettings(true)}
+      />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <main className="workspace">
+          <ChatPanel
+            review={review}
+            authToken={token}
+            currentUser={user}
+            onExportReport={handleExportReport}
+            isExportingReport={isExportingReport}
+            onBreakpointConfirm={handleBreakpointConfirm}
+            onReset={handleReset}
+            onSendMessage={handleSendMessage}
+          />
+          <DocPanel
+            review={review}
+            authToken={token}
+            currentUser={user}
+            onFileUpload={handleFileUpload}
+            onOcrReady={handleOcrReady}
+            onContractTextChange={handleContractTextChange}
+            onConfirmReview={handleConfirmOcrReview}
+            onReset={handleReset}
+            onNewConversation={handleNewConversation}
+          />
+        </main>
       </div>
-
-      {user && (
-        <WalletRechargeModal
-          open={showRechargeModal}
-          token={token}
-          user={user}
-          onClose={() => setShowRechargeModal(false)}
-          onUserUpdate={updateUser}
-        />
+      {review.status === 'reviewing' && (
+        <button className="fab" onClick={handleReset}>
+          重新扫描
+        </button>
       )}
-    </>
+    </div>
   )
 }

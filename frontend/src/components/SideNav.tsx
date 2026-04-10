@@ -25,7 +25,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
 
   const loadHistoryItems = () => {
     try {
-      const parsed = loadPersistedReviewHistoryFromOwners<HistoryListItem>([user?.id, user?.phone, user?.email])
+      const parsed = loadPersistedReviewHistoryFromOwners<HistoryListItem>([user?.id, user?.email])
       setHistoryItems(parsed)
     } catch {
       setHistoryItems([])
@@ -216,7 +216,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
 
       {/* Footer: settings + logout */}
       <div style={{ borderTop: '4px solid black' }}>
-        {(user?.phone || user?.email) && (
+        {user?.email && (
           <div style={{
             padding: '8px 8px',
             fontFamily: 'var(--font-pixel)',
@@ -228,7 +228,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
             color: 'var(--color-ink-soft)',
             lineHeight: 1.6,
           }}>
-            {user.phone || user.email}
+            {user.email}
           </div>
         )}
         <button

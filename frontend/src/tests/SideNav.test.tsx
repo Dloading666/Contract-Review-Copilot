@@ -8,12 +8,7 @@ function buildUser(overrides: Partial<User> = {}): User {
     id: 'demo',
     email: 'demo@example.com',
     emailVerified: true,
-    phone: '13800138000',
-    phoneVerified: true,
     accountStatus: 'active',
-    walletBalanceFen: 300,
-    freeReviewRemaining: 2,
-    mustBindPhone: false,
     createdAt: '2026-04-09T00:00:00Z',
     ...overrides,
   }
@@ -87,7 +82,7 @@ describe('SideNav', () => {
 
     const view = render(
       <SideNav
-        user={buildUser({ phone: null })}
+        user={buildUser()}
         onLogout={onLogout}
       />,
     )

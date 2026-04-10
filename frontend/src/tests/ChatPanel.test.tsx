@@ -34,7 +34,6 @@ function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
     chatMessages: [
       { id: 'assistant-1', role: 'assistant', content: 'Welcome, ask anything about the contract.' },
     ],
-    reviewSession: null,
     ...overrides,
   }
 }

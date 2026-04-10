@@ -4,12 +4,7 @@ export interface User {
   id: string
   email?: string | null
   emailVerified: boolean
-  phone?: string | null
-  phoneVerified: boolean
   accountStatus: string
-  walletBalanceFen: number
-  freeReviewRemaining: number
-  mustBindPhone: boolean
   createdAt?: string | null
 }
 

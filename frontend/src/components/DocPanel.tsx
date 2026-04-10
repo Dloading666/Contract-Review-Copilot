@@ -7,7 +7,6 @@ interface DocPanelProps {
   review: ReviewState
   authToken?: string | null
   currentUser?: User | null
-  onOpenRecharge?: () => void
   onFileUpload: (text: string, filename: string) => void
   onOcrReady: (text: string, filename: string, warnings?: string[]) => void
   onContractTextChange: (text: string) => void
@@ -177,7 +176,6 @@ export function DocPanel({
   review,
   authToken,
   currentUser,
-  onOpenRecharge,
   onFileUpload,
   onOcrReady,
   onContractTextChange,
@@ -328,7 +326,6 @@ export function DocPanel({
           <UploadArea
             authToken={authToken}
             currentUser={currentUser}
-            onOpenRecharge={onOpenRecharge}
             onFileUpload={onFileUpload}
             onOcrReady={onOcrReady}
           />
@@ -421,7 +418,6 @@ export function DocPanel({
 interface UploadAreaProps {
   authToken?: string | null
   currentUser?: User | null
-  onOpenRecharge?: () => void
   onFileUpload: (text: string, filename: string) => void
   onOcrReady: (text: string, filename: string, warnings?: string[]) => void
 }
@@ -429,7 +425,6 @@ interface UploadAreaProps {
 function UploadArea({
   authToken,
   currentUser,
-  onOpenRecharge,
   onFileUpload,
   onOcrReady,
 }: UploadAreaProps) {
@@ -529,37 +524,6 @@ function UploadArea({
         可一次选择多张合同照片，系统会按选择顺序识别，再由你确认后开始分析
       </p>
 
-      {currentUser && (
-        <div className="upload-area__account">
-          <div className="upload-area__account-title">权益摘要</div>
-          <div className="upload-area__account-grid">
-            <div>
-              <strong>{currentUser.freeReviewRemaining}</strong>
-              <span>剩余免费完整审查</span>
-            </div>
-            <div>
-              <strong>¥{(currentUser.walletBalanceFen / 100).toFixed(currentUser.walletBalanceFen % 100 === 0 ? 0 : 2)}</strong>
-              <span>钱包余额</span>
-            </div>
-            <div>
-              <strong>¥1</strong>
-              <span>本次审查价格</span>
-            </div>
-          </div>
-          <p className="upload-area__account-hint">
-            {!currentUser.phoneVerified
-              ? '当前账户尚未绑定手机号，绑定后才能启动完整审查。'
-              : currentUser.freeReviewRemaining > 0 || currentUser.walletBalanceFen >= 100
-                ? '当前账户可直接开始完整审查。'
-                : '免费次数已用完且钱包余额不足 1 元，请先充值。'}
-          </p>
-          {currentUser.phoneVerified && currentUser.freeReviewRemaining <= 0 && currentUser.walletBalanceFen < 100 && (
-            <button type="button" className="px-btn px-btn--orange upload-area__recharge-btn" onClick={onOpenRecharge}>
-              先去充值
-            </button>
-          )}
-        </div>
-      )}
 
       <div className="upload-area__actions">
         <button

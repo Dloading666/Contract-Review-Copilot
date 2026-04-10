@@ -19,41 +19,19 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import auth
 from .cache import build_cache_key, close_redis_client, delete_json, get_json, get_ttl_seconds, set_json
-from .commerce import (
-    AccountStateError,
-    InsufficientFundsError,
-    ResourceNotFoundError,
-    create_recharge_order,
-    get_account_summary,
-    get_chat_session_summary,
-    get_recharge_order,
-    list_recharge_orders,
-    list_wallet_transactions,
-    mark_recharge_order_paid,
-    reserve_chat_turn,
-    reserve_review_session,
-    rollback_chat_turn,
-    rollback_reserved_review_session,
-    update_review_session_status,
-)
 from .config import get_settings
 from .graph.review_graph import run_aggregation_stream, run_review_stream
 from .llm_client import DEFAULT_MODEL_KEY, available_models, create_chat_completion
 from .ocr import UploadedContractFile, ingest_contract_files
-from .providers.wechat_pay import WechatPayError, create_native_order, parse_payment_callback, query_order_by_out_trade_no
 from .rate_limit import RateLimitRule, enforce_rate_limits, get_request_ip
 from .report_export import build_report_docx, build_report_download_name
 from .schemas import (
-    BindPhoneRequest,
     ChatRequest,
     ConfirmRequest,
     ContractReviewRequest,
     ExportReportRequest,
     HealthResponse,
     LoginRequest,
-    PhoneLoginRequest,
-    PhoneSendCodeRequest,
-    RechargeOrderCreateRequest,
     RegisterRequest,
     SendCodeRequest,
 )
@@ -148,22 +126,12 @@ def require_current_user(authorization: Optional[str]) -> dict:
     return user
 
 
-def _require_phone_verified_user(user: dict) -> None:
-    if not user.get("phoneVerified"):
-        raise HTTPException(status_code=403, detail="请先绑定并验证手机号")
-
-
 def _build_user_payload(user: dict) -> dict:
     return {
         "id": user.get("id"),
         "email": user.get("email"),
         "emailVerified": bool(user.get("emailVerified")),
-        "phone": user.get("phone"),
-        "phoneVerified": bool(user.get("phoneVerified")),
         "accountStatus": user.get("accountStatus", "active"),
-        "walletBalanceFen": int(user.get("walletBalanceFen", 0)),
-        "freeReviewRemaining": int(user.get("freeReviewRemaining", 0)),
-        "mustBindPhone": bool(user.get("mustBindPhone")),
         "createdAt": user.get("createdAt"),
     }
 
@@ -172,11 +140,7 @@ def _is_valid_email(email: str) -> bool:
     return bool(re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", email))
 
 
-def _is_valid_phone(phone: str) -> bool:
-    return bool(re.match(r"^1\d{10}$", auth.normalize_phone(phone)))
-
-
-def _enforce_auth_rate_limits(request: Request, *, email: str | None = None, phone: str | None = None, action: str) -> None:
+def _enforce_auth_rate_limits(request: Request, *, email: str | None = None, action: str) -> None:
     ip = get_request_ip(request)
     rules = [
         RateLimitRule(f"{action}:ip:minute", ip, 20, 60, "请求过于频繁，请稍后重试"),
@@ -184,19 +148,7 @@ def _enforce_auth_rate_limits(request: Request, *, email: str | None = None, pho
     ]
     if email:
         rules.append(RateLimitRule(f"{action}:email", email.lower(), 8, 3600, "该邮箱操作过于频繁，请稍后再试"))
-    if phone:
-        rules.append(RateLimitRule(f"{action}:phone", auth.normalize_phone(phone), 8, 3600, "该手机号操作过于频繁，请稍后再试"))
     enforce_rate_limits(rules)
-
-
-def _enforce_user_rate_limits(request: Request, user: dict, action: str) -> None:
-    ip = get_request_ip(request)
-    enforce_rate_limits(
-        [
-            RateLimitRule(f"{action}:ip", ip, 30, 60, "请求过于频繁，请稍后重试"),
-            RateLimitRule(f"{action}:user", str(user.get("id")), 30, 60, "操作过于频繁，请稍后重试"),
-        ]
-    )
 
 
 async def _read_uploaded_contract_file(upload: UploadFile) -> UploadedContractFile:
@@ -207,14 +159,6 @@ async def _read_uploaded_contract_file(upload: UploadFile) -> UploadedContractFi
     )
 
 
-def _build_account_bundle(user_id: str) -> dict:
-    return {
-        "user": _build_user_payload(get_account_summary(user_id)),
-        "recentTransactions": list_wallet_transactions(user_id, limit=12),
-        "recentRechargeOrders": list_recharge_orders(user_id, limit=6),
-    }
-
-
 @app.post("/api/auth/send-code")
 async def send_code(body: SendCodeRequest, request: Request):
     email = body.email.strip().lower()
@@ -223,19 +167,6 @@ async def send_code(body: SendCodeRequest, request: Request):
 
     _enforce_auth_rate_limits(request, email=email, action="auth-email-code")
     result = auth.send_verification_code(email)
-    if not result.get("success"):
-        return JSONResponse(status_code=500, content={"error": result.get("error", "发送失败")})
-    return {"success": True, **({"dev_code": result["dev_code"]} if "dev_code" in result else {})}
-
-
-@app.post("/api/auth/phone/send-code")
-async def send_phone_code(body: PhoneSendCodeRequest, request: Request):
-    phone = auth.normalize_phone(body.phone)
-    if not _is_valid_phone(phone):
-        return JSONResponse(status_code=400, content={"error": "请输入有效的手机号"})
-
-    _enforce_auth_rate_limits(request, phone=phone, action="auth-phone-code")
-    result = auth.send_phone_verification_code(phone)
     if not result.get("success"):
         return JSONResponse(status_code=500, content={"error": result.get("error", "发送失败")})
     return {"success": True, **({"dev_code": result["dev_code"]} if "dev_code" in result else {})}
@@ -278,44 +209,6 @@ async def login(body: LoginRequest, request: Request):
     return {"success": True, "token": token, "user": _build_user_payload(user or {})}
 
 
-@app.post("/api/auth/phone/login")
-async def phone_login(body: PhoneLoginRequest, request: Request):
-    phone = auth.normalize_phone(body.phone)
-    code = body.code.strip()
-    if not _is_valid_phone(phone):
-        return JSONResponse(status_code=400, content={"error": "请输入有效的手机号"})
-    if not code:
-        return JSONResponse(status_code=400, content={"error": "验证码不能为空"})
-
-    _enforce_auth_rate_limits(request, phone=phone, action="auth-phone-login")
-    result = auth.login_with_phone_code(phone, code)
-    if not result.get("success"):
-        return JSONResponse(status_code=400, content={"error": result.get("error", "登录失败")})
-    return {
-        "success": True,
-        "token": result["token"],
-        "user": _build_user_payload(result["user"]),
-    }
-
-
-@app.post("/api/auth/phone/bind")
-async def bind_phone(body: BindPhoneRequest, request: Request, authorization: Optional[str] = Header(None)):
-    user = require_current_user(authorization)
-    phone = auth.normalize_phone(body.phone)
-    code = body.code.strip()
-
-    if not _is_valid_phone(phone):
-        return JSONResponse(status_code=400, content={"error": "请输入有效的手机号"})
-    if not code:
-        return JSONResponse(status_code=400, content={"error": "验证码不能为空"})
-
-    _enforce_auth_rate_limits(request, phone=phone, action="auth-phone-bind")
-    result = auth.bind_phone_for_user(str(user["id"]), phone, code)
-    if not result.get("success"):
-        return JSONResponse(status_code=400, content={"error": result.get("error", "绑定失败")})
-    return {"success": True, "user": _build_user_payload(result["user"])}
-
-
 @app.get("/api/auth/me")
 async def get_me(authorization: Optional[str] = Header(None)):
     user = get_current_user(authorization)
@@ -334,120 +227,13 @@ async def list_models():
     return {"models": available_models(), "default_model": DEFAULT_MODEL_KEY}
 
 
-@app.get("/api/account/summary")
-async def account_summary(authorization: Optional[str] = Header(None)):
-    user = require_current_user(authorization)
-    return _build_account_bundle(str(user["id"]))
-
-
-@app.post("/api/wallet/recharge/orders")
-async def create_wallet_recharge_order(
-    body: RechargeOrderCreateRequest,
-    request: Request,
-    authorization: Optional[str] = Header(None),
-):
-    user = require_current_user(authorization)
-    _require_phone_verified_user(user)
-    _enforce_user_rate_limits(request, user, "wallet-recharge")
-
-    amount_fen = int(body.amount_fen)
-    if amount_fen < settings.recharge_min_amount_fen:
-        return JSONResponse(status_code=400, content={"error": "单次充值金额不能低于 1 元"})
-
-    try:
-        provisional_order_id = f"recharge-{uuid.uuid4().hex}"
-        provider_order = create_native_order(provisional_order_id, amount_fen, "合同审查钱包充值")
-        order = create_recharge_order(
-            order_id=provisional_order_id,
-            user_id=str(user["id"]),
-            amount_fen=amount_fen,
-            description="合同审查钱包充值",
-            code_url=provider_order.code_url,
-            provider_payload=provider_order.response_payload,
-        )
-    except WechatPayError as exc:
-        return JSONResponse(status_code=503, content={"error": str(exc)})
-    except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
-
-    return {"order": order, "minimumAmountFen": settings.recharge_min_amount_fen}
-
-
-@app.get("/api/wallet/recharge/orders/{order_id}")
-async def get_wallet_recharge_order(order_id: str, authorization: Optional[str] = Header(None)):
-    user = require_current_user(authorization)
-    _require_phone_verified_user(user)
-
-    order = get_recharge_order(order_id, user_id=str(user["id"]))
-    if not order:
-        return JSONResponse(status_code=404, content={"error": "订单不存在"})
-
-    if order["status"] == "pending":
-        try:
-            payload = query_order_by_out_trade_no(order_id)
-            if payload.get("trade_state") == "SUCCESS":
-                order = mark_recharge_order_paid(
-                    order_id=order_id,
-                    provider_transaction_id=payload.get("transaction_id"),
-                    callback_payload=payload,
-                )
-        except WechatPayError:
-            pass
-
-    return {"order": order, "account": _build_user_payload(get_account_summary(str(user["id"])))}
-
-
-@app.get("/api/wallet/transactions")
-async def wallet_transactions(authorization: Optional[str] = Header(None)):
-    user = require_current_user(authorization)
-    _require_phone_verified_user(user)
-    return {
-        "transactions": list_wallet_transactions(str(user["id"]), limit=50),
-        "user": _build_user_payload(get_account_summary(str(user["id"]))),
-    }
-
-
-@app.post("/api/payments/wechat/callback")
-async def wechat_payment_callback(request: Request):
-    raw_body = await request.body()
-    try:
-        callback = parse_payment_callback(dict(request.headers), raw_body)
-        payment = callback["payment"]
-        order_id = payment.get("out_trade_no")
-        transaction_id = payment.get("transaction_id")
-        if not order_id:
-            raise WechatPayError("回调缺少商户订单号")
-        mark_recharge_order_paid(
-            order_id=order_id,
-            provider_transaction_id=transaction_id,
-            callback_payload=callback,
-        )
-    except Exception as exc:
-        print(f"[WechatPay] Callback handling failed: {exc}", flush=True)
-        return JSONResponse(status_code=400, content={"code": "FAIL", "message": str(exc)})
-
-    return JSONResponse(status_code=200, content={"code": "SUCCESS", "message": "成功"})
-
-
 @app.post("/api/chat")
-async def chat(body: ChatRequest, request: Request, authorization: Optional[str] = Header(None)):
+async def chat(body: ChatRequest, authorization: Optional[str] = Header(None)):
     user = require_current_user(authorization)
-    _require_phone_verified_user(user)
-    _enforce_user_rate_limits(request, user, "chat")
 
     message = body.message.strip()
-    review_session_id = body.review_session_id.strip()
     if not message:
         return JSONResponse(status_code=400, content={"error": "消息不能为空"})
-    if not review_session_id:
-        return JSONResponse(status_code=400, content={"error": "缺少审查会话 ID"})
-
-    try:
-        reservation = reserve_chat_turn(str(user["id"]), review_session_id)
-    except ResourceNotFoundError as exc:
-        return JSONResponse(status_code=404, content={"error": str(exc)})
-    except (AccountStateError, InsufficientFundsError) as exc:
-        return JSONResponse(status_code=402, content={"error": str(exc), "code": "INSUFFICIENT_BALANCE"})
 
     context_sections: list[str] = []
     if body.contract_text:
@@ -477,12 +263,8 @@ async def chat(body: ChatRequest, request: Request, authorization: Optional[str]
         return {
             "reply": reply,
             "model": getattr(response, "model", settings.review_model) or settings.review_model,
-            "chargedFen": reservation.charged_fen,
-            "user": _build_user_payload(get_account_summary(str(user["id"]))),
-            "reviewSession": get_chat_session_summary(str(user["id"]), review_session_id),
         }
     except Exception as exc:
-        rollback_chat_turn(reservation, reason=str(exc))
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
@@ -550,31 +332,13 @@ async def export_review_report_docx(
 @app.post("/api/review")
 async def create_review(
     body: ContractReviewRequest,
-    request: Request,
     authorization: Optional[str] = Header(None),
 ):
     user = require_current_user(authorization)
-    _require_phone_verified_user(user)
-    _enforce_user_rate_limits(request, user, "review")
 
     session_id = body.session_id or f"session-{uuid.uuid4().hex}"
 
-    try:
-        reserve_review_session(
-            user_id=str(user["id"]),
-            session_id=session_id,
-            filename=(body.filename or "").strip(),
-            contract_excerpt=body.contract_text[:500],
-        )
-    except ResourceNotFoundError as exc:
-        return JSONResponse(status_code=404, content={"error": str(exc)})
-    except AccountStateError as exc:
-        return JSONResponse(status_code=403, content={"error": str(exc)})
-    except InsufficientFundsError as exc:
-        return JSONResponse(status_code=402, content={"error": str(exc), "code": "INSUFFICIENT_BALANCE"})
-
     async def event_generator() -> AsyncGenerator[bytes, None]:
-        review_started_emitted = False
         try:
             async for event in run_review_stream(
                 contract_text=body.contract_text,
@@ -583,24 +347,6 @@ async def create_review(
             ):
                 event_type = event.get("event", "message")
                 event_data = event.get("data", event)
-
-                if event_type == "review_started":
-                    review_started_emitted = True
-                    update_review_session_status(session_id, "reviewing")
-                    event_data = {
-                        **event_data,
-                        "account": _build_user_payload(get_account_summary(str(user["id"]))),
-                        "reviewSession": get_chat_session_summary(str(user["id"]), session_id),
-                    }
-                elif event_type == "breakpoint":
-                    update_review_session_status(session_id, "awaiting_confirmation")
-                elif event_type == "review_complete":
-                    update_review_session_status(session_id, "completed")
-                    event_data = {
-                        **event_data,
-                        "account": _build_user_payload(get_account_summary(str(user["id"]))),
-                        "reviewSession": get_chat_session_summary(str(user["id"]), session_id),
-                    }
 
                 if event_type == "breakpoint":
                     breakpoint_payload = event_data or {}
@@ -619,10 +365,6 @@ async def create_review(
                 if event_type == "breakpoint":
                     return
         except Exception as exc:
-            if review_started_emitted:
-                update_review_session_status(session_id, "failed", error_message=str(exc))
-            else:
-                rollback_reserved_review_session(session_id, reason=str(exc))
             yield format_sse("error", {"message": str(exc)})
 
     return StreamingResponse(
@@ -643,7 +385,6 @@ async def confirm_breakpoint(
     authorization: Optional[str] = Header(None),
 ):
     user = require_current_user(authorization)
-    _require_phone_verified_user(user)
 
     session_data = load_paused_session(session_id)
     if session_data is None and body.confirmed and body.contract_text.strip():
@@ -661,7 +402,6 @@ async def confirm_breakpoint(
 
     if not body.confirmed:
         delete_paused_session(session_id)
-        update_review_session_status(session_id, "cancelled")
         return {"status": "cancelled"}
 
     resumed_session_data = pop_paused_session(session_id)
@@ -670,7 +410,6 @@ async def confirm_breakpoint(
 
     async def event_generator() -> AsyncGenerator[bytes, None]:
         try:
-            update_review_session_status(session_id, "reviewing")
             async for event in run_aggregation_stream(
                 contract_text=session_data["contract_text"],
                 session_id=session_id,
@@ -679,16 +418,8 @@ async def confirm_breakpoint(
             ):
                 event_type = event.get("event", "message")
                 event_data = event.get("data", event)
-                if event_type == "review_complete":
-                    update_review_session_status(session_id, "completed")
-                    event_data = {
-                        **event_data,
-                        "account": _build_user_payload(get_account_summary(str(user["id"]))),
-                        "reviewSession": get_chat_session_summary(str(user["id"]), session_id),
-                    }
                 yield format_sse(event_type, event_data)
         except Exception as exc:
-            update_review_session_status(session_id, "failed", error_message=str(exc))
             yield format_sse("error", {"message": str(exc)})
 
     return StreamingResponse(
