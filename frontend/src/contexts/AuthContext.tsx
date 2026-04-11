@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { safeFetchJSON } from '../lib/apiClient'
 
 export interface User {
@@ -61,6 +61,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
   }, [])
 
+  const userRef = useRef(user)
+  useEffect(() => { userRef.current = user }, [user])
+
   const updateUser = useCallback((nextUser: User) => {
     persistUser(nextUser)
   }, [persistUser])
@@ -88,14 +91,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout()
         return null
       }
-      return user
+      return userRef.current
     }
-  }, [logout, persistUser, user])
+  }, [logout, persistUser])
 
   useEffect(() => {
     if (!token) return
     void refreshUser()
-  }, [refreshUser, token])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
 
   const value = useMemo<AuthContextValue>(() => ({
     user,

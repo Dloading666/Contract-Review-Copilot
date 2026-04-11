@@ -537,7 +537,7 @@ export default function App() {
         ...prev,
         chatMessages: prev.chatMessages.map((chatMessage) => (
           chatMessage.id === assistantMsgId
-            ? { ...chatMessage, content: payload.reply ?? '获取回复失败' }
+            ? { ...chatMessage, content: payload.reply || '获取回复失败' }
             : chatMessage
         )),
       }))
