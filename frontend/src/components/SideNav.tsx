@@ -28,8 +28,15 @@ interface HistoryListItem {
 export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings, activeView }: SideNavProps) {
   const [showHistory, setShowHistory] = useState(false)
   const [historyItems, setHistoryItems] = useState<HistoryListItem[]>([])
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768)
   const historyDropdownRef = useRef<HTMLDivElement>(null)
   const historyButtonRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth <= 768)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
 
   const loadHistoryItems = () => {
     try {
@@ -66,6 +73,109 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
     { id: 'chat', icon: <MessageSquare size={26} />, label: '实时对话', onClick: () => setShowHistory(false) },
     { id: 'history', icon: <History size={26} />, label: '审查历史', onClick: handleHistoryClick, ref: historyButtonRef },
   ]
+
+  if (isMobile) {
+    return (
+      <nav style={{
+        position: 'fixed',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: 56,
+        display: 'flex',
+        flexDirection: 'row',
+        background: 'var(--color-cream-dark)',
+        borderTop: '4px solid black',
+        zIndex: 300,
+      }}>
+        {navItems.map(item => (
+          <button
+            ref={item.ref as any}
+            key={item.id}
+            type="button"
+            className={`pixel-sidebar-btn${activeView === item.id || (item.id === 'history' && showHistory) ? ' active' : ''}`}
+            onClick={item.onClick}
+            style={{ flex: 1, flexDirection: 'row', gap: 6, fontSize: 10, padding: '0 8px', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', borderRight: '4px solid black' }}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </button>
+        ))}
+        <button
+          type="button"
+          className={`pixel-sidebar-btn${activeView === 'settings' ? ' active' : ''}`}
+          onClick={onOpenSettings}
+          style={{ flex: 1, flexDirection: 'row', gap: 6, fontSize: 10, padding: '0 8px', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', borderRight: '4px solid black' }}
+        >
+          <Settings size={20} />
+          <span>设置</span>
+        </button>
+        <button
+          type="button"
+          onClick={onLogout}
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            border: 'none',
+            background: 'var(--color-paper)',
+            color: 'var(--color-red)',
+            fontFamily: 'var(--font-pixel)',
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            cursor: 'pointer',
+          }}
+        >
+          退出
+        </button>
+
+        {/* History dropdown for mobile */}
+        {showHistory && (
+          <div
+            ref={historyDropdownRef}
+            style={{
+              position: 'fixed',
+              bottom: 60,
+              left: 0,
+              right: 0,
+              maxHeight: '60vh',
+              background: 'var(--color-paper)',
+              border: '4px solid black',
+              borderBottom: 'none',
+              zIndex: 400,
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <div style={{ padding: '10px 14px', background: 'var(--color-orange)', color: 'white', fontFamily: 'var(--font-pixel)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', borderBottom: '4px solid black', flexShrink: 0 }}>
+              审查历史
+            </div>
+            {historyItems.length === 0 ? (
+              <div style={{ padding: '24px 14px', textAlign: 'center', fontFamily: 'var(--font-pixel)', fontSize: 8, color: 'var(--color-ink-muted)' }}>暂无历史记录</div>
+            ) : (
+              <div style={{ overflowY: 'auto', flex: 1 }}>
+                {historyItems.map(historyItem => (
+                  <button
+                    key={historyItem.sessionId}
+                    type="button"
+                    onClick={() => handleHistorySelect(historyItem.sessionId)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', border: 'none', borderBottom: '3px solid black', background: 'white', cursor: 'pointer', fontFamily: 'var(--font-pixel)', fontSize: 8, color: 'var(--color-ink)' }}
+                  >
+                    <div style={{ fontWeight: 700, marginBottom: 4, lineHeight: 1.4 }}>{historyItem.filename}</div>
+                    <div style={{ fontSize: 7, color: 'var(--color-ink-muted)' }}>{historyItem.date}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </nav>
+    )
+  }
 
   return (
     <aside style={{

@@ -326,6 +326,7 @@ export default function App() {
   const [hasAcceptedDisclaimer, setHasAcceptedDisclaimer] = useState(() => loadDisclaimerAcceptance(historyOwnerKey))
   const [showSettings, setShowSettings] = useState(false)
   const [isExportingReport, setIsExportingReport] = useState(false)
+  const [mobileDocVisible, setMobileDocVisible] = useState(false)
   const [review, setReview] = useState<ReviewState>(() => createInitialState(createSessionId()))
   const [streamContractText, setStreamContractText] = useState('')
   const [pendingReviewStart, setPendingReviewStart] = useState<PendingReviewStart | null>(null)
@@ -610,7 +611,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-layout" style={{ flexDirection: 'row' }}>
+    <div className="app-layout">
       <SideNav
         user={user}
         onLogout={logout}
@@ -618,26 +619,46 @@ export default function App() {
         onOpenSettings={() => setShowSettings(true)}
       />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="mobile-panel-tabs">
+          <button
+            type="button"
+            className={`mobile-panel-tab${!mobileDocVisible ? ' mobile-panel-tab--active' : ''}`}
+            onClick={() => setMobileDocVisible(false)}
+          >
+            💬 对话
+          </button>
+          <button
+            type="button"
+            className={`mobile-panel-tab${mobileDocVisible ? ' mobile-panel-tab--active' : ''}`}
+            onClick={() => setMobileDocVisible(true)}
+          >
+            📄 合同
+          </button>
+        </div>
         <main className="workspace">
-          <ChatPanel
-            review={review}
-            authToken={token}
-            onExportReport={handleExportReport}
-            isExportingReport={isExportingReport}
-            onBreakpointConfirm={handleBreakpointConfirm}
-            onReset={handleReset}
-            onSendMessage={handleSendMessage}
-          />
-          <DocPanel
-            review={review}
-            authToken={token}
-            onFileUpload={handleFileUpload}
-            onOcrReady={handleOcrReady}
-            onContractTextChange={handleContractTextChange}
-            onConfirmReview={handleConfirmOcrReview}
-            onReset={handleReset}
-            onNewConversation={handleNewConversation}
-          />
+          <div className={mobileDocVisible ? 'workspace__panel--hidden' : undefined}>
+            <ChatPanel
+              review={review}
+              authToken={token}
+              onExportReport={handleExportReport}
+              isExportingReport={isExportingReport}
+              onBreakpointConfirm={handleBreakpointConfirm}
+              onReset={handleReset}
+              onSendMessage={handleSendMessage}
+            />
+          </div>
+          <div className={!mobileDocVisible ? 'workspace__panel--hidden' : undefined}>
+            <DocPanel
+              review={review}
+              authToken={token}
+              onFileUpload={handleFileUpload}
+              onOcrReady={handleOcrReady}
+              onContractTextChange={handleContractTextChange}
+              onConfirmReview={handleConfirmOcrReview}
+              onReset={handleReset}
+              onNewConversation={handleNewConversation}
+            />
+          </div>
         </main>
       </div>
       {review.status === 'reviewing' && (

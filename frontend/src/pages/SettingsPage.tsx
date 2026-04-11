@@ -39,6 +39,7 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
   const [devCode, setDevCode] = useState('')
 
   const hasBoundEmail = !!user.email?.trim()
+  const canChangePassword = hasBoundEmail && user.hasPassword !== false
   const passwordMismatch = confirmPassword.length > 0 && newPassword !== confirmPassword
 
   useEffect(() => {
@@ -177,10 +178,12 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
             通过当前绑定邮箱获取验证码，验证通过后即可直接重置登录密码。
           </p>
 
-          {!hasBoundEmail ? (
+          {!canChangePassword ? (
             <div className="account-security__empty">
               <ShieldCheck size={16} />
-              当前账号未绑定邮箱，暂不支持邮箱改密。
+              {!hasBoundEmail
+                ? '当前账号未绑定邮箱，暂不支持邮箱改密。'
+                : '当前账号通过第三方登录（如 GitHub），无需设置密码。'}
             </div>
           ) : (
             <form className="account-security__form" onSubmit={handleResetPassword}>

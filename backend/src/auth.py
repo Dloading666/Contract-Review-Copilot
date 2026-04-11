@@ -209,6 +209,7 @@ def _get_user(user_id: str) -> Optional[dict]:
 def _build_public_user(user: dict) -> dict:
     summary = get_account_summary(user["id"])
     summary["email"] = user.get("email")
+    summary["hasPassword"] = bool((user.get("password_hash") or "").strip())
     return summary
 
 

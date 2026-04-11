@@ -2821,6 +2821,65 @@ body.landing-page-active h4 {
   box-shadow: 0px 0px 0px 0px #2d2f2c;
 }
 
+/* ── Mobile Panel Tabs (hidden on desktop) ── */
+.mobile-panel-tabs {
+  display: none;
+}
+
+.mobile-panel-tab {
+  flex: 1;
+  padding: 10px 8px;
+  border: none;
+  border-bottom: 4px solid black;
+  border-right: 4px solid black;
+  background: var(--color-cream-dark);
+  font-family: var(--font-pixel);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--color-ink);
+}
+
+.mobile-panel-tab:last-child {
+  border-right: none;
+}
+
+.mobile-panel-tab--active {
+  background: var(--color-orange);
+  color: white;
+}
+
+/* ── Mobile Layout ── */
+@media (max-width: 768px) {
+  .app-layout {
+    flex-direction: column;
+  }
+
+  .mobile-panel-tabs {
+    display: flex;
+    flex-shrink: 0;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+  }
+
+  .workspace__panel--hidden {
+    display: none !important;
+  }
+
+  /* Panels fill full height */
+  .workspace > div {
+    display: contents;
+  }
+
+  /* Bottom nav padding */
+  .app-layout > div {
+    padding-bottom: 56px;
+  }
+}
+
 @media (max-width: 900px) {
   .auth-card {
     grid-template-columns: 1fr;

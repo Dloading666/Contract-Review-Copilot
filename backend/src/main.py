@@ -135,6 +135,7 @@ def _build_user_payload(user: dict) -> dict:
         "emailVerified": bool(user.get("emailVerified")),
         "accountStatus": user.get("accountStatus", "active"),
         "createdAt": user.get("createdAt"),
+        "hasPassword": bool(user.get("hasPassword")),
     }
 
 

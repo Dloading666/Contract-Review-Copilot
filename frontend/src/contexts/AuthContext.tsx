@@ -6,6 +6,7 @@ export interface User {
   emailVerified: boolean
   accountStatus: string
   createdAt?: string | null
+  hasPassword?: boolean
 }
 
 interface AuthContextValue {
