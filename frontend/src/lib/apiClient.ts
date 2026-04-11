@@ -27,13 +27,22 @@ export async function safeFetchJSON<T>(
   if (!response.ok) {
     const text = await response.text().catch(() => '')
 
+    // Try to extract backend error message from JSON body first
+    let backendError: string | undefined
+    try {
+      const json = JSON.parse(text)
+      backendError = json?.error || json?.detail || undefined
+    } catch {
+      // not JSON, use fallback messages below
+    }
+
+    if (backendError) {
+      throw new APIError(backendError, response.status, text)
+    }
+
     // Handle common HTTP errors with friendly messages
     if (response.status === 502 || response.status === 503 || response.status === 504) {
-      throw new APIError(
-        '服务器暂时不可用，请稍后重试',
-        response.status,
-        text
-      )
+      throw new APIError('服务器暂时不可用，请稍后重试', response.status, text)
     }
     if (response.status === 401) {
       throw new APIError('登录已过期，请重新登录', response.status, text)
