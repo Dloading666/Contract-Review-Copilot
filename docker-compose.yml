@@ -65,11 +65,14 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - JWT_SECRET_FILE=/app/data/jwt_secret
       - ALLOW_DEV_CODE_RESPONSE=${ALLOW_DEV_CODE_RESPONSE:-false}
-      - OPENAI_BASE_URL=https://api.siliconflow.cn/v1
-      - SKIP_LLM_EXTRACTION=0
-      - SKIP_LLM_ROUTING=0
-      - SKIP_LLM_REVIEW=0
-      - SKIP_LLM_REPORT=0
+      - HTTP_PROXY=${BACKEND_HTTP_PROXY:-http://host.docker.internal:7897}
+      - HTTPS_PROXY=${BACKEND_HTTPS_PROXY:-http://host.docker.internal:7897}
+      - ALL_PROXY=${BACKEND_ALL_PROXY:-http://host.docker.internal:7897}
+      - NO_PROXY=${BACKEND_NO_PROXY:-localhost,127.0.0.1,postgres,redis}
+      - OPENAI_BASE_URL=https://api.minimax.chat/v1
+      - REVIEW_MODEL=minimax-m2.7
+      - OCR_MODEL=minimax-vl-01
+
     env_file:
       - ./backend/.env
     volumes:
