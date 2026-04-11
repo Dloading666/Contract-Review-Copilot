@@ -26,27 +26,23 @@ ROUTING_PROMPT = """你是一个智能法律检索系统。请分析以下合同
 
 请决定检索策略：
 
-1. primary_source: 应优先检索哪个数据源？
-   - "pgvector" = 法律数据库（民法典、司法解释）
-   - "duckduckgo" = 地方性法规、实时政策
+1. primary_source: 固定为 "pgvector"（法律数据库）
 
-2. secondary_source: 辅助数据源（可以是 "pgvector"、"duckduckgo" 或 null）
+2. reason: 解释选择理由（1-2句话）
 
-3. reason: 解释选择理由（1-2句话）
+3. confidence: 置信度 0.0-1.0
 
-4. confidence: 置信度 0.0-1.0
+4. local_context: 本合同适用的地方性规定说明
 
-5. local_context: 是否需要检索地方性规定？简述需要的地区和规定类型
-
-6. legal_focus: 本合同最需要关注的3个法律领域（如：违约金上限、押金退还、租赁期限）
+5. legal_focus: 本合同最需要关注的3个法律领域（如：违约金上限、押金退还、租赁期限）
 
 直接返回JSON，不要其他文字：
 {{
   "primary_source": "pgvector",
-  "secondary_source": "duckduckgo",
+  "secondary_source": null,
   "reason": "这是标准住宅租赁合同，适用全国性法律为主...",
   "confidence": 0.92,
-  "local_context": "如涉及北京地区，需检索《北京市房屋租赁若干规定》...",
+  "local_context": "住宅租赁以全国性法律为准。",
   "legal_focus": ["违约金上限", "押金退还条件", "提前解约通知"]
 }}
 """
@@ -122,7 +118,7 @@ def _default_routing(contract_text: str, entities: dict) -> dict:
 
     return {
         "primary_source": "pgvector",
-        "secondary_source": "duckduckgo" if prop_type == "商业" else None,
+        "secondary_source": None,
         "reason": f"这是{prop_type}租赁合同，建议优先检索《民法典》和相关司法解释。",
         "confidence": 0.85,
         "local_context": "如为北京地区商业租赁，建议同时检索《北京市房地产租赁管理办法》。" if prop_type == "商业" else "住宅租赁以全国性法律为准。",
