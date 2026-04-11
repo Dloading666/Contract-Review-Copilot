@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, Plus, Upload, ZoomIn, ZoomOut } from 'lucide-react'
 import type { ReviewState, RiskCard } from '../App'
+import { safeFetchJSON, APIError } from '../lib/apiClient'
 interface DocPanelProps {
   review: ReviewState
   authToken?: string | null

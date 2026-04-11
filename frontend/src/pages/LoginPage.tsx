@@ -2,6 +2,7 @@ import { useState, type SyntheticEvent } from 'react'
 import { motion } from 'motion/react'
 import { Github, KeyRound, Lock, Mail } from 'lucide-react'
 import type { User } from '../contexts/AuthContext'
+import { safeFetchJSON } from '../lib/apiClient'
 import dogeImage from '../assets/branding/doge.png'
 
 interface LoginPageProps {
@@ -38,19 +39,18 @@ export function LoginPage({ onLogin, onNavigateRegister, onNavigateLanding }: Lo
 
     setLoading(true)
     try {
-      const response = await fetch('/api/auth/login', {
+      const payload = await safeFetchJSON<{ error?: string; token?: string; user?: User }>('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       })
-      const payload = await response.json() as { error?: string; token?: string; user?: User }
-      if (!response.ok || !payload.token || !payload.user) {
+      if (!payload.token || !payload.user) {
         setError(payload.error || '邮箱或密码错误')
         return
       }
       onLogin(payload.token, payload.user)
-    } catch {
-      setError('网络错误，请稍后重试')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '网络错误，请稍后重试')
     } finally {
       setLoading(false)
     }

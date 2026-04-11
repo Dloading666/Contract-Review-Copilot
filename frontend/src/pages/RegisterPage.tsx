@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { motion } from 'motion/react'
 import { ArrowLeft, Mail, ShieldCheck } from 'lucide-react'
+import { safeFetchJSON } from '../lib/apiClient'
 
 interface RegisterPageProps {
   onNavigateLogin: () => void
@@ -40,20 +41,15 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
     setSendingCode(true)
     setError('')
     try {
-      const response = await fetch('/api/auth/send-code', {
+      const payload = await safeFetchJSON<{ error?: string; dev_code?: string }>('/api/auth/send-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim().toLowerCase() }),
       })
-      const payload = await response.json() as { error?: string; dev_code?: string }
-      if (!response.ok) {
-        setError(payload.error || '验证码发送失败')
-        return
-      }
       setDevCode(payload.dev_code ?? '')
       startCountdown()
-    } catch {
-      setError('网络错误，请稍后重试')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '网络错误，请稍后重试')
     } finally {
       setSendingCode(false)
     }
@@ -74,7 +70,7 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
     setError('')
     setSuccess('')
     try {
-      const response = await fetch('/api/auth/register', {
+      await safeFetchJSON('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -83,15 +79,10 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
           password,
         }),
       })
-      const payload = await response.json() as { error?: string; message?: string }
-      if (!response.ok) {
-        setError(payload.error || '注册失败')
-        return
-      }
       setSuccess('注册成功！即将跳转到登录页...')
       setTimeout(() => onNavigateLogin(), 1500)
-    } catch {
-      setError('网络错误，请稍后重试')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '注册失败')
     } finally {
       setSubmitting(false)
     }

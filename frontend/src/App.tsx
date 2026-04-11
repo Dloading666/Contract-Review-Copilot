@@ -13,6 +13,7 @@ import { LandingPage } from './pages/LandingPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { safeFetchJSON } from './lib/apiClient'
 
 export type ReviewStatus = 'idle' | 'uploading' | 'ocr_ready' | 'reviewing' | 'breakpoint' | 'complete' | 'error'
 
@@ -312,9 +313,10 @@ export default function App() {
     const url = new URL(window.location.href)
     url.searchParams.delete('token')
     window.history.replaceState({}, '', url.toString())
-    fetch('/api/auth/me', { headers: { Authorization: `Bearer ${urlToken}` } })
-      .then(res => res.json())
-      .then((data: { user?: import('./contexts/AuthContext').User }) => {
+    safeFetchJSON<{ user?: import('./contexts/AuthContext').User }>('/api/auth/me', {
+      headers: { Authorization: `Bearer ${urlToken}` },
+    })
+      .then((data) => {
         if (data.user) login(urlToken, data.user)
       })
       .catch(() => {})
@@ -517,7 +519,7 @@ export default function App() {
 
     try {
       const riskSummary = review.riskCards.map((card) => `[${card.level}] ${card.title}: ${card.issue}`).join('\n')
-      const response = await fetch('/api/chat', {
+      const payload = await safeFetchJSON<{ reply?: string; error?: string }>('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -531,19 +533,6 @@ export default function App() {
         }),
       })
 
-      const payload = await response.json() as { reply?: string; error?: string }
-
-      if (!response.ok) {
-        const reply = payload.error || '获取回复失败'
-        setReview((prev) => ({
-          ...prev,
-          chatMessages: prev.chatMessages.map((chatMessage) => (
-            chatMessage.id === assistantMsgId ? { ...chatMessage, content: reply } : chatMessage
-          )),
-        }))
-        return
-      }
-
       setReview((prev) => ({
         ...prev,
         chatMessages: prev.chatMessages.map((chatMessage) => (
@@ -552,12 +541,13 @@ export default function App() {
             : chatMessage
         )),
       }))
-    } catch {
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : '网络错误，请重试。'
       setReview((prev) => ({
         ...prev,
         chatMessages: prev.chatMessages.map((chatMessage) => (
           chatMessage.id === assistantMsgId
-            ? { ...chatMessage, content: '网络错误，请重试。' }
+            ? { ...chatMessage, content: errorMessage }
             : chatMessage
         )),
       }))
