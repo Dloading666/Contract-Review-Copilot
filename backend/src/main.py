@@ -93,6 +93,60 @@ app = FastAPI(
 )
 
 settings = get_settings()
+EMPTY_CHAT_REPLY_TEXT = "模型没有返回可见内容，请再试一次。"
+INVISIBLE_CHAT_REPLY_PATTERN = re.compile(r"[\u200b\u200c\u200d\u2060\ufeff]")
+
+
+def normalize_chat_reply(reply: object) -> str:
+    if isinstance(reply, str):
+        text = reply
+    elif isinstance(reply, list):
+        fragments: list[str] = []
+        for block in reply:
+            block_text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+            if isinstance(block_text, str) and block_text.strip():
+                fragments.append(block_text.strip())
+        text = "\n".join(fragments)
+    else:
+        text = ""
+
+    visible_text = INVISIBLE_CHAT_REPLY_PATTERN.sub("", text).strip()
+    return visible_text or EMPTY_CHAT_REPLY_TEXT
+
+
+def extract_chat_reply(response: object) -> str:
+    choices = getattr(response, "choices", None)
+    if not choices:
+        return EMPTY_CHAT_REPLY_TEXT
+
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        return EMPTY_CHAT_REPLY_TEXT
+
+    for candidate in (
+        getattr(message, "content", ""),
+        getattr(message, "reasoning_content", ""),
+        getattr(message, "text", ""),
+    ):
+        reply = normalize_chat_reply(candidate)
+        if reply != EMPTY_CHAT_REPLY_TEXT:
+            return reply
+
+    return EMPTY_CHAT_REPLY_TEXT
+
+
+def build_empty_chat_fallback_reply(risk_summary: str) -> str:
+    normalized_risk_summary = risk_summary.strip()
+    if not normalized_risk_summary:
+        return EMPTY_CHAT_REPLY_TEXT
+
+    return (
+        "这次模型没有返回完整回复。我先按当前审查结果给你一个可执行方向：\n"
+        f"{normalized_risk_summary[:600]}\n\n"
+        "建议优先处理高风险条款，把违约金、押金扣除、单方免责等内容改成金额合理、条件明确、双方责任对等的表述。"
+    )
+
+
 allowed_origins = [
     origin.strip()
     for origin in settings.cors_allowed_origins.split(",")
@@ -319,9 +373,11 @@ async def chat(body: ChatRequest, authorization: Optional[str] = Header(None)):
             ],
             temperature=0.3,
             max_tokens=1024,
-            timeout=30.0,
+            timeout=90.0,
         )
-        reply = (response.choices[0].message.content or "").strip()
+        reply = extract_chat_reply(response)
+        if reply == EMPTY_CHAT_REPLY_TEXT:
+            reply = build_empty_chat_fallback_reply(body.risk_summary)
         return {
             "reply": reply,
             "model": getattr(response, "model", settings.review_model) or settings.review_model,
@@ -499,3 +555,4 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("src.main:app", host="0.0.0.0", port=8000, reload=True)
+

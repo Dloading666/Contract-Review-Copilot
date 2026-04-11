@@ -71,7 +71,9 @@ services:
       - NO_PROXY=${BACKEND_NO_PROXY:-localhost,127.0.0.1,postgres,redis}
       - OPENAI_BASE_URL=https://api.minimax.chat/v1
       - REVIEW_MODEL=minimax-m2.7
-      - OCR_MODEL=minimax-vl-01
+      - OCR_MODEL=PaddlePaddle/PaddleOCR-VL-1.5
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY}
+      - SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
 
     env_file:
       - ./backend/.env

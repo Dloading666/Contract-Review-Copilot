@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../components/ChatPanel'
 import type { ReviewState } from '../App'
+import { EMPTY_ASSISTANT_REPLY_TEXT } from '../lib/chatText'
 
 const noRiskTitle = '整体评估'
 const noRiskIssue = '未发现明显不公平条款'
@@ -90,10 +91,32 @@ describe('ChatPanel', () => {
     expect(onSendMessage).toHaveBeenCalledWith('Where is the deposit risk?')
   })
 
+  it('shows fallback text instead of an empty assistant bubble', async () => {
+    render(
+      <ChatPanel
+        review={buildReviewState({
+          chatMessages: [
+            { id: 'user-1', role: 'user', content: '这个合同怎么改？' },
+            { id: 'assistant-empty', role: 'assistant', content: '\u200b\n\ufeff' },
+          ],
+        })}
+        onExportReport={vi.fn()}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(EMPTY_ASSISTANT_REPLY_TEXT)).toBeTruthy()
+    })
+  })
+
   it('requests autofix suggestions with authorization and renders the result', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ suggestion: 'Rewrite the clause so the penalty stays within a reasonable range.' }),
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: async () => JSON.stringify({ suggestion: 'Rewrite the clause so the penalty stays within a reasonable range.' }),
     }) as typeof fetch
 
     const { container } = render(

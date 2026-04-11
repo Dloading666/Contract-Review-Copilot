@@ -8,13 +8,17 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # SiliconFlow API（OpenAI 兼容接口）
+    # SiliconFlow API（OpenAI 兼容接口）- 用于 OCR
+    siliconflow_api_key: str | None = None
+    siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
+
+    # MiniMax API（OpenAI 兼容接口）- 用于审查/推理
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.minimax.chat/v1"
 
     # 模型配置
-    review_model: str = "minimax-m2.7"                   # 推理/审查/报告/问答
-    ocr_model: str = "minimax-vl-01"                    # 图片 OCR 识别
+    review_model: str = "minimax-m2.7"                   # 推理/审查/报告/问答 (MiniMax)
+    ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"    # 图片 OCR 识别 (SiliconFlow)
 
     jwt_secret: str | None = None
     jwt_secret_file: str | None = None

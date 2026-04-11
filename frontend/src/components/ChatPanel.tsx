@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import type { ReviewState, RiskCard } from '../App'
 import { safeFetchJSON } from '../lib/apiClient'
+import { normalizeAssistantReply } from '../lib/chatText'
 import dogeImage from '../assets/branding/doge.png'
 
 function handleDogeImageError(event: SyntheticEvent<HTMLImageElement>) {
@@ -508,21 +509,24 @@ export function ChatPanel({
 
         {showChatHistory && (
           <motion.div className="chat-messages" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            {review.chatMessages.map((message) => (
-              <motion.div
-                key={message.id}
-                className={`chat-msg ${message.role === 'user' ? 'chat-msg--user' : ''}`}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-              >
-                <div className="chat-msg__label">{message.role === 'assistant' ? '助手' : '你'}</div>
-                <div className="chat-msg__bubble">
-                  {message.content.split('\n').map((line, index) => (
-                    <p key={`${message.id}-${index}`}>{line}</p>
-                  ))}
-                </div>
-              </motion.div>
-            ))}
+            {review.chatMessages.map((message) => {
+              const visibleContent = message.role === 'assistant' ? normalizeAssistantReply(message.content) : message.content
+              return (
+                <motion.div
+                  key={message.id}
+                  className={`chat-msg ${message.role === 'user' ? 'chat-msg--user' : ''}`}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  <div className="chat-msg__label">{message.role === 'assistant' ? '助手' : '你'}</div>
+                  <div className="chat-msg__bubble">
+                    {visibleContent.split('\n').map((line, index) => (
+                      <p key={`${message.id}-${index}`}>{line}</p>
+                    ))}
+                  </div>
+                </motion.div>
+              )
+            })}
           </motion.div>
         )}
 

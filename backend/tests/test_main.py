@@ -105,6 +105,25 @@ def test_models_endpoint_returns_current_review_model(client):
     }
 
 
+def test_normalize_chat_reply_falls_back_for_invisible_content():
+    assert main.normalize_chat_reply("\u200b\n\ufeff") == main.EMPTY_CHAT_REPLY_TEXT
+    assert main.normalize_chat_reply([{"text": "  可见回答  "}]) == "可见回答"
+
+
+def test_extract_chat_reply_uses_model_text_fallback_fields():
+    response = _FakeResponse("")
+    response.choices[0].message.reasoning_content = "  备用可见回复  "
+
+    assert main.extract_chat_reply(response) == "备用可见回复"
+
+
+def test_build_empty_chat_fallback_reply_uses_risk_summary():
+    reply = main.build_empty_chat_fallback_reply("[high] 押金条款：押金不退")
+
+    assert "押金条款" in reply
+    assert "高风险条款" in reply
+
+
 def test_register_rejects_invalid_email_without_top_level_domain(client):
     response = client.post(
         "/api/auth/register",
@@ -723,3 +742,4 @@ def test_export_report_docx_returns_word_document(client, monkeypatch):
     )
     assert "filename*=UTF-8" in response.headers["content-disposition"]
     assert response.content.startswith(b"PK")
+

@@ -14,6 +14,7 @@ import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { safeFetchJSON } from './lib/apiClient'
+import { normalizeAssistantReply } from './lib/chatText'
 
 export type ReviewStatus = 'idle' | 'uploading' | 'ocr_ready' | 'reviewing' | 'breakpoint' | 'complete' | 'error'
 
@@ -537,7 +538,7 @@ export default function App() {
         ...prev,
         chatMessages: prev.chatMessages.map((chatMessage) => (
           chatMessage.id === assistantMsgId
-            ? { ...chatMessage, content: payload.reply || '获取回复失败' }
+            ? { ...chatMessage, content: normalizeAssistantReply(payload.reply) }
             : chatMessage
         )),
       }))
@@ -669,3 +670,4 @@ export default function App() {
     </div>
   )
 }
+

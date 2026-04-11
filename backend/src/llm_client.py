@@ -10,16 +10,18 @@ import base64
 import mimetypes
 import os
 import re
+import time
 from typing import Optional
 
 import httpx
-from openai import OpenAI
+from openai import APIConnectionError, APITimeoutError, OpenAI
 
 from .config import get_settings
 
 DEFAULT_MODEL_KEY = "review"
 FALLBACK_MODEL_KEY = DEFAULT_MODEL_KEY
 OCR_UNREADABLE_MARKER = "OCR_UNREADABLE_CONTRACT_IMAGE"
+TRANSIENT_LLM_ERRORS = (APIConnectionError, APITimeoutError)
 
 SUPPORTED_IMAGE_MIME_TYPES = {
     "image/jpeg",
@@ -65,11 +67,22 @@ def get_primary_model_key() -> str:
 
 
 def _get_client() -> OpenAI:
+    """Get client for review/chat (MiniMax)."""
     settings = get_settings()
     return OpenAI(
         api_key=os.getenv("OPENAI_API_KEY") or (settings.openai_api_key or ""),
         base_url=os.getenv("OPENAI_BASE_URL") or settings.openai_base_url,
         timeout=httpx.Timeout(60.0, connect=10.0),
+    )
+
+
+def _get_ocr_client() -> OpenAI:
+    """Get client for OCR (SiliconFlow)."""
+    settings = get_settings()
+    return OpenAI(
+        api_key=os.getenv("SILICONFLOW_API_KEY") or (settings.siliconflow_api_key or ""),
+        base_url=os.getenv("SILICONFLOW_BASE_URL") or settings.siliconflow_base_url,
+        timeout=httpx.Timeout(90.0, connect=10.0),
     )
 
 
@@ -85,6 +98,31 @@ def _resolve_model_id(model: Optional[str]) -> str:
 def available_models() -> list[dict[str, str]]:
     settings = get_settings()
     return [{"key": DEFAULT_MODEL_KEY, "label": settings.review_model}]
+
+
+def _should_disable_thinking(model_id: str) -> bool:
+    normalized_model = model_id.lower()
+    return "qwen/qwen3" in normalized_model or normalized_model.startswith("qwen3")
+
+
+def _apply_chat_extra_body_defaults(model_id: str, kwargs: dict) -> dict:
+    request_kwargs = dict(kwargs)
+    if not _should_disable_thinking(model_id):
+        return request_kwargs
+
+    extra_body = request_kwargs.get("extra_body")
+    if isinstance(extra_body, dict):
+        extra_body = dict(extra_body)
+    elif extra_body is None:
+        extra_body = {}
+    else:
+        return request_kwargs
+
+    # Qwen3/3.5 can spend the whole token budget in reasoning_content.
+    # Disabling thinking keeps normal chat replies in message.content.
+    extra_body.setdefault("enable_thinking", False)
+    request_kwargs["extra_body"] = extra_body
+    return request_kwargs
 
 
 def normalize_image_mime_type(mime_type: Optional[str], filename: Optional[str] = None) -> str:
@@ -155,8 +193,6 @@ def _deduplicate_repeated_lines(text: str, max_repeats: int = 3) -> str:
 
         if count <= max_repeats:
             result_lines.append(line)
-        elif count == max_repeats + 1:
-            result_lines.append("（以下相同内容已省略）")
 
     return "\n".join(result_lines)
 
@@ -264,16 +300,27 @@ def create_chat_completion(
 ):
     del allow_fallback
     model_id = _resolve_model_id(model)
-    client = _get_client()
-    print(f"[LLM] Calling: {model_id}", flush=True)
-    return client.chat.completions.create(
-        model=model_id,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        timeout=timeout,
-        **kwargs,
-    )
+    request_kwargs = _apply_chat_extra_body_defaults(model_id, kwargs)
+
+    for attempt in range(2):
+        client = _get_client()
+        print(f"[LLM] Calling: {model_id}", flush=True)
+        try:
+            return client.chat.completions.create(
+                model=model_id,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                **request_kwargs,
+            )
+        except TRANSIENT_LLM_ERRORS as exc:
+            if attempt == 1:
+                raise
+            print(f"[LLM] Transient error, retrying once: {type(exc).__name__}", flush=True)
+            time.sleep(0.8)
+
+    raise RuntimeError("LLM request failed unexpectedly")
 
 
 def extract_text_from_image(
@@ -290,7 +337,7 @@ def extract_text_from_image(
     settings = get_settings()
     model_id = settings.ocr_model
 
-    client = _get_client()
+    client = _get_ocr_client()
     image_url = _build_image_data_url(image_bytes, normalized_mime_type)
 
     def run_ocr(current_prompt: str):
