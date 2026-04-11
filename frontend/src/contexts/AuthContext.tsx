@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { safeFetchJSON } from '../lib/apiClient'
 
 export interface User {
   id: string
@@ -73,23 +74,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const response = await fetch('/api/auth/me', {
+      const payload = await safeFetchJSON<{ user?: User }>('/api/auth/me', {
         headers: { Authorization: `Bearer ${currentToken}` },
       })
-      if (!response.ok) {
-        if (response.status === 401) {
-          logout()
-        }
-        return null
-      }
-
-      const payload = await response.json() as { user?: User }
       if (payload.user) {
         persistUser(payload.user)
         return payload.user
       }
       return null
-    } catch {
+    } catch (err) {
+      // Handle 401 specifically for logout
+      if (err instanceof Error && err.message.includes('401')) {
+        logout()
+        return null
+      }
       return user
     }
   }, [logout, persistUser, user])

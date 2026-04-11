@@ -12,6 +12,7 @@ import {
   Wand2,
 } from 'lucide-react'
 import type { ReviewState, RiskCard } from '../App'
+import { safeFetchJSON } from '../lib/apiClient'
 import dogeImage from '../assets/branding/doge.png'
 
 function handleDogeImageError(event: SyntheticEvent<HTMLImageElement>) {
@@ -150,7 +151,7 @@ export function ChatPanel({
     setExpandedCard(card.id)
 
     try {
-      const response = await fetch('/api/autofix', {
+      const data = await safeFetchJSON<{ suggestion?: string }>('/api/autofix', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -163,10 +164,6 @@ export function ChatPanel({
           legal_ref: card.legalRef,
         }),
       })
-
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-
-      const data = await response.json() as { suggestion?: string }
       setAutoFixSuggestions((prev) => ({
         ...prev,
         [card.id]: data.suggestion ?? '生成修正建议失败。',

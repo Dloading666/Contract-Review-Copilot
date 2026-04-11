@@ -1,188 +1,144 @@
-# Contract Review Copilot
+# 合规智审 Copilot
 
-面向租房与消费合同场景的 AI 审查工具。当前版本提供合同导入、OCR 提取、多阶段风险审查、人工确认断点、避坑指南报告生成、条款自动修订建议，以及基于审查结果的追问问答。
+<p align="center">
+  <img src="docs/screenshots/logo.png" alt="合规智审 Copilot" width="120">
+</p>
 
-## 当前版本状态
+<p align="center">
+  <strong>AI 智能合同审查助手 —— 让每一份租房合同都经得起推敲</strong>
+</p>
 
-- 主模型：SiliconFlow OpenAI 兼容接口
-- 审查模型：`Qwen/Qwen3.5-4B`
-- OCR 模型：`PaddlePaddle/PaddleOCR-VL-1.5`
-- 主登录方式：手机号 + 短信验证码
-- 辅助登录方式：邮箱 + 密码
-- 邮箱注册后需绑定手机号，才能使用完整合同审查
-- 审查主流程：OCR/导入 -> 实体提取 -> 法律检索路由 -> 风险扫描 -> 人工确认 -> 报告生成
+<p align="center">
+  <a href="https://ctsafe.top" target="_blank">
+    <img src="https://img.shields.io/badge/🚀%20在线体验-ctsafe.top-00C853?style=for-the-badge" alt="在线体验">
+  </a>
+  <img src="https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React">
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI">
+</p>
 
-说明：
-- README 以当前已接入的公开功能为准。
-- 仓库中如有未接入主流程的实验性或历史残留代码，不视为当前可用能力。
+---
 
-## 技术栈
+## 🎯 一句话介绍
 
-### Frontend
+**合规智审 Copilot** 是一款面向租房与消费合同场景的开源 AI 审查工具。上传合同，AI 自动识别风险条款、标注问题位置、生成避坑指南报告，帮你避开租房陷阱。
 
-- React 18
-- Vite 5
-- TypeScript
-- Vitest
+![首页截图](docs/screenshots/01-hero.png)
 
-### Backend
+---
 
-- FastAPI
-- Python 3.11
-- LangGraph StateGraph
-- PostgreSQL
-- pgvector
-- Redis
+## ✨ 核心功能
 
-### AI / OCR / 检索
+<table>
+<tr>
+<td width="50%">
 
-- SiliconFlow OpenAI 兼容接口
-- Qwen 3.5 4B
-- PaddleOCR-VL
-- DuckDuckGo Web Search
+### 📄 多格式合同导入
+- 支持 TXT / DOCX / PDF / 图片
+- 多图批量上传 OCR 识别
+- 云端 OCR 精准提取文字
 
-## 核心功能
+</td>
+<td width="50%">
 
-### 1. 合同导入
+### 🔍 多智能体审查流水线
+- **实体提取**: 识别出租方、承租方、租金、押金等关键信息
+- **风险扫描**: AI 自动检测不公平条款
+- **法律依据**: 结合内置法律知识库 + 联网搜索
+- **人工断点**: 关键风险需要确认后才继续
 
-支持以下材料格式：
+</td>
+</tr>
+<tr>
+<td width="50%">
 
-- `TXT`
-- `DOCX`
-- `PDF`
-- `JPG / JPEG / PNG / WEBP`
-- 多张合同图片批量导入
+### ⚡ 流式实时反馈
+- SSE 流式传输，审查进度实时可见
+- 每个审查阶段都有可视化展示
+- 支持追问 AI，深入理解风险条款
 
-导入入口：
+</td>
+<td width="50%">
 
-- 文本直接粘贴
-- 文件上传
-- 图片/PDF OCR 提取
+### 📊 专业报告导出
+- 一键生成「避坑指南」报告
+- 支持导出 Word 文档
+- 条款自动修订建议
 
-### 2. 审查流水线
+</td>
+</tr>
+</table>
 
-后端使用 LangGraph 编排多阶段审查流程：
+---
 
-1. `entity_extraction`
-2. `routing`
-3. `logic_review`
-4. `breakpoint`
-5. `aggregation`
+## 🖼️ 界面预览
 
-其中：
+### 智能审查界面
+AI 实时分析合同，标注风险位置，左侧展示审查进度和风险清单。
 
-- `entity_extraction`：提取出租方、承租方、租金、押金、期限等关键变量
-- `routing`：决定优先走内置法律知识检索还是外部搜索
-- `logic_review`：识别潜在不公平条款和风险点
-- `breakpoint`：在需要人工确认时暂停
-- `aggregation`：生成完整避坑指南报告
+![审查界面](docs/screenshots/02-review.png)
 
-### 3. SSE 流式审查体验
+> 上图展示了 AI 识别到「责任条款冲突」和「押金条款缺失」两类风险，并在右侧 PDF 中精确标注问题位置。
 
-前端通过 SSE 接收后端流式事件，实时刷新审查状态。
+---
 
-当前主要事件包括：
+## 🏗️ 系统架构
 
-- `review_started`
-- `entity_extraction`
-- `routing`
-- `rag_retrieval`
-- `logic_review`
-- `breakpoint`
-- `stream_resume`
-- `final_report`
-- `review_complete`
-- `error`
-
-### 4. 人工确认断点
-
-当系统识别到需要先确认的风险时，会在 `breakpoint` 阶段暂停。
-
-用户可以：
-
-- 结束当前流程
-- 确认继续，生成完整避坑指南报告
-
-### 5. 报告导出
-
-支持将完整审查报告导出为 Word 文档：
-
-- `POST /api/review/export-docx`
-
-### 6. 条款自动修订建议
-
-对于单条风险项，前端可调用自动修订接口生成更合理的条款建议：
-
-- `POST /api/autofix`
-
-### 7. 审查后问答
-
-报告生成完成后，可基于：
-
-- 合同原文节选
-- 已识别风险摘要
-
-继续进行问答追问：
-
-- `POST /api/chat`
-
-## 当前认证方式
-
-### 主流程
-
-- 手机号发送验证码：`POST /api/auth/phone/send-code`
-- 手机号验证码登录：`POST /api/auth/phone/login`
-- 绑定手机号：`POST /api/auth/phone/bind`
-
-### 辅助流程
-
-- 邮箱发送验证码：`POST /api/auth/send-code`
-- 邮箱注册：`POST /api/auth/register`
-- 邮箱密码登录：`POST /api/auth/login`
-
-### 当前限制
-
-- 未绑定手机号的账号不能使用完整合同审查
-- `/api/review` 与 `/api/chat` 都要求用户已登录
-- `/api/review` 进一步要求手机号已绑定并验证
-
-## 项目结构
-
-```text
-Contract-Review-Copilot/
-├─ backend/
-│  ├─ src/
-│  │  ├─ agents/              # 实体提取、路由、风险审查、断点、报告生成
-│  │  ├─ graph/               # LangGraph 审查流程
-│  │  ├─ ocr/                 # OCR 导入与文件解析
-│  │  ├─ providers/           # 外部服务 Provider
-│  │  ├─ search/              # DuckDuckGo 检索
-│  │  ├─ vectorstore/         # pgvector / 内置法律知识
-│  │  ├─ auth.py              # 登录、验证码、JWT
-│  │  ├─ llm_client.py        # 单模型 LLM 调用入口
-│  │  ├─ main.py              # FastAPI API 与 SSE
-│  │  └─ schemas.py           # 请求响应模型
-│  └─ tests/
-├─ frontend/
-│  ├─ src/
-│  │  ├─ components/          # 审查面板、聊天面板、断点卡片等
-│  │  ├─ contexts/            # AuthContext
-│  │  ├─ hooks/               # useStreamingReview
-│  │  ├─ lib/                 # SSE、历史记录、导出
-│  │  ├─ pages/               # Login / Register / Settings
-│  │  └─ App.tsx
-├─ docs/
-├─ docker-compose.yml
-└─ README.md
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        前端 (React 18)                       │
+│  ┌────────────┐  ┌────────────┐  ┌──────────────────────┐   │
+│  │ 合同上传   │  │ 流式展示   │  │ 风险交互 / 问答      │   │
+│  └────────────┘  └────────────┘  └──────────────────────┘   │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ SSE
+┌──────────────────────────┴──────────────────────────────────┐
+│                     后端 (FastAPI)                          │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │              LangGraph 多智能体流水线                 │   │
+│  │  ┌─────────┐   ┌─────────┐   ┌──────────┐           │   │
+│  │  │ 实体提取 │ → │ 路由决策 │ → │ 风险审查  │           │   │
+│  │  └─────────┘   └─────────┘   └──────────┘           │   │
+│  │                                    ↓                 │   │
+│  │  ┌─────────┐   ┌─────────┐   ┌──────────┐           │   │
+│  │  │ 人工断点 │ ← │ 聚合报告 │ ← │ 逻辑审查  │           │   │
+│  │  └─────────┘   └─────────┘   └──────────┘           │   │
+│  └──────────────────────────────────────────────────────┘   │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+        ┌──────────────────┼──────────────────┐
+        ↓                  ↓                  ↓
+   ┌─────────┐      ┌─────────┐       ┌──────────┐
+   │PostgreSQL│      │  Redis  │       │Moonshot  │
+   │+ pgvector│      │  缓存   │       │  Kimi API│
+   └─────────┘      └─────────┘       └──────────┘
 ```
 
-## 本地开发
+---
 
-### 1. 启动依赖服务
+## 🚀 快速开始
 
-如果你本地已经有 PostgreSQL 和 Redis，可直接复用；否则可用 Docker 单独起依赖。
+### 在线体验
 
-### 2. 后端
+直接访问 **https://ctsafe.top** 免费使用，无需安装。
+
+### 本地开发
+
+#### 1. 克隆项目
+
+```bash
+git clone https://github.com/Dloading666/Contract-Review-Copilot.git
+cd Contract-Review-Copilot
+```
+
+#### 2. 启动依赖服务
+
+```bash
+# 使用 Docker 启动 PostgreSQL + Redis
+docker compose up -d postgres redis
+```
+
+#### 3. 启动后端
 
 ```bash
 cd backend
@@ -190,7 +146,7 @@ pip install -e .
 uvicorn src.main:app --reload --port 8000
 ```
 
-### 3. 前端
+#### 4. 启动前端
 
 ```bash
 cd frontend
@@ -198,94 +154,120 @@ npm install
 npm run dev
 ```
 
-默认访问：
+访问 http://localhost:3000
 
-- Frontend: [http://localhost:3000](http://localhost:3000)
-- Backend: [http://localhost:8000](http://localhost:8000)
+---
 
-## Docker
+## ⚙️ 环境变量
 
-项目仍然保留完整的 Docker Compose 编排：
+创建 `backend/.env` 文件：
 
-```bash
-docker compose up --build
+```env
+# LLM API (Moonshot Kimi)
+OPENAI_API_KEY=your-moonshot-api-key
+OPENAI_BASE_URL=https://api.moonshot.cn/v1
+REVIEW_MODEL=kimi-latest
+
+# 数据库
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/contract_review
+REDIS_URL=redis://localhost:6379/0
+
+# 认证
+JWT_SECRET=your-secret-key
+
+# 阿里云短信（可选，用于手机号登录）
+ALIYUN_SMS_ACCESS_KEY_ID=your-key
+ALIYUN_SMS_ACCESS_KEY_SECRET=your-secret
+ALIYUN_SMS_SIGN_NAME=你的签名
 ```
 
-默认会启动：
+---
 
-- `frontend`
-- `backend`
-- `postgres`
-- `redis`
+## 📁 项目结构
 
-## 环境变量
+```
+Contract-Review-Copilot/
+├── backend/                    # Python FastAPI 后端
+│   ├── src/
+│   │   ├── agents/             # 多智能体模块
+│   │   ├── graph/              # LangGraph 工作流
+│   │   ├── vectorstore/        # PGVector 向量存储
+│   │   ├── search/             # DuckDuckGo 搜索
+│   │   ├── main.py             # FastAPI 入口
+│   │   └── auth.py             # 用户认证
+│   └── tests/                  # pytest 测试
+├── frontend/                   # React + TypeScript 前端
+│   ├── src/
+│   │   ├── components/         # UI 组件
+│   │   ├── hooks/              # 自定义 Hooks
+│   │   └── pages/              # 页面组件
+│   └── dist/                   # 构建输出
+├── sample_contracts/           # 测试合同文件
+└── docs/                       # 技术文档
+```
 
-主要环境变量示例见：
+---
 
-- `backend/.env.example`
-
-其中最核心的是：
-
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `REVIEW_MODEL`
-- `OCR_MODEL`
-- `DATABASE_URL`
-- `REDIS_URL`
-- `JWT_SECRET` 或 `JWT_SECRET_FILE`
-- `ALIYUN_SMS_*`
-
-如果需要邮箱注册能力，还需要配置：
-
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_USER`
-- `SMTP_PASSWORD`
-- `FROM_EMAIL`
-
-## 测试
-
-### Frontend
+## 🧪 测试
 
 ```bash
+# 后端测试
+cd backend
+pytest
+
+# 前端测试
 cd frontend
 npm run test
 ```
 
-### Backend
+---
 
-```bash
-cd backend
-pytest
-```
+## 🛠️ 技术栈
 
-## 当前公开 API 概览
+| 层级 | 技术 |
+|------|------|
+| 前端 | React 18 + Vite 5 + TypeScript + Tailwind CSS |
+| 后端 | Python 3.11 + FastAPI + LangGraph |
+| LLM | Moonshot Kimi API |
+| 向量检索 | PostgreSQL + pgvector |
+| 缓存 | Redis |
+| OCR | 云端 OCR 服务 |
+| 搜索 | DuckDuckGo |
 
-### Auth
+---
 
-- `POST /api/auth/send-code`
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `POST /api/auth/phone/send-code`
-- `POST /api/auth/phone/login`
-- `POST /api/auth/phone/bind`
-- `GET /api/auth/me`
+## 🤝 贡献指南
 
-### Review / OCR / Chat
+我们欢迎所有形式的贡献！
 
-- `GET /health`
-- `GET /api/models`
-- `POST /api/ocr/ingest`
-- `POST /api/ocr`
-- `POST /api/ocr/extract`
-- `POST /api/review`
-- `POST /api/review/confirm/{session_id}`
-- `POST /api/review/export-docx`
-- `POST /api/autofix`
-- `POST /api/chat`
+1. **Fork** 本仓库
+2. 创建你的 **Feature Branch** (`git checkout -b feature/AmazingFeature`)
+3. **Commit** 你的更改 (`git commit -m 'feat: add some AmazingFeature'`)
+4. **Push** 到分支 (`git push origin feature/AmazingFeature`)
+5. 打开 **Pull Request**
 
-## 开发说明
+---
 
-- 当前项目对外能力以 `backend/src/main.py` 与 `frontend/src/App.tsx` 实际接入为准
-- README 只记录主流程已接通能力，不记录未接到前端或未暴露 API 的历史残留模块
-- 若后续重新启用商业化、钱包或支付，请以实际接入状态为准补充文档
+## 📜 License
+
+本项目基于 [MIT License](LICENSE) 开源。
+
+---
+
+## 🙏 致谢
+
+- [LangGraph](https://github.com/langchain-ai/langgraph) - 多智能体工作流编排
+- [Moonshot AI](https://www.moonshot.cn/) - Kimi 大模型支持
+- [FastAPI](https://fastapi.tiangolo.com/) - 高性能 Python Web 框架
+
+---
+
+<p align="center">
+  <strong>如果觉得项目有帮助，请给我们点个 ⭐ Star！</strong>
+</p>
+
+<p align="center">
+  <a href="https://ctsafe.top" target="_blank">在线体验</a> •
+  <a href="https://github.com/Dloading666/Contract-Review-Copilot/issues">问题反馈</a> •
+  <a href="https://github.com/Dloading666/Contract-Review-Copilot/discussions">社区讨论</a>
+</p>

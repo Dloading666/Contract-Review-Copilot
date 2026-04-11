@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, BadgeCheck, KeyRound, Mail, ShieldCheck } from 'lucide-react'
 import type { User } from '../contexts/AuthContext'
+import { safeFetchJSON } from '../lib/apiClient'
 
 interface SettingsPageProps {
   user: User
@@ -72,12 +73,12 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
     setDevCode('')
 
     try {
-      const response = await fetch('/api/auth/security/send-password-code', {
+      const payload = await safeFetchJSON<PasswordCodeResponse>('/api/auth/security/send-password-code', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       })
-      const payload = await response.json() as PasswordCodeResponse
-      if (!response.ok || !payload.success) {
+
+      if (!payload.success) {
         throw new Error(payload.error || '验证码发送失败，请稍后重试。')
       }
 
@@ -118,7 +119,7 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
     setIsSubmitting(true)
 
     try {
-      const response = await fetch('/api/auth/security/reset-password', {
+      const payload = await safeFetchJSON<PasswordResetResponse>('/api/auth/security/reset-password', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -129,8 +130,8 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
           new_password: newPassword,
         }),
       })
-      const payload = await response.json() as PasswordResetResponse
-      if (!response.ok || !payload.success) {
+
+      if (!payload.success) {
         throw new Error(payload.error || '密码修改失败，请稍后重试。')
       }
 

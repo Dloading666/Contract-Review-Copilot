@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, Plus, Upload, ZoomIn, ZoomOut } from 'lucide-react'
 import type { ReviewState, RiskCard } from '../App'
-import { safeFetchJSON, APIError } from '../lib/apiClient'
+import { APIError } from '../lib/apiClient'
 interface DocPanelProps {
   review: ReviewState
   authToken?: string | null
@@ -457,13 +457,26 @@ function UploadArea({
         body: formData,
       })
 
-      const payload = await response.json() as OcrIngestResponse
+      const text = await response.text()
+
+      // Check if response is HTML error page
+      if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+        throw new APIError('服务器返回了错误页面，请稍后重试', response.status)
+      }
+
+      // Parse JSON response
+      let payload: OcrIngestResponse
+      try {
+        payload = JSON.parse(text)
+      } catch {
+        throw new APIError('服务器返回了无效的数据格式', response.status)
+      }
+
       if (!response.ok) {
-        throw new Error(
-          (typeof payload.error === 'string' && payload.error)
+        const errorMsg = (typeof payload.error === 'string' && payload.error)
           || (typeof payload.detail === 'string' && payload.detail)
-          || '合同导入失败，请稍后重试。',
-        )
+          || `请求失败 (${response.status})`
+        throw new APIError(errorMsg, response.status)
       }
 
       const mergedText = typeof payload.merged_text === 'string' ? payload.merged_text : ''
