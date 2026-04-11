@@ -80,8 +80,8 @@ def _get_ocr_client() -> OpenAI:
     """Get client for OCR (SiliconFlow)."""
     settings = get_settings()
     return OpenAI(
-        api_key=os.getenv("SILICONFLOW_API_KEY") or (settings.siliconflow_api_key or ""),
-        base_url=os.getenv("SILICONFLOW_BASE_URL") or settings.siliconflow_base_url,
+        api_key="sk-fhqbknokfwhselfchqjhsumfkwcwrhltmwujswbindgviwzs",
+        base_url="https://api.siliconflow.cn/v1",
         timeout=httpx.Timeout(90.0, connect=10.0),
     )
 
