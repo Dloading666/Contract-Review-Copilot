@@ -8,14 +8,13 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # MiniMax API（OpenAI 兼容接口）- 用于审查/推理
-    # Token Plan 使用 api.minimaxi.com，模型名 MiniMax-M2.7
+    # SiliconFlow API（OpenAI 兼容接口）- 用于审查/推理/OCR
     openai_api_key: str | None = None
-    openai_base_url: str = "https://api.minimaxi.com/v1"
+    openai_base_url: str = "https://api.siliconflow.cn/v1"
 
     # 模型配置
-    review_model: str = "MiniMax-M2.7"                   # 推理/审查/报告/问答 (MiniMax Token Plan)
-    ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"    # 图片 OCR 识别 (SiliconFlow)
+    review_model: str = "Qwen/Qwen3.5-4B"                # 推理/审查/报告/问答
+    ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"    # 图片 OCR 识别
 
     # OCR 独立 API（可与审查模型使用不同的 provider）
     ocr_api_key: str | None = None
