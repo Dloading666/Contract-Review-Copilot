@@ -67,10 +67,10 @@ def get_primary_model_key() -> str:
 
 
 def _get_client() -> OpenAI:
-    """Get client for review/chat (MiniMax)."""
+    """Get client for review/chat (SiliconFlow)."""
     settings = get_settings()
     return OpenAI(
-        api_key=os.getenv("OPENAI_API_KEY") or (settings.openai_api_key or ""),
+        api_key=os.getenv("OPENAI_API_KEY") or settings.openai_api_key or "sk-fhqbknokfwhselfchqjhsumfkwcwrhltmwujswbindgviwzs",
         base_url=os.getenv("OPENAI_BASE_URL") or settings.openai_base_url,
         timeout=httpx.Timeout(60.0, connect=10.0),
     )
