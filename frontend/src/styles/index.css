@@ -2860,6 +2860,7 @@ body.landing-page-active h4 {
     flex-direction: column;
     height: 100dvh;
     min-height: 100dvh;
+    overflow: hidden;
   }
 
   .mobile-panel-tabs {
@@ -2870,6 +2871,8 @@ body.landing-page-active h4 {
   .workspace {
     grid-template-columns: 1fr;
     grid-template-rows: 1fr;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .workspace__panel--hidden {
@@ -2880,11 +2883,118 @@ body.landing-page-active h4 {
   .app-layout > div {
     box-sizing: border-box;
     padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+    min-height: 0;
   }
 
   .fab {
     bottom: calc(112px + env(safe-area-inset-bottom, 0px));
     right: 16px;
+  }
+
+  .chat-panel,
+  .doc-panel {
+    min-height: 0;
+    height: 100%;
+  }
+
+  .doc-panel__toolbar {
+    height: auto;
+    min-height: 56px;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .doc-panel__toolbar-left,
+  .doc-panel__toolbar-right {
+    min-width: 0;
+  }
+
+  .doc-panel__toolbar-right {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .doc-panel__filename {
+    overflow-wrap: anywhere;
+  }
+
+  .doc-panel__content {
+    justify-content: flex-start;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y pinch-zoom;
+    padding: 22px 16px 28px;
+  }
+
+  .doc-paper {
+    width: 680px;
+    max-width: none;
+    padding: 30px 28px;
+    box-shadow: 6px 6px 0 rgba(0,0,0,1);
+  }
+
+  .doc-paper--editable {
+    width: 680px;
+  }
+
+  .doc-editor__textarea {
+    min-width: 560px;
+    min-height: 420px;
+  }
+
+  .doc-panel__footer {
+    height: auto;
+    min-height: 48px;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .doc-panel__footer-left,
+  .doc-panel__footer-right {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .account-page {
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px 14px calc(32px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .account-page__header {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .account-page__back {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .account-card {
+    padding: 16px;
+  }
+
+  .account-card__row {
+    flex-direction: column;
+  }
+
+  .account-security__row {
+    align-items: stretch;
+  }
+
+  .account-security__row .account-card__cta,
+  .account-security__submit {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .account-security__actions {
+    justify-content: stretch;
   }
 }
 

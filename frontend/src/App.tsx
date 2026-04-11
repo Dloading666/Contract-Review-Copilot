@@ -429,6 +429,7 @@ export default function App() {
 
   const startReview = useCallback((text: string, filename: string) => {
     const sessionId = createSessionId()
+    setMobileDocVisible(false)
     setStreamContractText(text)
     setReview({
       ...createInitialState(sessionId),
@@ -445,6 +446,7 @@ export default function App() {
 
   const handleOcrReady = useCallback((text: string, filename: string, warnings: string[] = []) => {
     const nextSessionId = createSessionId()
+    setMobileDocVisible(true)
     setStreamContractText('')
     setReview({
       ...createInitialState(nextSessionId),

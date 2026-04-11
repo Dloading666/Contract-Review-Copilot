@@ -129,6 +129,60 @@ def test_extract_text_from_image_rejects_repetitive_blank_template_after_retry(m
         )
 
 
+def test_extract_text_from_image_rejects_repeated_underscore_placeholders_after_retry(monkeypatch):
+    responses = [
+        _FakeResponse(("一个月 从____年____月____日\n" * 8).strip(), "ocr-model"),
+        _FakeResponse(("一个月 从____年____月____日\n" * 8).strip(), "ocr-model"),
+    ]
+
+    class _FakeCompletions:
+        @staticmethod
+        def create(**kwargs):
+            return responses.pop(0)
+
+    class _FakeClient:
+        chat = type("Chat", (), {"completions": _FakeCompletions()})()
+
+    monkeypatch.setattr(llm_client, "_get_client", lambda: _FakeClient())
+
+    with pytest.raises(RuntimeError, match="空白模板"):
+        llm_client.extract_text_from_image(
+            image_bytes=b"fake-image",
+            mime_type="image/png",
+            filename="contract.png",
+        )
+
+
+def test_extract_text_from_image_rejects_non_contract_noise_after_retry(monkeypatch):
+    noise = "\n".join([
+        "おすすめ シャンプー ランキング",
+        "ヘア トリートメント レビュー",
+        "商品 価格 Amazon 楽天",
+        "口コミ 人気 美容",
+    ] * 3)
+    responses = [
+        _FakeResponse(noise, "ocr-model"),
+        _FakeResponse(noise, "ocr-model"),
+    ]
+
+    class _FakeCompletions:
+        @staticmethod
+        def create(**kwargs):
+            return responses.pop(0)
+
+    class _FakeClient:
+        chat = type("Chat", (), {"completions": _FakeCompletions()})()
+
+    monkeypatch.setattr(llm_client, "_get_client", lambda: _FakeClient())
+
+    with pytest.raises(RuntimeError, match="非合同噪音"):
+        llm_client.extract_text_from_image(
+            image_bytes=b"fake-image",
+            mime_type="image/png",
+            filename="contract.png",
+        )
+
+
 def test_normalize_image_mime_type_rejects_unsupported_types():
     with pytest.raises(ValueError, match="JPG"):
         llm_client.normalize_image_mime_type("application/pdf", "contract.pdf")

@@ -175,10 +175,16 @@ describe('DocPanel', () => {
 
     const textarea = container.querySelector('.doc-editor__textarea') as HTMLTextAreaElement
     const confirmButton = container.querySelector('.doc-panel__footer-right .px-btn--green') as HTMLButtonElement
+    const zoomButtons = container.querySelectorAll('.doc-panel__zoom-btn')
 
     expect(textarea.value).toBe('甲方：张三\n乙方：李四')
     expect(getByText('第 1 页 OCR 失败：vision OCR unavailable')).not.toBeNull()
     expect(confirmButton.disabled).toBe(false)
+    expect(container.querySelector('.doc-panel__zoom-level')?.textContent).toBe('100%')
+
+    fireEvent.click(zoomButtons[1] as HTMLButtonElement)
+    expect(container.querySelector('.doc-panel__zoom-level')?.textContent).toBe('110%')
+    expect(textarea.style.fontSize).toBe('16.5px')
 
     fireEvent.change(textarea, { target: { value: '修订后的 OCR 文本' } })
     fireEvent.click(confirmButton)

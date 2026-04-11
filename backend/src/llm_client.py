@@ -19,6 +19,7 @@ from .config import get_settings
 
 DEFAULT_MODEL_KEY = "review"
 FALLBACK_MODEL_KEY = DEFAULT_MODEL_KEY
+OCR_UNREADABLE_MARKER = "OCR_UNREADABLE_CONTRACT_IMAGE"
 
 SUPPORTED_IMAGE_MIME_TYPES = {
     "image/jpeg",
@@ -27,17 +28,21 @@ SUPPORTED_IMAGE_MIME_TYPES = {
 }
 
 DEFAULT_OCR_PROMPT = (
+    "你正在为合同审查系统做 OCR。"
     "请只逐字提取这张合同图片中真实可见的文字，严格按从上到下、从左到右的阅读顺序输出。"
     "尽量保留原有段落、换行、表格行、条款编号和标点。"
     "严禁总结、解释、改写、补充、猜测或生成图片中不存在的合同模板字段。"
+    "严禁把空白合同模板补全成“一个月 从____年____月____日”等重复占位内容。"
     "如果图片里某个字段为空白，不要输出该空白字段；如果看不清，用“□”标记。"
+    f"如果图片不是合同、主要内容不是合同文字，或合同文字严重模糊不可读，请只输出 {OCR_UNREADABLE_MARKER}。"
     "不要输出 Markdown 标题、列表解释或代码块。"
 )
 
 STRICT_OCR_PROMPT = (
     "重新识别这张合同图片。你现在只允许输出图片中确实能看见的原始文字。"
     "严禁根据合同常见格式补全“地址：”“签约日期：”“甲方：”“乙方：”等空白字段。"
-    "严禁重复输出同一个短标签；如果某个标签后没有可见内容，就不要输出这一行。"
+    "严禁重复输出同一个短标签；严禁输出重复下划线占位字段；如果某个标签后没有可见内容，就不要输出这一行。"
+    f"如果这不是合同页，或无法看清合同正文，请只输出 {OCR_UNREADABLE_MARKER}。"
     "保持自然阅读顺序和换行，不要解释，不要总结，不要 Markdown。"
 )
 
@@ -127,23 +132,53 @@ def _sanitize_ocr_text(text: str) -> str:
     return sanitized.strip()
 
 
+def _is_unreadable_ocr_marker(text: str) -> bool:
+    return OCR_UNREADABLE_MARKER in text.strip()
+
+
 def _is_suspicious_repetitive_ocr_text(text: str) -> bool:
     """Detect likely OCR hallucinations such as repeated blank form labels."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if len(lines) < 6:
+    if len(lines) < 4:
         return False
 
     blank_label_pattern = re.compile(
         r"^(地址|签约日期|日期|联系电话|电话|手机号|身份证号|姓名|甲方|乙方|出租方|承租方|签字|盖章)\s*[:：]\s*[□_\-\s]*$"
     )
+    placeholder_line_pattern = re.compile(
+        r"(?:_{2,}|□{2,}|从\s*[□_\-\s]*年\s*[□_\-\s]*月\s*[□_\-\s]*日|[□_\-\s]{6,})"
+    )
+    normalized_lines = [re.sub(r"\s+", " ", line) for line in lines]
     blank_label_lines = [line for line in lines if blank_label_pattern.match(line)]
-    repeated_line_count = max((lines.count(line) for line in set(lines)), default=0)
+    placeholder_lines = [line for line in lines if placeholder_line_pattern.search(line)]
+    template_lines = [line for line in lines if blank_label_pattern.match(line) or placeholder_line_pattern.search(line)]
+    repeated_line_count = max((normalized_lines.count(line) for line in set(normalized_lines)), default=0)
+    template_line_ratio = len(template_lines) / len(lines)
     label_only_ratio = len(blank_label_lines) / len(lines)
-    unique_visible_chars = len(set(re.sub(r"\s|[:：□_\-]", "", text)))
+    meaningful_text = re.sub(r"\s|[:：□_\-—年月日从至\.．/\\|,，。；;、（）()]", "", text)
+    unique_visible_chars = len(set(meaningful_text))
+    contract_signal_count = len(re.findall(
+        r"(合同|协议|甲方|乙方|出租|承租|租赁|押金|租金|违约|条款|签订|签约|身份证|联系方式|民法典|中介|委托|付款|金额|费用|保证金)",
+        text,
+    ))
+    kana_count = len(re.findall(r"[\u3040-\u30ff\u31f0-\u31ff]", text))
+    non_contract_noise = re.search(
+        r"(ヘア|シャンプー|トリートメント|おすすめ|ランキング|レビュー|口コミ|商品|価格|Amazon|楽天)",
+        text,
+        flags=re.IGNORECASE,
+    )
 
     if len(blank_label_lines) >= 6 and label_only_ratio >= 0.45:
         return True
-    if repeated_line_count >= 4 and unique_visible_chars <= 30:
+    if len(placeholder_lines) >= 4 and template_line_ratio >= 0.35:
+        return True
+    if repeated_line_count >= 4 and (unique_visible_chars <= 36 or repeated_line_count / len(lines) >= 0.35):
+        return True
+    if len(meaningful_text) >= 80 and contract_signal_count == 0:
+        return True
+    if kana_count >= 20 and contract_signal_count < 2:
+        return True
+    if non_contract_noise and contract_signal_count < 2:
         return True
     return False
 
@@ -214,14 +249,18 @@ def extract_text_from_image(
     if not extracted_text:
         raise RuntimeError(f"{model_id} 未返回可用的 OCR 文本。")
 
-    if _is_suspicious_repetitive_ocr_text(extracted_text):
+    if _is_unreadable_ocr_marker(extracted_text) or _is_suspicious_repetitive_ocr_text(extracted_text):
         retry_response = run_ocr(STRICT_OCR_PROMPT)
         retry_text = _sanitize_ocr_text(_extract_response_text(retry_response))
-        if retry_text and not _is_suspicious_repetitive_ocr_text(retry_text):
+        if (
+            retry_text
+            and not _is_unreadable_ocr_marker(retry_text)
+            and not _is_suspicious_repetitive_ocr_text(retry_text)
+        ):
             response = retry_response
             extracted_text = retry_text
         else:
-            raise RuntimeError("OCR 结果疑似为模型补全的空白模板，请上传更清晰的原图，或手动输入合同文字。")
+            raise RuntimeError("OCR 结果疑似为模型补全的空白模板或非合同噪音，请上传更清晰的合同原图，或手动输入合同文字。")
 
     used_model = getattr(response, "model", model_id) or model_id
     print(f"[LLM] OCR using model: {used_model}", flush=True)

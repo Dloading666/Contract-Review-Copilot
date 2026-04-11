@@ -285,25 +285,23 @@ export function DocPanel({
                 </button>
               )}
 
-              {!isOcrReady && (
-                <div className="doc-panel__zoom-group">
-                  <button
-                    className="doc-panel__zoom-btn"
-                    onClick={() => setZoom((value) => Math.max(50, value - 10))}
-                    title="缩小"
-                  >
-                    <ZoomOut size={14} />
-                  </button>
-                  <span className="doc-panel__zoom-level">{zoom}%</span>
-                  <button
-                    className="doc-panel__zoom-btn"
-                    onClick={() => setZoom((value) => Math.min(200, value + 10))}
-                    title="放大"
-                  >
-                    <ZoomIn size={14} />
-                  </button>
-                </div>
-              )}
+              <div className="doc-panel__zoom-group">
+                <button
+                  className="doc-panel__zoom-btn"
+                  onClick={() => setZoom((value) => Math.max(50, value - 10))}
+                  title="缩小"
+                >
+                  <ZoomOut size={14} />
+                </button>
+                <span className="doc-panel__zoom-level">{zoom}%</span>
+                <button
+                  className="doc-panel__zoom-btn"
+                  onClick={() => setZoom((value) => Math.min(200, value + 10))}
+                  title="放大"
+                >
+                  <ZoomIn size={14} />
+                </button>
+              </div>
 
               <button
                 className="doc-panel__icon-btn"
@@ -325,7 +323,7 @@ export function DocPanel({
             onOcrReady={onOcrReady}
           />
         ) : isOcrReady ? (
-          <div className="doc-paper doc-paper--editable">
+          <div className="doc-paper doc-paper--editable" style={{ fontSize: `${zoom}%` }}>
             <div className="doc-editor__heading">合同识别结果</div>
             <p className="doc-editor__hint">
               识别结果已经回填到右侧文档区。请先检查并修正错字、漏字或页序问题，再点击“确认并开始分析”。
@@ -343,6 +341,7 @@ export function DocPanel({
               className="doc-editor__textarea"
               value={contractText}
               onChange={(event) => onContractTextChange(event.target.value)}
+              style={{ fontSize: `${15 * zoom / 100}px` }}
               spellCheck={false}
             />
           </div>
