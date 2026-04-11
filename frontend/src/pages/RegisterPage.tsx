@@ -10,6 +10,7 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [countdown, setCountdown] = useState(0)
   const [sendingCode, setSendingCode] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -60,8 +61,12 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
-    if (!email.trim() || !code.trim() || !password.trim()) {
+    if (!email.trim() || !code.trim() || !password.trim() || !confirmPassword.trim()) {
       setError('请填写完整信息')
+      return
+    }
+    if (password !== confirmPassword) {
+      setError('两次输入的密码不一致，请重新确认')
       return
     }
 
@@ -83,7 +88,8 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
         setError(payload.error || '注册失败')
         return
       }
-      setSuccess('邮箱账户创建成功，请返回登录。')
+      setSuccess('注册成功！即将跳转到登录页...')
+      setTimeout(() => onNavigateLogin(), 1500)
     } catch {
       setError('网络错误，请稍后重试')
     } finally {
@@ -153,6 +159,19 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
                   placeholder="至少 6 位"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
+                />
+              </div>
+            </label>
+
+            <label className="auth-field">
+              <span className="auth-field__label">确认密码</span>
+              <div className="auth-field__control">
+                <input
+                  type="password"
+                  className="pixel-input pixel-input--literal auth-field__input auth-field__input--plain"
+                  placeholder="再次输入密码"
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
                 />
               </div>
             </label>
