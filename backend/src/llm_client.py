@@ -28,24 +28,25 @@ SUPPORTED_IMAGE_MIME_TYPES = {
 }
 
 DEFAULT_OCR_PROMPT = (
-    “你正在为合同审查系统做 OCR。”
-    “请只逐字提取这张合同图片中真实可见的文字，严格按从上到下、从左到右的阅读顺序输出。”
-    “尽量保留原有段落、换行、表格行、条款编号和标点。”
-    “严禁总结、解释、改写、补充、猜测或生成图片中不存在的合同模板字段。”
-    “严禁把空白合同模板补全成'一个月 从____年____月____日'等重复占位内容。”
-    “如果图片里某个字段为空白（如'门锁: ___'中横线后无内容），不要输出该空白字段；如果看不清，用'□'标记。”
-    “【重要】严禁重复输出同一字段名称（如'门锁:'、'地址:'）超过 1 次。即使该字段在图片中真实出现多次，也不得连续重复输出。”
-    “【重要】严禁输出重复的下划线占位符行（如'___'、'____'），遇到连续相同的占位行只需输出一次。”
-    f”如果图片不是合同、主要内容不是合同文字，或合同文字严重模糊不可读，请只输出 {OCR_UNREADABLE_MARKER}。”
-    “不要输出 Markdown 标题、列表解释或代码块。”
+    “You are performing OCR for a contract review system. “
+    “Extract only the text actually visible in this contract image, strictly in top-to-bottom, left-to-right reading order. “
+    “Preserve original paragraphs, line breaks, table rows, clause numbers, and punctuation. “
+    “Never summarize, explain, rewrite, supplement, guess, or generate contract template fields not present in the image. “
+    “Never fill in blank contract templates with repeated placeholder content like dates or blank lines. “
+    “If a field is blank in the image (e.g. a label followed by blank lines), do not output that field. Mark unreadable text with the symbol [?]. “
+    “IMPORTANT: Never output the same field name (e.g. the same label like a room item label) more than 2 times. “
+    “IMPORTANT: Never output repeated blank placeholder lines. If the same line repeats more than 3 times, output it once only. “
+    f”If the image is not a contract, or the contract text is severely blurry and unreadable, output only: {OCR_UNREADABLE_MARKER}. “
+    “Do not output Markdown headings, bullet lists, explanations, or code blocks.”
 )
 
 STRICT_OCR_PROMPT = (
-    "重新识别这张合同图片。你现在只允许输出图片中确实能看见的原始文字。"
-    "严禁根据合同常见格式补全“地址：”“签约日期：”“甲方：”“乙方：”等空白字段。"
-    "严禁重复输出同一个短标签；严禁输出重复下划线占位字段；如果某个标签后没有可见内容，就不要输出这一行。"
-    f"如果这不是合同页，或无法看清合同正文，请只输出 {OCR_UNREADABLE_MARKER}。"
-    "保持自然阅读顺序和换行，不要解释，不要总结，不要 Markdown。"
+    “Re-examine this contract image. You may only output text that is genuinely visible in the image. “
+    “Do not fill in blank fields such as address, date, party names, or signature lines based on common contract formats. “
+    “Do not repeat the same short label. Do not output repeated blank placeholder lines. “
+    “If a label has no visible content after it, skip that line entirely. “
+    f”If this is not a contract page or the text is unreadable, output only: {OCR_UNREADABLE_MARKER}. “
+    “Maintain natural reading order. No explanations, no summaries, no Markdown.”
 )
 
 OCR_CORRECTION_SYSTEM_PROMPT = (
