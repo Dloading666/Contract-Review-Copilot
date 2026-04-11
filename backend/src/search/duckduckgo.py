@@ -32,7 +32,7 @@ def search_web(query: str, max_results: int = 5) -> list[dict]:
 
     try:
         results = []
-        with DDGS() as ddgs:
+        with DDGS(timeout=8) as ddgs:
             for r in ddgs.text(query, max_results=max_results):
                 results.append({
                     "title": r.get("title", ""),
@@ -111,8 +111,9 @@ def build_search_context(routing: dict, entities: dict) -> str:
 5. 《最高人民法院关于审理民间借贷案件适用法律若干问题的规定》第二十五条：借贷双方约定的利率超过合同成立时一年期贷款市场报价利率四倍的，超出部分人民法院不予支持。
 """)
 
-    # If secondary source is duckduckgo, perform real searches
+    # If secondary source is duckduckgo, perform real searches (best-effort, skip on failure)
     if routing.get("secondary_source") == "duckduckgo":
+        import concurrent.futures
         search_queries = []
 
         # Add queries based on legal focus
@@ -130,9 +131,15 @@ def build_search_context(routing: dict, entities: dict) -> str:
         elif local_context and "上海" in local_context:
             search_queries.append("上海市房屋租赁管理规定 押金")
 
-        # Perform searches and append results
-        for q in search_queries:
-            result = search_legal(q)
-            context_parts.append(f"\n{result}\n")
+        # Perform searches with a hard outer timeout to avoid hanging
+        for q in search_queries[:2]:
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(search_legal, q)
+                    result = future.result(timeout=10)
+                context_parts.append(f"\n{result}\n")
+            except Exception as e:
+                print(f"[DuckDuckGo] Skipping search '{q}': {e}")
+                continue
 
     return "\n".join(context_parts)
