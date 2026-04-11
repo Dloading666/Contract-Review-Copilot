@@ -29,24 +29,27 @@ SUPPORTED_IMAGE_MIME_TYPES = {
 
 DEFAULT_OCR_PROMPT = (
     "You are performing OCR for a contract review system. "
-    "Extract only the text actually visible in this contract image, strictly in top-to-bottom, left-to-right reading order. "
-    "Preserve original paragraphs, line breaks, table rows, clause numbers, and punctuation. "
-    "Never summarize, explain, rewrite, supplement, guess, or generate contract template fields not present in the image. "
-    "Never fill in blank contract templates with repeated placeholder content like dates or blank lines. "
-    "If a field is blank in the image (e.g. a label followed by blank lines), do not output that field. Mark unreadable text with the symbol [?]. "
-    "IMPORTANT: Never output the same field name (e.g. the same label like a room item label) more than 2 times. "
-    "IMPORTANT: Never output repeated blank placeholder lines. If the same line repeats more than 3 times, output it once only. "
-    f"If the image is not a contract, or the contract text is severely blurry and unreadable, output only: {OCR_UNREADABLE_MARKER}. "
-    "Do not output Markdown headings, bullet lists, explanations, or code blocks."
+    "Extract only the text that is actually printed or handwritten in this image. "
+    "Preserve paragraphs, line breaks, clause numbers, and punctuation. "
+    "CRITICAL RULE - BLANK FORM FIELDS: If you see a label followed by blank underscores or dashes "
+    "(e.g. '水表底: ___', '电表底: ___', '门锁: ___', '签字: ___'), output that label EXACTLY ONCE "
+    "and then STOP. Do NOT repeat it. Do NOT continue generating more blank fields of the same type. "
+    "CRITICAL RULE - NO HALLUCINATION: Never generate or repeat content that is not clearly visible. "
+    "If a section contains many identical blank fields in a row, output only the first occurrence "
+    "followed by '[...blank form section skipped...]' and move on. "
+    "CRITICAL RULE - NO REPETITION: If you catch yourself about to output the same label twice, stop immediately. "
+    f"If the image is not a contract or is unreadable, output only: {OCR_UNREADABLE_MARKER}. "
+    "No Markdown, no explanations, no code blocks."
 )
 
 STRICT_OCR_PROMPT = (
-    "Re-examine this contract image. You may only output text that is genuinely visible in the image. "
-    "Do not fill in blank fields such as address, date, party names, or signature lines based on common contract formats. "
-    "Do not repeat the same short label. Do not output repeated blank placeholder lines. "
-    "If a label has no visible content after it, skip that line entirely. "
-    f"If this is not a contract page or the text is unreadable, output only: {OCR_UNREADABLE_MARKER}. "
-    "Maintain natural reading order. No explanations, no summaries, no Markdown."
+    "Re-examine this contract image carefully. Output ONLY text that is genuinely printed or handwritten. "
+    "STOP RULE: The moment you detect you are about to repeat any label or field name you already output, "
+    "stop that section and write '[...repeated blank fields omitted...]' instead. "
+    "Blank fields (underscores, dashes after a label) should each appear AT MOST ONCE. "
+    "Do not fill in blank fields. Do not guess content. Do not generate template text. "
+    f"If this is not a contract or is unreadable, output only: {OCR_UNREADABLE_MARKER}. "
+    "Plain text only, reading order, no Markdown."
 )
 
 OCR_CORRECTION_SYSTEM_PROMPT = (
@@ -160,32 +163,30 @@ def _deduplicate_repeated_lines(text: str, max_repeats: int = 3) -> str:
 
 def _deduplicate_repeated_phrases(text: str, max_repeats: int = 3) -> str:
     """
-    Remove repeated short label phrases within OCR text.
-    Handles inline repetition like '水表底: ___水表底: ___水表底: ___...' across lines.
+    Truncate repeated short label phrases within OCR text.
+    Handles inline repetition like '水表底: ___水表底: ___...' across lines.
+    Kicks in after max_repeats+1 occurrences of the same label.
     """
-    # Match short Chinese labels followed by blank/underscore placeholders
-    label_re = re.compile(r"[\u4e00-\u9fff]{1,6}[:：][\s_\u25a1\u2014\-]{0,8}")
+    from collections import Counter
+
+    # Match short Chinese label (1-6 chars) + colon (half or full width) + optional blanks
+    label_re = re.compile(r"([\u4e00-\u9fff]{1,6})[:：][\s_\u25a1\u2014\-]{0,10}")
     matches = list(label_re.finditer(text))
     if not matches:
         return text
 
-    # Count normalized occurrences of each label
-    from collections import Counter
-    normalized_counts: Counter = Counter(
-        re.sub(r"[\s_\u25a1\u2014\-]+", "_", m.group().strip()) for m in matches
-    )
+    # Count by the Chinese label characters only (ignores colon style and trailing blanks)
+    label_counts: Counter = Counter(m.group(1) for m in matches)
 
-    # For any label repeated far too many times, truncate at max_repeats+1 occurrence
-    for raw_label, count in normalized_counts.items():
-        if count <= max_repeats * 3:
-            continue
-        # Find the actual label text (un-normalized) to search for
-        escaped = re.escape(raw_label.replace("_", ""))
-        search_re = re.compile(escaped + r"[\s_\u25a1\u2014\-]{0,8}")
+    # Truncate at the (max_repeats+1)-th occurrence of the most-repeated label
+    for label_chars, count in sorted(label_counts.items(), key=lambda x: -x[1]):
+        if count <= max_repeats + 1:
+            break  # sorted descending, no more candidates
+        search_re = re.compile(re.escape(label_chars) + r"[:：][\s_\u25a1\u2014\-]{0,10}")
         positions = [m.start() for m in search_re.finditer(text)]
         if len(positions) > max_repeats:
             cutoff = positions[max_repeats]
-            text = text[:cutoff].rstrip() + "\n（以下相同内容已省略）"
+            text = text[:cutoff].rstrip() + "\n\uff08\u4ee5\u4e0b\u76f8\u540c\u5185\u5bb9\u5df2\u7701\u7565\uff09"
             break
 
     return text
