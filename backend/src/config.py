@@ -10,11 +10,11 @@ class Settings(BaseSettings):
 
     # SiliconFlow API（OpenAI 兼容接口）
     openai_api_key: str | None = None
-    openai_base_url: str = "https://api.siliconflow.cn/v1"
+    openai_base_url: str = "https://api.minimax.chat/v1"
 
     # 模型配置
-    review_model: str = "Qwen/Qwen3.5-4B"                   # 推理/审查/报告/问答
-    ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"        # 图片 OCR 识别
+    review_model: str = "minimax-m2.7"                   # 推理/审查/报告/问答
+    ocr_model: str = "minimax-vl-01"                    # 图片 OCR 识别
 
     jwt_secret: str | None = None
     jwt_secret_file: str | None = None
