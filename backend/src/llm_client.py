@@ -158,6 +158,39 @@ def _deduplicate_repeated_lines(text: str, max_repeats: int = 3) -> str:
     return "\n".join(result_lines)
 
 
+def _deduplicate_repeated_phrases(text: str, max_repeats: int = 3) -> str:
+    """
+    Remove repeated short label phrases within OCR text.
+    Handles inline repetition like '水表底: ___水表底: ___水表底: ___...' across lines.
+    """
+    # Match short Chinese labels followed by blank/underscore placeholders
+    label_re = re.compile(r"[\u4e00-\u9fff]{1,6}[:：][\s_\u25a1\u2014\-]{0,8}")
+    matches = list(label_re.finditer(text))
+    if not matches:
+        return text
+
+    # Count normalized occurrences of each label
+    from collections import Counter
+    normalized_counts: Counter = Counter(
+        re.sub(r"[\s_\u25a1\u2014\-]+", "_", m.group().strip()) for m in matches
+    )
+
+    # For any label repeated far too many times, truncate at max_repeats+1 occurrence
+    for raw_label, count in normalized_counts.items():
+        if count <= max_repeats * 3:
+            continue
+        # Find the actual label text (un-normalized) to search for
+        escaped = re.escape(raw_label.replace("_", ""))
+        search_re = re.compile(escaped + r"[\s_\u25a1\u2014\-]{0,8}")
+        positions = [m.start() for m in search_re.finditer(text)]
+        if len(positions) > max_repeats:
+            cutoff = positions[max_repeats]
+            text = text[:cutoff].rstrip() + "\n（以下相同内容已省略）"
+            break
+
+    return text
+
+
 def _is_unreadable_ocr_marker(text: str) -> bool:
     return OCR_UNREADABLE_MARKER in text.strip()
 
@@ -249,7 +282,7 @@ def extract_text_from_image(
     filename: Optional[str] = None,
     prompt: str = DEFAULT_OCR_PROMPT,
     max_tokens: int = 4096,
-    timeout: float = 90.0,
+    timeout: float = 60.0,
 ) -> tuple[str, str]:
     del model
     normalized_mime_type = normalize_image_mime_type(mime_type, filename)
@@ -282,6 +315,7 @@ def extract_text_from_image(
     response = run_ocr(prompt)
     extracted_text = _sanitize_ocr_text(_extract_response_text(response))
     extracted_text = _deduplicate_repeated_lines(extracted_text, max_repeats=3)
+    extracted_text = _deduplicate_repeated_phrases(extracted_text, max_repeats=3)
     if not extracted_text:
         raise RuntimeError(f"{model_id} 未返回可用的 OCR 文本。")
 
@@ -289,6 +323,7 @@ def extract_text_from_image(
         retry_response = run_ocr(STRICT_OCR_PROMPT)
         retry_text = _sanitize_ocr_text(_extract_response_text(retry_response))
         retry_text = _deduplicate_repeated_lines(retry_text, max_repeats=3)
+        retry_text = _deduplicate_repeated_phrases(retry_text, max_repeats=3)
         if (
             retry_text
             and not _is_unreadable_ocr_marker(retry_text)
