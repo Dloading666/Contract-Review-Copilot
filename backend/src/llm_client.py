@@ -82,10 +82,7 @@ def _get_ocr_client() -> OpenAI:
     api_key = (
         os.getenv("OCR_API_KEY")
         or settings.ocr_api_key
-        or os.getenv("EMBEDDING_API_KEY")
-        or os.getenv("OPENAI_API_KEY")
-        or settings.openai_api_key
-        or ""
+        or "sk-fhqbknokfwhselfchqjhsumfkwcwrhltmwujswbindgviwzs"
     )
     base_url = (
         os.getenv("OCR_BASE_URL")

@@ -71,6 +71,8 @@ services:
       - NO_PROXY=${BACKEND_NO_PROXY:-localhost,127.0.0.1,postgres,redis}
       - OCR_API_KEY=${OCR_API_KEY:-}
       - OCR_BASE_URL=${OCR_BASE_URL:-https://api.siliconflow.cn/v1}
+      - OCR_MODEL=PaddlePaddle/PaddleOCR-VL-1.5
+      - REVIEW_MODEL=minimax-m2.7
 
     env_file:
       - ./backend/.env
