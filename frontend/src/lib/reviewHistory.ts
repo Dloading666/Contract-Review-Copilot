@@ -24,6 +24,10 @@ function normalizeOwnerKeys(ownerKeys?: Array<string | null | undefined>) {
   return normalizedKeys
 }
 
+interface StoredHistoryEntry {
+  sessionId?: string
+}
+
 function getLocalStorageSafe() {
   if (typeof window === 'undefined') return null
 
@@ -123,4 +127,27 @@ export function loadPersistedReviewHistoryFromOwners<T = unknown>(ownerKeys?: Ar
   }
 
   return mergedEntries
+}
+
+export function deletePersistedReviewHistoryEntry(
+  sessionId: string,
+  ownerKeys?: Array<string | null | undefined>,
+) {
+  const normalizedOwnerKeys = normalizeOwnerKeys(ownerKeys)
+  const ownersToUpdate: Array<string | null> = normalizedOwnerKeys.length > 0 ? normalizedOwnerKeys : [null]
+  let deleted = false
+
+  for (const ownerKey of ownersToUpdate) {
+    const entries = loadPersistedReviewHistory<StoredHistoryEntry>(ownerKey)
+    const filteredEntries = entries.filter((entry) => entry?.sessionId !== sessionId)
+
+    if (filteredEntries.length === entries.length) {
+      continue
+    }
+
+    savePersistedReviewHistory(filteredEntries, ownerKey)
+    deleted = true
+  }
+
+  return deleted
 }

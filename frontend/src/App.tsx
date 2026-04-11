@@ -587,6 +587,13 @@ export default function App() {
     })
   }, [historyOwnerCandidates, persistCurrentReview, review])
 
+  const handleDeleteHistorySession = useCallback((sessionId: string) => {
+    if (review.sessionId !== sessionId) return
+    setPendingReviewStart(null)
+    setStreamContractText('')
+    setReview(createInitialState(createSessionId()))
+  }, [review.sessionId])
+
   if (!isAuthenticated) {
     if (authView === 'landing') {
       return (
@@ -616,6 +623,7 @@ export default function App() {
         user={user}
         onLogout={logout}
         onSelectHistorySession={handleSelectHistorySession}
+        onDeleteHistorySession={handleDeleteHistorySession}
         onOpenSettings={() => setShowSettings(true)}
       />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>

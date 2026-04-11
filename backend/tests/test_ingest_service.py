@@ -1,3 +1,5 @@
+import pytest
+
 from src.ocr.ingest_service import UploadedContractFile, ingest_contract_files
 
 
@@ -93,3 +95,15 @@ def test_ingest_contract_files_reads_txt_and_docx_without_ocr(monkeypatch):
     assert txt_result.source_type == "txt"
     assert txt_result.used_ocr_model is None
     assert txt_result.merged_text == "租赁合同正文"
+
+
+def test_ingest_contract_files_surfaces_image_ocr_quality_failure(monkeypatch):
+    monkeypatch.setattr(
+        "src.ocr.ingest_service._extract_text_from_uploaded_image",
+        lambda _file: (_ for _ in ()).throw(RuntimeError("OCR 结果疑似为模型补全的空白模板")),
+    )
+
+    with pytest.raises(RuntimeError, match="空白模板"):
+        ingest_contract_files(
+            [UploadedContractFile(filename="contract.png", content=b"img", content_type="image/png")]
+        )

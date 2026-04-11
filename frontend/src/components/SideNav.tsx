@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from 'react'
-import { MessageSquare, History, Settings } from 'lucide-react'
-import { loadPersistedReviewHistoryFromOwners } from '../lib/reviewHistory'
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type SyntheticEvent } from 'react'
+import { MessageSquare, History, Settings, Trash2 } from 'lucide-react'
+import { deletePersistedReviewHistoryEntry, loadPersistedReviewHistoryFromOwners } from '../lib/reviewHistory'
 import type { User } from '../contexts/AuthContext'
 import dogeImage from '../assets/branding/doge.png'
 
@@ -15,6 +15,7 @@ interface SideNavProps {
   user?: User | null
   onLogout?: () => void
   onSelectHistorySession?: (sessionId: string) => void
+  onDeleteHistorySession?: (sessionId: string) => void
   onOpenSettings?: () => void
   activeView?: string
 }
@@ -25,7 +26,7 @@ interface HistoryListItem {
   date: string
 }
 
-export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings, activeView }: SideNavProps) {
+export function SideNav({ user, onLogout, onSelectHistorySession, onDeleteHistorySession, onOpenSettings, activeView }: SideNavProps) {
   const [showHistory, setShowHistory] = useState(false)
   const [historyItems, setHistoryItems] = useState<HistoryListItem[]>([])
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768)
@@ -57,9 +58,23 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
     onSelectHistorySession?.(sessionId)
   }
 
+  const handleHistoryDelete = (event: ReactMouseEvent<HTMLButtonElement>, historyItem: HistoryListItem) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const filename = historyItem.filename || '未命名合同'
+    if (!window.confirm(`确定删除「${filename}」这条审查历史吗？`)) {
+      return
+    }
+
+    deletePersistedReviewHistoryEntry(historyItem.sessionId, [user?.id, user?.email])
+    setHistoryItems((prev) => prev.filter((item) => item.sessionId !== historyItem.sessionId))
+    onDeleteHistorySession?.(historyItem.sessionId)
+  }
+
   useEffect(() => {
     if (!showHistory) return
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = (event: globalThis.MouseEvent) => {
       const target = event.target as Node
       if (historyDropdownRef.current?.contains(target)) return
       if (historyButtonRef.current?.contains(target)) return
@@ -69,23 +84,94 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showHistory])
 
+  const mobileNavBottom = 'calc(36px + env(safe-area-inset-bottom, 0px))'
+  const mobileHistoryBottom = 'calc(108px + env(safe-area-inset-bottom, 0px))'
+  const iconSize = isMobile ? 20 : 26
+
   const navItems = [
-    { id: 'chat', icon: <MessageSquare size={26} />, label: '实时对话', onClick: () => setShowHistory(false) },
-    { id: 'history', icon: <History size={26} />, label: '审查历史', onClick: handleHistoryClick, ref: historyButtonRef },
+    { id: 'chat', icon: <MessageSquare size={iconSize} />, label: '实时对话', onClick: () => setShowHistory(false) },
+    { id: 'history', icon: <History size={iconSize} />, label: '审查历史', onClick: handleHistoryClick, ref: historyButtonRef },
   ]
+
+  const renderHistoryItem = (historyItem: HistoryListItem, variant: 'mobile' | 'desktop') => {
+    const filename = historyItem.filename || '未命名合同'
+
+    return (
+      <div
+        key={historyItem.sessionId}
+        style={{
+          display: 'flex',
+          alignItems: 'stretch',
+          width: '100%',
+          borderBottom: '3px solid black',
+          background: 'white',
+        }}
+        onMouseEnter={e => {
+          if (variant === 'desktop') e.currentTarget.style.background = 'var(--color-orange-light)'
+        }}
+        onMouseLeave={e => {
+          if (variant === 'desktop') e.currentTarget.style.background = 'white'
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => handleHistorySelect(historyItem.sessionId)}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            textAlign: 'left',
+            padding: variant === 'mobile' ? '10px 14px' : '10px 12px 10px 14px',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            fontFamily: 'var(--font-pixel)',
+            fontSize: 8,
+            color: 'var(--color-ink)',
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 4, lineHeight: 1.4 }}>{filename}</div>
+          <div style={{ fontSize: 7, color: 'var(--color-ink-muted)' }}>{historyItem.date}</div>
+        </button>
+        <button
+          type="button"
+          aria-label={`删除审查历史 ${filename}`}
+          title="删除记录"
+          onClick={(event) => handleHistoryDelete(event, historyItem)}
+          style={{
+            width: variant === 'mobile' ? 46 : 42,
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: 'none',
+            borderLeft: '3px solid black',
+            background: 'var(--color-paper)',
+            color: 'var(--color-red)',
+            cursor: 'pointer',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-red-light)')}
+          onMouseLeave={e => (e.currentTarget.style.background = 'var(--color-paper)')}
+        >
+          <Trash2 size={variant === 'mobile' ? 14 : 15} />
+        </button>
+      </div>
+    )
+  }
 
   if (isMobile) {
     return (
       <nav style={{
         position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        height: 56,
+        bottom: mobileNavBottom,
+        left: 8,
+        right: 8,
+        height: 64,
         display: 'flex',
         flexDirection: 'row',
         background: 'var(--color-cream-dark)',
-        borderTop: '4px solid black',
+        border: '4px solid black',
+        boxShadow: '0 6px 0 rgba(0,0,0,1)',
+        overflow: 'hidden',
         zIndex: 300,
       }}>
         {navItems.map(item => (
@@ -95,7 +181,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
             type="button"
             className={`pixel-sidebar-btn${activeView === item.id || (item.id === 'history' && showHistory) ? ' active' : ''}`}
             onClick={item.onClick}
-            style={{ flex: 1, flexDirection: 'row', gap: 6, fontSize: 10, padding: '0 8px', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', borderRight: '4px solid black' }}
+            style={{ flex: 1, minWidth: 0, height: '100%', flexDirection: 'column', gap: 3, fontSize: 9, lineHeight: 1.2, padding: '4px 2px', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', borderRight: '4px solid black' }}
           >
             {item.icon}
             <span>{item.label}</span>
@@ -105,7 +191,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
           type="button"
           className={`pixel-sidebar-btn${activeView === 'settings' ? ' active' : ''}`}
           onClick={onOpenSettings}
-          style={{ flex: 1, flexDirection: 'row', gap: 6, fontSize: 10, padding: '0 8px', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', borderRight: '4px solid black' }}
+          style={{ flex: 1, minWidth: 0, height: '100%', flexDirection: 'column', gap: 3, fontSize: 9, lineHeight: 1.2, padding: '4px 2px', borderTop: 'none', borderBottom: 'none', borderLeft: 'none', borderRight: '4px solid black' }}
         >
           <Settings size={20} />
           <span>设置</span>
@@ -115,16 +201,19 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
           onClick={onLogout}
           style={{
             flex: 1,
+            minWidth: 0,
+            height: '100%',
             display: 'flex',
-            flexDirection: 'row',
+            flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: 6,
+            gap: 3,
             border: 'none',
             background: 'var(--color-paper)',
             color: 'var(--color-red)',
             fontFamily: 'var(--font-pixel)',
-            fontSize: 10,
+            fontSize: 9,
+            lineHeight: 1.2,
             fontWeight: 700,
             textTransform: 'uppercase',
             cursor: 'pointer',
@@ -139,13 +228,13 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
             ref={historyDropdownRef}
             style={{
               position: 'fixed',
-              bottom: 60,
-              left: 0,
-              right: 0,
+              bottom: mobileHistoryBottom,
+              left: 8,
+              right: 8,
               maxHeight: '60vh',
               background: 'var(--color-paper)',
               border: '4px solid black',
-              borderBottom: 'none',
+              boxShadow: '0 6px 0 rgba(0,0,0,1)',
               zIndex: 400,
               display: 'flex',
               flexDirection: 'column',
@@ -158,17 +247,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
               <div style={{ padding: '24px 14px', textAlign: 'center', fontFamily: 'var(--font-pixel)', fontSize: 8, color: 'var(--color-ink-muted)' }}>暂无历史记录</div>
             ) : (
               <div style={{ overflowY: 'auto', flex: 1 }}>
-                {historyItems.map(historyItem => (
-                  <button
-                    key={historyItem.sessionId}
-                    type="button"
-                    onClick={() => handleHistorySelect(historyItem.sessionId)}
-                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', border: 'none', borderBottom: '3px solid black', background: 'white', cursor: 'pointer', fontFamily: 'var(--font-pixel)', fontSize: 8, color: 'var(--color-ink)' }}
-                  >
-                    <div style={{ fontWeight: 700, marginBottom: 4, lineHeight: 1.4 }}>{historyItem.filename}</div>
-                    <div style={{ fontSize: 7, color: 'var(--color-ink-muted)' }}>{historyItem.date}</div>
-                  </button>
-                ))}
+                {historyItems.map(historyItem => renderHistoryItem(historyItem, 'mobile'))}
               </div>
             )}
           </div>
@@ -299,31 +378,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onOpenSettings
                     </div>
                   ) : (
                     <div style={{ overflowY: 'auto', flex: 1 }}>
-                      {historyItems.map(historyItem => (
-                        <button
-                          key={historyItem.sessionId}
-                          type="button"
-                          onClick={() => handleHistorySelect(historyItem.sessionId)}
-                          style={{
-                            display: 'block',
-                            width: '100%',
-                            textAlign: 'left',
-                            padding: '10px 14px',
-                            border: 'none',
-                            borderBottom: '3px solid black',
-                            background: 'white',
-                            cursor: 'pointer',
-                            fontFamily: 'var(--font-pixel)',
-                            fontSize: 8,
-                            color: 'var(--color-ink)',
-                          }}
-                          onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-orange-light)')}
-                          onMouseLeave={e => (e.currentTarget.style.background = 'white')}
-                        >
-                          <div style={{ fontWeight: 700, marginBottom: 4, lineHeight: 1.4 }}>{historyItem.filename}</div>
-                          <div style={{ fontSize: 7, color: 'var(--color-ink-muted)' }}>{historyItem.date}</div>
-                        </button>
-                      ))}
+                      {historyItems.map(historyItem => renderHistoryItem(historyItem, 'desktop'))}
                     </div>
                   )}
                 </div>

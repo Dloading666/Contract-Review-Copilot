@@ -75,6 +75,60 @@ def test_extract_text_from_image_uses_ocr_model_and_image_url_format(monkeypatch
     assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
+def test_extract_text_from_image_retries_repetitive_blank_template(monkeypatch):
+    capture: dict[str, object] = {"prompts": []}
+    responses = [
+        _FakeResponse("地址：\n签约日期：\n地址：\n签约日期：\n地址：\n签约日期：\n地址：\n签约日期：", "ocr-model"),
+        _FakeResponse("房屋租赁合同\n甲方：张三\n乙方：李四\n租金每月1000元", "ocr-model"),
+    ]
+
+    class _FakeCompletions:
+        @staticmethod
+        def create(**kwargs):
+            capture["prompts"].append(kwargs["messages"][0]["content"][0]["text"])
+            return responses.pop(0)
+
+    class _FakeClient:
+        chat = type("Chat", (), {"completions": _FakeCompletions()})()
+
+    monkeypatch.setattr(llm_client, "_get_client", lambda: _FakeClient())
+
+    text, used_model = llm_client.extract_text_from_image(
+        image_bytes=b"fake-image",
+        mime_type="image/png",
+        filename="contract.png",
+    )
+
+    assert text == "房屋租赁合同\n甲方：张三\n乙方：李四\n租金每月1000元"
+    assert used_model == "ocr-model"
+    assert len(capture["prompts"]) == 2
+    assert "严禁重复输出同一个短标签" in capture["prompts"][1]
+
+
+def test_extract_text_from_image_rejects_repetitive_blank_template_after_retry(monkeypatch):
+    responses = [
+        _FakeResponse("地址：\n签约日期：\n地址：\n签约日期：\n地址：\n签约日期：\n地址：\n签约日期：", "ocr-model"),
+        _FakeResponse("地址：\n签约日期：\n地址：\n签约日期：\n地址：\n签约日期：\n地址：\n签约日期：", "ocr-model"),
+    ]
+
+    class _FakeCompletions:
+        @staticmethod
+        def create(**kwargs):
+            return responses.pop(0)
+
+    class _FakeClient:
+        chat = type("Chat", (), {"completions": _FakeCompletions()})()
+
+    monkeypatch.setattr(llm_client, "_get_client", lambda: _FakeClient())
+
+    with pytest.raises(RuntimeError, match="空白模板"):
+        llm_client.extract_text_from_image(
+            image_bytes=b"fake-image",
+            mime_type="image/png",
+            filename="contract.png",
+        )
+
+
 def test_normalize_image_mime_type_rejects_unsupported_types():
     with pytest.raises(ValueError, match="JPG"):
         llm_client.normalize_image_mime_type("application/pdf", "contract.pdf")

@@ -61,6 +61,43 @@ describe('SideNav', () => {
     expect(onSelect).toHaveBeenCalledWith('session-42')
   })
 
+  it('deletes a review history entry after confirmation', () => {
+    localStorage.setItem('reviewHistory:demo', JSON.stringify([
+      { sessionId: 'session-delete', filename: '待删除合同.docx', date: '2026/04/07' },
+      { sessionId: 'session-keep', filename: '保留合同.docx', date: '2026/04/08' },
+    ]))
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const onDelete = vi.fn()
+
+    const view = render(<SideNav user={buildUser()} onDeleteHistorySession={onDelete} />)
+
+    fireEvent.click(view.getByRole('button', { name: /审查历史/ }))
+    fireEvent.click(view.getByRole('button', { name: /删除审查历史 待删除合同\.docx/ }))
+
+    expect(confirmSpy).toHaveBeenCalledWith('确定删除「待删除合同.docx」这条审查历史吗？')
+    expect(onDelete).toHaveBeenCalledWith('session-delete')
+    expect(view.queryByText('待删除合同.docx')).toBeNull()
+    expect(view.getByText('保留合同.docx')).toBeTruthy()
+    expect(localStorage.getItem('reviewHistory:demo')).not.toContain('session-delete')
+  })
+
+  it('keeps a review history entry when deletion is canceled', () => {
+    localStorage.setItem('reviewHistory:demo', JSON.stringify([
+      { sessionId: 'session-keep', filename: '不删除合同.docx', date: '2026/04/07' },
+    ]))
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const onDelete = vi.fn()
+
+    const view = render(<SideNav user={buildUser()} onDeleteHistorySession={onDelete} />)
+
+    fireEvent.click(view.getByRole('button', { name: /审查历史/ }))
+    fireEvent.click(view.getByRole('button', { name: /删除审查历史 不删除合同\.docx/ }))
+
+    expect(view.getByText('不删除合同.docx')).toBeTruthy()
+    expect(onDelete).not.toHaveBeenCalled()
+    expect(localStorage.getItem('reviewHistory:demo')).toContain('session-keep')
+  })
+
   it('only shows history entries belonging to the signed-in user', () => {
     localStorage.setItem('reviewHistory:alice', JSON.stringify([
       { sessionId: 'alice-session', filename: 'alice.docx', date: '2026/04/07 21:00:00' },

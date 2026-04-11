@@ -126,6 +126,8 @@ def _ingest_image_files(
 
     merged_text = "\n\n".join(page.text.strip() for page in pages if page.text.strip()).strip()
     if not merged_text:
+        if warnings:
+            raise RuntimeError("；".join(warnings))
         raise RuntimeError("未能从上传材料中提取出有效合同文本。")
 
     return ContractIngestResult(

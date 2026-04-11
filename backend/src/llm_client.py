@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import mimetypes
 import os
+import re
 from typing import Optional
 
 import httpx
@@ -26,9 +27,18 @@ SUPPORTED_IMAGE_MIME_TYPES = {
 }
 
 DEFAULT_OCR_PROMPT = (
-    "请准确提取这张合同图片中的全部可见文字，尽量保留原有段落、换行和条款编号。"
-    "不要总结，不要解释，不要补充，不要输出 Markdown 标题或代码块。"
-    "看不清的字可以保留原样，或用“□”表示。"
+    "请只逐字提取这张合同图片中真实可见的文字，严格按从上到下、从左到右的阅读顺序输出。"
+    "尽量保留原有段落、换行、表格行、条款编号和标点。"
+    "严禁总结、解释、改写、补充、猜测或生成图片中不存在的合同模板字段。"
+    "如果图片里某个字段为空白，不要输出该空白字段；如果看不清，用“□”标记。"
+    "不要输出 Markdown 标题、列表解释或代码块。"
+)
+
+STRICT_OCR_PROMPT = (
+    "重新识别这张合同图片。你现在只允许输出图片中确实能看见的原始文字。"
+    "严禁根据合同常见格式补全“地址：”“签约日期：”“甲方：”“乙方：”等空白字段。"
+    "严禁重复输出同一个短标签；如果某个标签后没有可见内容，就不要输出这一行。"
+    "保持自然阅读顺序和换行，不要解释，不要总结，不要 Markdown。"
 )
 
 OCR_CORRECTION_SYSTEM_PROMPT = (
@@ -117,6 +127,27 @@ def _sanitize_ocr_text(text: str) -> str:
     return sanitized.strip()
 
 
+def _is_suspicious_repetitive_ocr_text(text: str) -> bool:
+    """Detect likely OCR hallucinations such as repeated blank form labels."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 6:
+        return False
+
+    blank_label_pattern = re.compile(
+        r"^(地址|签约日期|日期|联系电话|电话|手机号|身份证号|姓名|甲方|乙方|出租方|承租方|签字|盖章)\s*[:：]\s*[□_\-\s]*$"
+    )
+    blank_label_lines = [line for line in lines if blank_label_pattern.match(line)]
+    repeated_line_count = max((lines.count(line) for line in set(lines)), default=0)
+    label_only_ratio = len(blank_label_lines) / len(lines)
+    unique_visible_chars = len(set(re.sub(r"\s|[:：□_\-]", "", text)))
+
+    if len(blank_label_lines) >= 6 and label_only_ratio >= 0.45:
+        return True
+    if repeated_line_count >= 4 and unique_visible_chars <= 30:
+        return True
+    return False
+
+
 def create_chat_completion(
     messages: list,
     model: Optional[str] = None,
@@ -156,28 +187,41 @@ def extract_text_from_image(
     model_id = settings.ocr_model
 
     client = _get_client()
-    response = client.chat.completions.create(
-        model=model_id,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": _build_image_data_url(image_bytes, normalized_mime_type)},
-                    },
-                ],
-            }
-        ],
-        temperature=0,
-        max_tokens=max_tokens,
-        timeout=timeout,
-    )
+    image_url = _build_image_data_url(image_bytes, normalized_mime_type)
 
+    def run_ocr(current_prompt: str):
+        return client.chat.completions.create(
+            model=model_id,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": current_prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": image_url},
+                        },
+                    ],
+                }
+            ],
+            temperature=0,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+
+    response = run_ocr(prompt)
     extracted_text = _sanitize_ocr_text(_extract_response_text(response))
     if not extracted_text:
         raise RuntimeError(f"{model_id} 未返回可用的 OCR 文本。")
+
+    if _is_suspicious_repetitive_ocr_text(extracted_text):
+        retry_response = run_ocr(STRICT_OCR_PROMPT)
+        retry_text = _sanitize_ocr_text(_extract_response_text(retry_response))
+        if retry_text and not _is_suspicious_repetitive_ocr_text(retry_text):
+            response = retry_response
+            extracted_text = retry_text
+        else:
+            raise RuntimeError("OCR 结果疑似为模型补全的空白模板，请上传更清晰的原图，或手动输入合同文字。")
 
     used_model = getattr(response, "model", model_id) or model_id
     print(f"[LLM] OCR using model: {used_model}", flush=True)

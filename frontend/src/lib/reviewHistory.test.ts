@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { loadPersistedReviewHistory, loadPersistedReviewHistoryFromOwners, savePersistedReviewHistory } from './reviewHistory'
+import {
+  deletePersistedReviewHistoryEntry,
+  loadPersistedReviewHistory,
+  loadPersistedReviewHistoryFromOwners,
+  savePersistedReviewHistory,
+} from './reviewHistory'
 
 describe('reviewHistory storage', () => {
   beforeEach(() => {
@@ -68,5 +73,22 @@ describe('reviewHistory storage', () => {
       { sessionId: 'session-phone', filename: 'phone.docx', date: '2026/04/08 11:00:00' },
       { sessionId: 'session-email', filename: 'email.docx', date: '2026/04/08 10:00:00' },
     ])
+  })
+
+  it('deletes a history entry from every owner alias', () => {
+    savePersistedReviewHistory([
+      { sessionId: 'session-delete', filename: 'id-copy.docx', date: '2026/04/08 10:00:00' },
+      { sessionId: 'session-keep', filename: 'keep.docx', date: '2026/04/08 11:00:00' },
+    ], 'user-123')
+    savePersistedReviewHistory([
+      { sessionId: 'session-delete', filename: 'email-copy.docx', date: '2026/04/08 10:00:00' },
+    ], 'demo@example.com')
+
+    expect(deletePersistedReviewHistoryEntry('session-delete', ['user-123', 'demo@example.com'])).toBe(true)
+
+    expect(loadPersistedReviewHistory<{ sessionId: string }>('user-123')).toEqual([
+      { sessionId: 'session-keep', filename: 'keep.docx', date: '2026/04/08 11:00:00' },
+    ])
+    expect(loadPersistedReviewHistory<{ sessionId: string }>('demo@example.com')).toEqual([])
   })
 })
