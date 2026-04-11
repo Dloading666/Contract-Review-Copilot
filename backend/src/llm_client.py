@@ -28,14 +28,16 @@ SUPPORTED_IMAGE_MIME_TYPES = {
 }
 
 DEFAULT_OCR_PROMPT = (
-    "你正在为合同审查系统做 OCR。"
-    "请只逐字提取这张合同图片中真实可见的文字，严格按从上到下、从左到右的阅读顺序输出。"
-    "尽量保留原有段落、换行、表格行、条款编号和标点。"
-    "严禁总结、解释、改写、补充、猜测或生成图片中不存在的合同模板字段。"
-    "严禁把空白合同模板补全成“一个月 从____年____月____日”等重复占位内容。"
-    "如果图片里某个字段为空白，不要输出该空白字段；如果看不清，用“□”标记。"
-    f"如果图片不是合同、主要内容不是合同文字，或合同文字严重模糊不可读，请只输出 {OCR_UNREADABLE_MARKER}。"
-    "不要输出 Markdown 标题、列表解释或代码块。"
+    “你正在为合同审查系统做 OCR。”
+    “请只逐字提取这张合同图片中真实可见的文字，严格按从上到下、从左到右的阅读顺序输出。”
+    “尽量保留原有段落、换行、表格行、条款编号和标点。”
+    “严禁总结、解释、改写、补充、猜测或生成图片中不存在的合同模板字段。”
+    “严禁把空白合同模板补全成'一个月 从____年____月____日'等重复占位内容。”
+    “如果图片里某个字段为空白（如'门锁: ___'中横线后无内容），不要输出该空白字段；如果看不清，用'□'标记。”
+    “【重要】严禁重复输出同一字段名称（如'门锁:'、'地址:'）超过 1 次。即使该字段在图片中真实出现多次，也不得连续重复输出。”
+    “【重要】严禁输出重复的下划线占位符行（如'___'、'____'），遇到连续相同的占位行只需输出一次。”
+    f”如果图片不是合同、主要内容不是合同文字，或合同文字严重模糊不可读，请只输出 {OCR_UNREADABLE_MARKER}。”
+    “不要输出 Markdown 标题、列表解释或代码块。”
 )
 
 STRICT_OCR_PROMPT = (
@@ -130,6 +132,32 @@ def _sanitize_ocr_text(text: str) -> str:
     if sanitized.endswith("```"):
         sanitized = sanitized[:-3].rstrip()
     return sanitized.strip()
+
+
+def _deduplicate_repeated_lines(text: str, max_repeats: int = 3) -> str:
+    """截断明显重复的 OCR 输出行（如 '门锁: ___' 重复出现）。"""
+    lines = text.splitlines()
+    result_lines: list[str] = []
+    line_counts: dict[str, int] = {}
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            result_lines.append(line)
+            continue
+
+        # 归一化用于计数（忽略多余空格）
+        normalized = re.sub(r"\s+", " ", stripped)
+        count = line_counts.get(normalized, 0) + 1
+        line_counts[normalized] = count
+
+        if count <= max_repeats:
+            result_lines.append(line)
+        elif count == max_repeats + 1:
+            # 第一次超过阈值时添加省略标记
+            result_lines.append("（以下相同内容已省略）")
+
+    return "\n".join(result_lines)
 
 
 def _is_unreadable_ocr_marker(text: str) -> bool:
@@ -257,12 +285,16 @@ def extract_text_from_image(
 
     response = run_ocr(prompt)
     extracted_text = _sanitize_ocr_text(_extract_response_text(response))
+    # 后处理去重：同一行重复超过 3 次时自动截断
+    extracted_text = _deduplicate_repeated_lines(extracted_text, max_repeats=3)
     if not extracted_text:
         raise RuntimeError(f"{model_id} 未返回可用的 OCR 文本。")
 
     if _is_unreadable_ocr_marker(extracted_text) or _is_suspicious_repetitive_ocr_text(extracted_text):
         retry_response = run_ocr(STRICT_OCR_PROMPT)
         retry_text = _sanitize_ocr_text(_extract_response_text(retry_response))
+        # Retry 后同样应用去重
+        retry_text = _deduplicate_repeated_lines(retry_text, max_repeats=3)
         if (
             retry_text
             and not _is_unreadable_ocr_marker(retry_text)
