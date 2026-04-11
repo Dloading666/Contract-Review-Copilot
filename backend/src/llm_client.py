@@ -50,10 +50,10 @@ STRICT_OCR_PROMPT = (
 )
 
 OCR_CORRECTION_SYSTEM_PROMPT = (
-    "\u4f60\u662f\u5408\u540c OCR \u6821\u5bf9\u52a9\u624b\u3002"
-    "\u4f60\u53ea\u80fd\u4fee\u6b63\u660e\u663e\u7684\u9519\u522b\u5b57\u3001\u6807\u70b9\u3001\u65ad\u884c\u3001\u6761\u6b3e\u7f16\u53f7\u548c\u9605\u8bfb\u987a\u5e8f\u95ee\u9898\u3002"
-    "\u4e0d\u80fd\u603b\u7ed3\uff0c\u4e0d\u80fd\u89e3\u91ca\uff0c\u4e0d\u80fd\u6539\u5199\u5408\u540c\u542b\u4e49\uff0c\u4e5f\u4e0d\u80fd\u8865\u5145\u539f\u6587\u4e2d\u4e0d\u5b58\u5728\u7684\u5185\u5bb9\u3002"
-    "\u5982\u679c\u67d0\u4e9b\u5b57\u8bcd\u770b\u4e0d\u6e05\uff0c\u5c31\u4fdd\u7559\u539f\u6837\uff0c\u4e0d\u8981\u731c\u6d4b\u3002"
+    "你是合同 OCR 校对助手。"
+    "你只能修正明显的错别字、标点、断行、条款编号和阅读顺序问题。"
+    "不能总结，不能解释，不能改写合同含义，也不能补充原文中不存在的内容。"
+    "如果某些字词看不清，就保留原样，不要猜测。"
 )
 
 
@@ -94,12 +94,12 @@ def normalize_image_mime_type(mime_type: Optional[str], filename: Optional[str] 
     if guessed in SUPPORTED_IMAGE_MIME_TYPES:
         return guessed
 
-    raise ValueError("\u53ea\u652f\u6301 JPG\u3001PNG\u3001WEBP \u56fe\u7247\u683c\u5f0f\u3002")
+    raise ValueError("只支持 JPG、PNG、WEBP 图片格式。")
 
 
 def image_bytes_to_base64(image_bytes: bytes) -> str:
     if not image_bytes:
-        raise ValueError("\u56fe\u7247\u5185\u5bb9\u4e0d\u80fd\u4e3a\u7a7a\u3002")
+        raise ValueError("图片内容不能为空。")
     return base64.b64encode(image_bytes).decode("ascii")
 
 
@@ -153,7 +153,7 @@ def _deduplicate_repeated_lines(text: str, max_repeats: int = 3) -> str:
         if count <= max_repeats:
             result_lines.append(line)
         elif count == max_repeats + 1:
-            result_lines.append("(\u4ee5\u4e0b\u76f8\u540c\u5185\u5bb9\u5df2\u7701\u7565)")
+            result_lines.append("（以下相同内容已省略）")
 
     return "\n".join(result_lines)
 
@@ -168,10 +168,10 @@ def _is_suspicious_repetitive_ocr_text(text: str) -> bool:
         return False
 
     blank_label_pattern = re.compile(
-        r"^(\u5730\u5740|\u7b7e\u7ea6\u65e5\u671f|\u65e5\u671f|\u8054\u7cfb\u7535\u8bdd|\u7535\u8bdd|\u624b\u673a\u53f7|\u8eab\u4efd\u8bc1\u53f7|\u59d3\u540d|\u7532\u65b9|\u4e59\u65b9|\u51fa\u租\u65b9|\u627f\u79df\u65b9|\u7b7e\u5b57|\u76d6\u7ae0)\s*[::\u003a]\s*[\u25a1_\-\s]*$"
+        r"^(地址|签约日期|日期|联系电话|电话|手机号|身份证号|姓名|甲方|乙方|出租方|承租方|签字|盖章)\s*[:：]\s*[□_\-\s]*$"
     )
     placeholder_line_pattern = re.compile(
-        r"(?:_{2,}|\u25a1{2,}|\u4ece\s*[\u25a1_\-\s]*\u5e74\s*[\u25a1_\-\s]*\u6708\s*[\u25a1_\-\s]*\u65e5|[\u25a1_\-\s]{6,})"
+        r"(?:_{2,}|□{2,}|从\s*[□_\-\s]*年\s*[□_\-\s]*月\s*[□_\-\s]*日|[□_\-\s]{6,})"
     )
     normalized_lines = [re.sub(r"\s+", " ", line) for line in lines]
     blank_label_lines = [line for line in lines if blank_label_pattern.match(line)]
@@ -180,10 +180,10 @@ def _is_suspicious_repetitive_ocr_text(text: str) -> bool:
     repeated_line_count = max((normalized_lines.count(line) for line in set(normalized_lines)), default=0)
     template_line_ratio = len(template_lines) / len(lines)
     label_only_ratio = len(blank_label_lines) / len(lines)
-    meaningful_text = re.sub(r"\s|[::\u003a\u25a1_\-\u2014\u5e74\u6708\u65e5\u4ece\u81f3\..\uff0f\\|,\uff0c\u3002\uff1b;\u3001\uff08\uff09()]", "", text)
+    meaningful_text = re.sub(r"\s|[:：□_\-—年月日从至\.．/\\|,，。；;、（）()]", "", text)
     unique_visible_chars = len(set(meaningful_text))
     contract_signal_count = len(re.findall(
-        r"(\u5408\u540c|\u534f\u8bae|\u7532\u65b9|\u4e59\u65b9|\u51fa\u79df|\u627f\u79df|\u79df\u8d41|\u62bc\u91d1|\u79df\u91d1|\u8fdd\u7ea6|\u6761\u6b3e|\u7b7e\u8ba2|\u7b7e\u7ea6|\u8eab\u4efd\u8bc1|\u8054\u7cfb\u65b9\u5f0f|\u6c11\u6cd5\u5178|\u4e2d\u4ecb|\u59d3\u540d|\u59d3\u540d|\u5f59\u6b3e|\u91d1\u989d|\u8d39\u7528|\u4fdd\u8bc1\u91d1)",
+        r"(合同|协议|甲方|乙方|出租|承租|租赁|押金|租金|违约|条款|签订|签约|身份证|联系方式|民法典|中介|委托|付款|金额|费用|保证金)",
         text,
     ))
     has_strong_contract_context = (
@@ -193,7 +193,7 @@ def _is_suspicious_repetitive_ocr_text(text: str) -> bool:
     )
     kana_count = len(re.findall(r"[\u3040-\u30ff\u31f0-\u31ff]", text))
     non_contract_noise = re.search(
-        r"(\u30d8\u30a2|\u30b7\u30e3\u30f3\u30d7\u30fc|\u30c8\u30ea\u30fc\u30c8\u30e1\u30f3\u30c8|\u304a\u3059\u3059\u3081|\u30e9\u30f3\u30ad\u30f3\u30b0|\u30ec\u30d3\u30e5\u30fc|\u53e3\u30b3\u30df|\u5546\u54c1|\u4fa1\u683c|Amazon|\u697d\u5929)",
+        r"(ヘア|シャンプー|トリートメント|おすすめ|ランキング|レビュー|口コミ|商品|価格|Amazon|楽天)",
         text,
         flags=re.IGNORECASE,
     )
@@ -283,7 +283,7 @@ def extract_text_from_image(
     extracted_text = _sanitize_ocr_text(_extract_response_text(response))
     extracted_text = _deduplicate_repeated_lines(extracted_text, max_repeats=3)
     if not extracted_text:
-        raise RuntimeError(f"{model_id} \u672a\u8fd4\u56de\u53ef\u7528\u7684 OCR \u6587\u672c\u3002")
+        raise RuntimeError(f"{model_id} 未返回可用的 OCR 文本。")
 
     if _is_unreadable_ocr_marker(extracted_text) or _is_suspicious_repetitive_ocr_text(extracted_text):
         retry_response = run_ocr(STRICT_OCR_PROMPT)
@@ -297,7 +297,7 @@ def extract_text_from_image(
             response = retry_response
             extracted_text = retry_text
         else:
-            raise RuntimeError("OCR \u7ed3\u679c\u7591\u4f3c\u4e3a\u6a21\u578b\u8865\u5168\u7684\u7a7a\u767d\u6a21\u677f\u6216\u975e\u5408\u540c\u566a\u97f3\uff0c\u8bf7\u4e0a\u4f20\u66f4\u6e05\u6670\u7684\u5408\u540c\u539f\u56fe\uff0c\u6216\u624b\u52a8\u8f93\u5165\u5408\u540c\u6587\u5b57\u3002")
+            raise RuntimeError("OCR 结果疑似为模型补全的空白模板或非合同噪音，请上传更清晰的合同原图，或手动输入合同文字。")
 
     used_model = getattr(response, "model", model_id) or model_id
     print(f"[LLM] OCR using model: {used_model}", flush=True)
@@ -312,22 +312,22 @@ def correct_ocr_text(
     timeout: float = 90.0,
 ) -> tuple[str, str]:
     if not raw_text.strip():
-        raise ValueError("OCR \u539f\u59cb\u6587\u672c\u4e0d\u80fd\u4e3a\u7a7a\u3002")
+        raise ValueError("OCR 原始文本不能为空。")
 
     hints = ""
     if low_confidence_lines:
         joined_hints = "\n".join(f"- {line}" for line in low_confidence_lines[:10])
-        hints = f"\n\u4f4e\u7f6e\u4fe1\u5ea6\u7247\u6bb5\uff08\u4f18\u5148\u68c0\u67e5\uff0c\u4f46\u4e0d\u8981\u81c6\u6d4b\u8865\u5168\uff09\uff1a\n{joined_hints}\n"
+        hints = f"\n低置信度片段（优先检查，但不要臆测补全）：\n{joined_hints}\n"
 
-    label = page_label or "\u5f53\u524d\u9875\u9762"
+    label = page_label or "当前页面"
     user_prompt = (
-        f"\u8bf7\u6821\u5bf9{label}\u7684\u5408\u540c OCR \u7ed3\u679c\u3002\n"
-        "\u8981\u6c42\uff1a\n"
-        "1. \u4fdd\u7559\u539f\u6587\u542b\u4e49\u548c\u5408\u540c\u683c\u5f0f\u3002\n"
-        "2. \u5220\u9664\u660e\u663e\u5c5e\u4e8e\u624b\u673a\u72b6\u6001\u680f\u3001\u622a\u56fe\u754c\u9762\u3001\u56fe\u7247\u9884\u89c8\u63a7\u4ef6\u7684\u566a\u97f3\u6587\u5b57\u3002\n"
-        "3. \u4ec5\u8f93\u51fa\u6821\u5bf9\u540e\u7684\u7eaf\u6587\u672c\uff0c\u4e0d\u8981\u52a0\u6807\u9898\u3001\u89e3\u91ca\u6216\u4ee3\u7801\u5757\u3002"
+        f"请校对{label}的合同 OCR 结果。\n"
+        "要求：\n"
+        "1. 保留原文含义和合同格式。\n"
+        "2. 删除明显属于手机状态栏、截图界面、图片预览控件的噪音文字。\n"
+        "3. 仅输出校对后的纯文本，不要加标题、解释或代码块。"
         f"{hints}\n"
-        "OCR \u539f\u6587\u5982\u4e0b\uff1a\n"
+        "OCR 原文如下：\n"
         f"{raw_text}"
     )
 
@@ -342,7 +342,7 @@ def correct_ocr_text(
     )
     corrected_text = _sanitize_ocr_text(_extract_response_text(response))
     if not corrected_text:
-        raise RuntimeError("\u6a21\u578b\u672a\u8fd4\u56de\u53ef\u7528\u7684 OCR \u6821\u5bf9\u6587\u672c\u3002")
+        raise RuntimeError("模型未返回可用的 OCR 校对文本。")
 
     settings = get_settings()
     used_model = getattr(response, "model", settings.review_model) or settings.review_model
