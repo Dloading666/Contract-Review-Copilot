@@ -161,6 +161,11 @@ def _is_suspicious_repetitive_ocr_text(text: str) -> bool:
         r"(合同|协议|甲方|乙方|出租|承租|租赁|押金|租金|违约|条款|签订|签约|身份证|联系方式|民法典|中介|委托|付款|金额|费用|保证金)",
         text,
     ))
+    has_strong_contract_context = (
+        contract_signal_count >= 6
+        and unique_visible_chars > 60
+        and len(meaningful_text) >= 120
+    )
     kana_count = len(re.findall(r"[\u3040-\u30ff\u31f0-\u31ff]", text))
     non_contract_noise = re.search(
         r"(ヘア|シャンプー|トリートメント|おすすめ|ランキング|レビュー|口コミ|商品|価格|Amazon|楽天)",
@@ -170,9 +175,15 @@ def _is_suspicious_repetitive_ocr_text(text: str) -> bool:
 
     if len(blank_label_lines) >= 6 and label_only_ratio >= 0.45:
         return True
-    if len(placeholder_lines) >= 4 and template_line_ratio >= 0.35:
+    if (
+        len(placeholder_lines) >= 4
+        and template_line_ratio >= 0.35
+        and (contract_signal_count < 4 or unique_visible_chars <= 36)
+    ):
         return True
-    if repeated_line_count >= 4 and (unique_visible_chars <= 36 or repeated_line_count / len(lines) >= 0.35):
+    if repeated_line_count >= 4 and not has_strong_contract_context and (
+        unique_visible_chars <= 36 or repeated_line_count / len(lines) >= 0.35
+    ):
         return True
     if len(meaningful_text) >= 80 and contract_signal_count == 0:
         return True

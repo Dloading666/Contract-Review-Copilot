@@ -31,7 +31,14 @@ Fix two production issues reported on mobile:
   - repeated underscore blank fields,
   - low unique-character density,
   - common template placeholders repeated several times.
+- Do not reject a real contract template only because it contains blank underline fields. Blank fields are common in rental contracts, so placeholder-heavy text is only suspicious when it has weak contract signals or very low unique-character density.
+- Do not reject real contract text solely because OCR repeats some blank template rows. Repeated rows are suspicious only when the extracted text lacks strong contract context.
 - Retry once with a stricter prompt. If the retry is still suspicious, return a clear OCR quality error instead of continuing with bad text.
+
+### Mobile Browser Chrome
+
+- Account center uses its own mobile scroll container because the app body is intentionally locked.
+- Add generous bottom scroll padding for real mobile browsers where the bottom address bar or keyboard overlaps form controls.
 
 ## Validation
 

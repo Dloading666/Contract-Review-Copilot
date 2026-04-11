@@ -2960,9 +2960,12 @@ body.landing-page-active h4 {
   .account-page {
     height: 100dvh;
     min-height: 100dvh;
+    max-height: 100dvh;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    padding: 16px 14px calc(32px + env(safe-area-inset-bottom, 0px));
+    overscroll-behavior: contain;
+    scroll-padding-bottom: calc(180px + env(safe-area-inset-bottom, 0px));
+    padding: 16px 14px calc(180px + env(safe-area-inset-bottom, 0px));
   }
 
   .account-page__header {

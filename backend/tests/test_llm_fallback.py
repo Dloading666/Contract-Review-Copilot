@@ -153,6 +153,45 @@ def test_extract_text_from_image_rejects_repeated_underscore_placeholders_after_
         )
 
 
+def test_ocr_quality_gate_allows_real_contract_templates_with_blank_fields():
+    text = "\n".join([
+        "房屋租赁合同",
+        "出租人（甲方）：_____",
+        "承租人（乙方）：_____",
+        "电话：_____",
+        "一、现有甲方房屋经双方商定租给乙方食宿使用，暂定租期____个月。",
+        "二、房屋租金为每月人民币____元，并交____元作为租房押金。",
+        "三、甲方提供该房锁匙____套，并收押金____元。",
+        "四、租赁期内乙方应加强消防、防盗、社会治安综合治理等工作。",
+        "七、合同期满退房需提前10天通知管理员。",
+        "八、本合同一式二份，双方各执一份，均具有同等法律效力。",
+        "甲方（签字）：____",
+        "乙方（签字）：____",
+        "签约日期：____年____月____日",
+    ])
+
+    assert llm_client._is_suspicious_repetitive_ocr_text(text) is False
+
+
+def test_ocr_quality_gate_allows_real_contract_text_with_repeated_blank_rows():
+    text = "\n".join([
+        "房屋租赁合同",
+        "出租人（甲方）：_____",
+        "承租人（乙方）：_____",
+        "二、房屋租金为每月人民币____元，并交____元作为租房押金。",
+        "乙方应在每月____日前交租金给甲方，逾期不交租金者甲方有权收回房间。",
+        "三、甲方提供该房锁匙____套，并收押金____元。",
+        "七、合同期满退房需提前10天通知管理员，中途退房租金、押金不退。",
+        "八、本合同一式二份，双方各执一份，均具有同等法律效力。",
+        *(["电表底：____水表底：____"] * 8),
+        "甲方（签字）：____",
+        "乙方（签字）：____",
+        "签约日期：____年____月____日",
+    ])
+
+    assert llm_client._is_suspicious_repetitive_ocr_text(text) is False
+
+
 def test_extract_text_from_image_rejects_non_contract_noise_after_retry(monkeypatch):
     noise = "\n".join([
         "おすすめ シャンプー ランキング",
