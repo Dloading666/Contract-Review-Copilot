@@ -2821,6 +2821,11 @@ body.landing-page-active h4 {
   box-shadow: 0px 0px 0px 0px #2d2f2c;
 }
 
+/* ── Workspace panel wrappers: transparent to grid on all screen sizes ── */
+.workspace > div {
+  display: contents;
+}
+
 /* ── Mobile Panel Tabs (hidden on desktop) ── */
 .mobile-panel-tabs {
   display: none;
@@ -2867,11 +2872,6 @@ body.landing-page-active h4 {
 
   .workspace__panel--hidden {
     display: none !important;
-  }
-
-  /* Panels fill full height */
-  .workspace > div {
-    display: contents;
   }
 
   /* Bottom nav padding */
