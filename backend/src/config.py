@@ -36,9 +36,10 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     from_email: str | None = None
 
-    aliyun_sms_access_key_id: str | None = None
-    aliyun_sms_access_key_secret: str | None = None
-    aliyun_sms_endpoint: str = "https://dypnsapi.aliyuncs.com"
+    # GitHub OAuth
+    github_client_id: str | None = None
+    github_client_secret: str | None = None
+    github_oauth_redirect_uri: str | None = None
 
     class Config:
         env_file = ".env"

@@ -13,27 +13,19 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import jwt
 from passlib.context import CryptContext
 
 from .commerce import (
     AccountStateError,
-    attach_phone_to_existing_user,
     create_email_user,
-    create_phone_user,
     get_account_summary,
     get_user_by_email,
     get_user_by_id,
-    get_user_by_phone,
     update_user_password_credentials,
 )
 from .config import get_settings
-from .providers.aliyun_sms import (
-    AliyunSmsError,
-    check_phone_verification_code as check_phone_sms_code,
-    is_phone_verification_service_configured,
-    send_phone_verification_code as send_phone_sms_code,
-)
 
 
 def _load_jwt_secret() -> str:
@@ -65,7 +57,6 @@ JWT_EXPIRE_HOURS = 24
 
 _code_store: dict[str, dict] = {}
 _user_cache: dict[str, dict] = {}
-_user_store = _user_cache
 _PASSWORD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -85,13 +76,6 @@ def _code_cache_key(kind: str, identifier: str) -> str:
 
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
-
-
-def normalize_phone(phone: str) -> str:
-    digits_only = "".join(ch for ch in phone if ch.isdigit())
-    if digits_only.startswith("86") and len(digits_only) > 11:
-        digits_only = digits_only[2:]
-    return digits_only
 
 
 def _code_store_key(kind: str, identifier: str) -> str:
@@ -124,7 +108,7 @@ def _save_code_record(kind: str, identifier: str, record: dict) -> None:
             get_settings().redis_auth_code_ttl_seconds,
             json.dumps(record, ensure_ascii=False),
         )
-    except Exception as exc:  # pragma: no cover - defensive logging
+    except Exception as exc:
         print(f"[Auth] Redis save verification code failed: {exc}", flush=True)
 
 
@@ -147,7 +131,7 @@ def _load_code_record(kind: str, identifier: str) -> Optional[dict]:
         if isinstance(record, dict):
             _code_store[store_key] = record
             return record
-    except Exception as exc:  # pragma: no cover - defensive logging
+    except Exception as exc:
         print(f"[Auth] Redis load verification code failed: {exc}", flush=True)
 
     return None
@@ -162,7 +146,7 @@ def _delete_code_record(kind: str, identifier: str) -> None:
 
     try:
         client.delete(_code_cache_key(kind, identifier))
-    except Exception as exc:  # pragma: no cover - defensive logging
+    except Exception as exc:
         print(f"[Auth] Redis delete verification code failed: {exc}", flush=True)
 
 
@@ -200,10 +184,6 @@ def _make_email_user_id(email: str) -> str:
     return f"{safe_alias}_{secrets.token_hex(8)}"
 
 
-def _make_phone_user_id(phone: str) -> str:
-    return f"phone_{secrets.token_hex(8)}"
-
-
 def _cache_legacy_aliases(user: dict) -> None:
     user_id = user["id"]
     _user_cache[user_id] = user
@@ -213,10 +193,6 @@ def _cache_legacy_aliases(user: dict) -> None:
         local_alias = email.split("@", 1)[0]
         if local_alias:
             _user_cache[local_alias] = user
-
-    phone = (user.get("phone") or "").strip()
-    if phone:
-        _user_cache[f"phone:{phone}"] = user
 
 
 def _get_user(user_id: str) -> Optional[dict]:
@@ -241,7 +217,6 @@ def _create_token(user: dict) -> str:
     payload = {
         "sub": user["id"],
         "email": user.get("email"),
-        "phone": user.get("phone"),
         "exp": expire,
         "iat": datetime.utcnow(),
     }
@@ -273,11 +248,11 @@ def _send_email_code(email: str, code: str) -> dict:
         msg["To"] = email
         html_body = f"""
         <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
-            <h1 style="color: #ff8c00; font-size: 20px;">Contract Review Copilot</h1>
-            <p>Your verification code:</p>
-            <div style="background: #ff8c00; color: white; font-size: 32px; font-weight: 700;
+            <h1 style="color: #006a35; font-size: 20px;">合规智审 Copilot</h1>
+            <p>您的验证码：</p>
+            <div style="background: #006a35; color: white; font-size: 32px; font-weight: 700;
                 letter-spacing: 8px; padding: 16px 32px; text-align: center;">{code}</div>
-            <p style="color: #888; font-size: 12px;">Code expires in 5 minutes.</p>
+            <p style="color: #888; font-size: 12px;">验证码 5 分钟内有效。</p>
         </div>
         """
         msg.attach(MIMEText(html_body, "html"))
@@ -286,7 +261,7 @@ def _send_email_code(email: str, code: str) -> dict:
             server.login(smtp_user, smtp_password)
             server.sendmail(from_email, [email], msg.as_string())
         return {"success": True}
-    except Exception as exc:  # pragma: no cover - defensive logging
+    except Exception as exc:
         print(f"[Auth] Failed to send email: {exc}", flush=True)
         return {"success": False, "error": "Failed to send verification email"}
 
@@ -314,30 +289,8 @@ def send_password_reset_code_for_user(user_id: str) -> dict:
     return send_verification_code(email)
 
 
-def send_phone_verification_code(phone: str) -> dict:
-    normalized_phone = normalize_phone(phone)
-    if _use_local_phone_dev_codes():
-        code = generate_code()
-        expire_at = time.time() + get_settings().redis_auth_code_ttl_seconds
-        _save_code_record("phone", normalized_phone, {"code": code, "expire_at": expire_at})
-        print(f"[SMS] Dev mode - verification code for {normalized_phone}: {code}", flush=True)
-        return {"success": True, "dev_code": code}
-    try:
-        return send_phone_sms_code(normalized_phone)
-    except AliyunSmsError as exc:
-        print(f"[Auth] SMS send failed: {exc}", flush=True)
-        return {"success": False, "error": str(exc)}
-
-
-def _use_local_phone_dev_codes() -> bool:
-    settings = get_settings()
-    return settings.allow_dev_code_response and not is_phone_verification_service_configured()
-
-
 def verify_code_only(identifier: str, code: str, *, kind: str = "email") -> bool:
-    normalized_identifier = normalize_phone(identifier) if kind == "phone" else _normalize_email(identifier)
-    if kind == "phone" and not _use_local_phone_dev_codes():
-        return check_phone_sms_code(normalized_identifier, code)
+    normalized_identifier = _normalize_email(identifier)
     record = _load_code_record(kind, normalized_identifier)
     if not record:
         return False
@@ -348,9 +301,7 @@ def verify_code_only(identifier: str, code: str, *, kind: str = "email") -> bool
 
 
 def consume_code(identifier: str, code: str, *, kind: str = "email") -> bool:
-    normalized_identifier = normalize_phone(identifier) if kind == "phone" else _normalize_email(identifier)
-    if kind == "phone" and not _use_local_phone_dev_codes():
-        return verify_code_only(normalized_identifier, code, kind=kind)
+    normalized_identifier = _normalize_email(identifier)
     if not verify_code_only(normalized_identifier, code, kind=kind):
         return False
     _delete_code_record(kind, normalized_identifier)
@@ -397,23 +348,60 @@ def login_with_password(email: str, password: str) -> Optional[str]:
     return _create_token(user)
 
 
-def login_with_phone_code(phone: str, code: str) -> dict:
-    normalized_phone = normalize_phone(phone)
-    try:
-        if not consume_code(normalized_phone, code, kind="phone"):
-            return {"success": False, "error": "验证码无效或已过期"}
-    except AliyunSmsError as exc:
-        return {"success": False, "error": str(exc)}
+def login_with_github(code: str) -> dict:
+    settings = get_settings()
+    client_id = (settings.github_client_id or "").strip()
+    client_secret = (settings.github_client_secret or "").strip()
+    if not client_id or not client_secret:
+        return {"success": False, "error": "GitHub OAuth 未配置"}
 
-    user = get_user_by_phone(normalized_phone)
+    try:
+        token_response = httpx.post(
+            "https://github.com/login/oauth/access_token",
+            json={"client_id": client_id, "client_secret": client_secret, "code": code},
+            headers={"Accept": "application/json"},
+            timeout=10.0,
+        )
+        token_data = token_response.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            return {"success": False, "error": "GitHub 授权失败，请重试"}
+
+        emails_response = httpx.get(
+            "https://api.github.com/user/emails",
+            headers={
+                "Authorization": f"token {access_token}",
+                "Accept": "application/vnd.github+json",
+            },
+            timeout=10.0,
+        )
+        emails = emails_response.json()
+        primary_email = next(
+            (e["email"] for e in emails if e.get("primary") and e.get("verified")),
+            None,
+        )
+        if not primary_email:
+            primary_email = next((e["email"] for e in emails if e.get("verified")), None)
+        if not primary_email:
+            return {"success": False, "error": "无法获取 GitHub 邮箱，请在 GitHub 设置中公开你的邮箱"}
+    except Exception as exc:
+        print(f"[Auth] GitHub OAuth failed: {exc}", flush=True)
+        return {"success": False, "error": "GitHub 登录失败，请稍后重试"}
+
+    normalized_email = _normalize_email(primary_email)
+    user = get_user_by_email(normalized_email)
     if not user:
         try:
-            user = create_phone_user(
-                user_id=_make_phone_user_id(normalized_phone),
-                phone=normalized_phone,
+            user = create_email_user(
+                user_id=_make_email_user_id(normalized_email),
+                email=normalized_email,
+                password_hash="",
+                salt="",
             )
-        except AccountStateError as exc:
-            return {"success": False, "error": str(exc)}
+        except AccountStateError:
+            user = get_user_by_email(normalized_email)
+    if not user:
+        return {"success": False, "error": "创建账户失败"}
 
     _cache_legacy_aliases(user)
     return {
@@ -421,23 +409,6 @@ def login_with_phone_code(phone: str, code: str) -> dict:
         "token": _create_token(user),
         "user": _build_public_user(user),
     }
-
-
-def bind_phone_for_user(user_id: str, phone: str, code: str) -> dict:
-    normalized_phone = normalize_phone(phone)
-    try:
-        if not consume_code(normalized_phone, code, kind="phone"):
-            return {"success": False, "error": "验证码无效或已过期"}
-    except AliyunSmsError as exc:
-        return {"success": False, "error": str(exc)}
-
-    try:
-        user = attach_phone_to_existing_user(user_id, normalized_phone)
-    except (AccountStateError, ValueError) as exc:
-        return {"success": False, "error": str(exc)}
-
-    _cache_legacy_aliases(user)
-    return {"success": True, "user": _build_public_user(user)}
 
 
 def reset_password_with_email_code(user_id: str, code: str, new_password: str) -> dict:
@@ -470,14 +441,12 @@ def verify_code(email: str, code: str) -> Optional[str]:
 
     user = get_user_by_email(normalized_email)
     if not user:
-        salt = ""
-        password_hash = ""
         try:
             user = create_email_user(
                 user_id=_make_email_user_id(normalized_email),
                 email=normalized_email,
-                password_hash=password_hash,
-                salt=salt,
+                password_hash="",
+                salt="",
             )
         except AccountStateError:
             user = get_user_by_email(normalized_email)
@@ -509,4 +478,3 @@ def get_user_from_token(token: str) -> Optional[dict]:
         return None
 
     return _build_public_user(user)
-

@@ -83,7 +83,7 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
         setError(payload.error || '注册失败')
         return
       }
-      setSuccess('邮箱账户创建成功。登录后请先绑定手机号，才能激活免费次数与钱包权益。')
+      setSuccess('邮箱账户创建成功，请返回登录。')
     } catch {
       setError('网络错误，请稍后重试')
     } finally {
@@ -101,8 +101,8 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
           </button>
 
           <div className="auth-register-copy">
-            <h1>辅助邮箱注册</h1>
-            <p>邮箱注册仅用于辅助登录。正式审查、钱包充值和问答权益仍以已验证手机号为准。</p>
+            <h1>邮箱注册</h1>
+            <p>注册邮箱账户后即可登录使用合同审查功能。</p>
           </div>
 
           <form className="auth-form" onSubmit={handleSubmit}>

@@ -43,7 +43,6 @@ def _user_from_row(row: tuple[Any, ...] | None) -> dict[str, Any] | None:
         "account_status": row[7] or "active",
         "created_at": _isoformat(row[8]),
         "updated_at": _isoformat(row[9]),
-        "must_bind_phone": not bool(row[4]),
     }
 
 
@@ -160,13 +159,6 @@ def get_user_by_email(email: str) -> dict[str, Any] | None:
             return _fetch_user(cur, "email", normalized_email)
 
 
-def get_user_by_phone(phone: str) -> dict[str, Any] | None:
-    ensure_commerce_schema()
-    normalized_phone = phone.strip()
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            return _fetch_user(cur, "phone", normalized_phone)
-
 
 def update_user_password_credentials(user_id: str, password_hash: str, salt: str) -> None:
     ensure_commerce_schema()
@@ -234,83 +226,6 @@ def create_email_user(
     return user
 
 
-def create_phone_user(*, user_id: str, phone: str) -> dict[str, Any]:
-    ensure_commerce_schema()
-    normalized_phone = phone.strip()
-
-    with get_connection() as conn:
-        try:
-            with conn.cursor() as cur:
-                if _fetch_user(cur, "phone", normalized_phone):
-                    raise AccountStateError("该手机号已绑定其他账户")
-
-                cur.execute(
-                    """
-                    INSERT INTO auth_users (
-                        user_id,
-                        email,
-                        password_hash,
-                        salt,
-                        phone,
-                        email_verified,
-                        phone_verified,
-                        account_status,
-                        free_review_remaining,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (%s, NULL, '', '', %s, FALSE, TRUE, 'active', 0, NOW(), NOW())
-                    """,
-                    (user_id, normalized_phone),
-                )
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-
-    user = get_user_by_id(user_id)
-    if not user:
-        raise CommerceError("创建手机号账户失败")
-    return user
-
-
-def attach_phone_to_existing_user(user_id: str, phone: str) -> dict[str, Any]:
-    ensure_commerce_schema()
-    normalized_phone = phone.strip()
-
-    with get_connection() as conn:
-        try:
-            with conn.cursor() as cur:
-                user = _fetch_user(cur, "user_id", user_id)
-                if not user:
-                    raise AccountStateError("用户不存在")
-                if user.get("phone_verified"):
-                    raise AccountStateError("当前账户已绑定手机号")
-
-                existing_phone_owner = _fetch_user(cur, "phone", normalized_phone)
-                if existing_phone_owner and existing_phone_owner["id"] != user_id:
-                    raise AccountStateError("该手机号已绑定其他账户")
-
-                cur.execute(
-                    """
-                    UPDATE auth_users
-                    SET phone = %s,
-                        phone_verified = TRUE,
-                        updated_at = NOW()
-                    WHERE user_id = %s
-                    """,
-                    (normalized_phone, user_id),
-                )
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-
-    user = get_user_by_id(user_id)
-    if not user:
-        raise CommerceError("绑定手机号失败")
-    return user
-
 
 def get_account_summary(user_id: str) -> dict[str, Any]:
     ensure_commerce_schema()
@@ -324,9 +239,6 @@ def get_account_summary(user_id: str) -> dict[str, Any]:
         "id": user["id"],
         "email": user.get("email"),
         "emailVerified": bool(user.get("email_verified")),
-        "phone": user.get("phone"),
-        "phoneVerified": bool(user.get("phone_verified")),
         "accountStatus": user.get("account_status", "active"),
-        "mustBindPhone": bool(user.get("must_bind_phone")),
         "createdAt": user.get("created_at"),
     }

@@ -2261,6 +2261,32 @@ body.landing-page-active h4 {
   line-height: 1.8;
 }
 
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-muted, #888);
+  margin: 4px 0;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border, #ddd);
+}
+
+.auth-github-button {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
 .auth-link-button {
   background: none;
   border: none;

@@ -304,6 +304,22 @@ export function buildThinkingSteps(
 
 export default function App() {
   const { isAuthenticated, login, logout, user, token, updateUser, refreshUser } = useAuth()
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const urlToken = params.get('token')
+    if (!urlToken) return
+    const url = new URL(window.location.href)
+    url.searchParams.delete('token')
+    window.history.replaceState({}, '', url.toString())
+    fetch('/api/auth/me', { headers: { Authorization: `Bearer ${urlToken}` } })
+      .then(res => res.json())
+      .then((data: { user?: import('./contexts/AuthContext').User }) => {
+        if (data.user) login(urlToken, data.user)
+      })
+      .catch(() => {})
+  }, [login])
+
   const historyOwnerKey = user?.id ?? null
   const historyOwnerCandidates = buildHistoryOwnerCandidates(user)
   const [authView, setAuthView] = useState<'landing' | 'login' | 'register'>('landing')

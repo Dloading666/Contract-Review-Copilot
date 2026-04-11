@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from . import auth
 from .cache import build_cache_key, close_redis_client, delete_json, get_json, get_ttl_seconds, set_json
@@ -26,15 +26,12 @@ from .ocr import UploadedContractFile, ingest_contract_files
 from .rate_limit import RateLimitRule, enforce_rate_limits, get_request_ip
 from .report_export import build_report_docx, build_report_download_name
 from .schemas import (
-    BindPhoneRequest,
     ChatRequest,
     ConfirmRequest,
     ContractReviewRequest,
     ExportReportRequest,
     HealthResponse,
     LoginRequest,
-    PhoneLoginRequest,
-    PhoneSendCodeRequest,
     RegisterRequest,
     SecurityResetPasswordRequest,
     SendCodeRequest,
@@ -130,22 +127,13 @@ def require_current_user(authorization: Optional[str]) -> dict:
     return user
 
 
-def require_bound_phone_user(authorization: Optional[str]) -> dict:
-    user = require_current_user(authorization)
-    if user.get("mustBindPhone"):
-        raise HTTPException(status_code=403, detail="请先绑定并验证手机号后再使用完整审查和问答")
-    return user
-
 
 def _build_user_payload(user: dict) -> dict:
     return {
         "id": user.get("id"),
         "email": user.get("email"),
         "emailVerified": bool(user.get("emailVerified")),
-        "phone": user.get("phone"),
-        "phoneVerified": bool(user.get("phoneVerified")),
         "accountStatus": user.get("accountStatus", "active"),
-        "mustBindPhone": bool(user.get("mustBindPhone")),
         "createdAt": user.get("createdAt"),
     }
 
@@ -164,16 +152,6 @@ def _enforce_auth_rate_limits(request: Request, *, email: str | None = None, act
         rules.append(RateLimitRule(f"{action}:email", email.lower(), 8, 3600, "该邮箱操作过于频繁，请稍后再试"))
     enforce_rate_limits(rules)
 
-
-def _enforce_phone_auth_rate_limits(request: Request, *, phone: str, action: str) -> None:
-    ip = get_request_ip(request)
-    enforce_rate_limits(
-        [
-            RateLimitRule(f"{action}:ip:minute", ip, 20, 60, "请求过于频繁，请稍后重试"),
-            RateLimitRule(f"{action}:ip:hour", ip, 120, 3600, "请求过于频繁，请稍后重试"),
-            RateLimitRule(f"{action}:phone", phone, 8, 3600, "该手机号操作过于频繁，请稍后再试"),
-        ]
-    )
 
 
 async def _read_uploaded_contract_file(upload: UploadFile) -> UploadedContractFile:
@@ -269,62 +247,27 @@ async def reset_password(
     return {"success": True, "message": "密码修改成功"}
 
 
-@app.post("/api/auth/phone/send-code")
-async def send_phone_code(body: PhoneSendCodeRequest, request: Request):
-    phone = auth.normalize_phone(body.phone)
-    if not re.fullmatch(r"1\d{10}", phone):
-        return JSONResponse(status_code=400, content={"error": "请输入有效的 11 位手机号"})
+@app.get("/api/auth/github")
+async def github_oauth_redirect():
+    settings = get_settings()
+    client_id = (settings.github_client_id or "").strip()
+    if not client_id:
+        raise HTTPException(status_code=500, detail="GitHub OAuth 未配置")
+    redirect_uri = (settings.github_oauth_redirect_uri or "").strip()
+    params = f"client_id={client_id}&scope=user:email"
+    if redirect_uri:
+        params += f"&redirect_uri={quote(redirect_uri)}"
+    return RedirectResponse(f"https://github.com/login/oauth/authorize?{params}")
 
-    _enforce_phone_auth_rate_limits(request, phone=phone, action="auth-phone-code")
-    result = auth.send_phone_verification_code(phone)
+
+@app.get("/api/auth/github/callback")
+async def github_oauth_callback(code: str):
+    result = auth.login_with_github(code)
     if not result.get("success"):
-        return JSONResponse(status_code=500, content={"error": result.get("error", "发送失败")})
-    return {"success": True, **({"dev_code": result["dev_code"]} if "dev_code" in result else {})}
-
-
-@app.post("/api/auth/phone/login")
-async def phone_login(body: PhoneLoginRequest, request: Request):
-    phone = auth.normalize_phone(body.phone)
-    code = body.code.strip()
-
-    if not re.fullmatch(r"1\d{10}", phone):
-        return JSONResponse(status_code=400, content={"error": "请输入有效的 11 位手机号"})
-    if not code:
-        return JSONResponse(status_code=400, content={"error": "请输入短信验证码"})
-
-    _enforce_phone_auth_rate_limits(request, phone=phone, action="auth-phone-login")
-    result = auth.login_with_phone_code(phone, code)
-    if not result.get("success"):
-        return JSONResponse(status_code=400, content={"error": result.get("error", "手机号登录失败")})
-
-    return {
-        "success": True,
-        "token": result.get("token"),
-        "user": _build_user_payload(result.get("user") or {}),
-    }
-
-
-@app.post("/api/auth/phone/bind")
-async def bind_phone(
-    body: BindPhoneRequest,
-    request: Request,
-    authorization: Optional[str] = Header(None),
-):
-    user = require_current_user(authorization)
-    phone = auth.normalize_phone(body.phone)
-    code = body.code.strip()
-
-    if not re.fullmatch(r"1\d{10}", phone):
-        return JSONResponse(status_code=400, content={"error": "请输入有效的 11 位手机号"})
-    if not code:
-        return JSONResponse(status_code=400, content={"error": "请输入短信验证码"})
-
-    _enforce_phone_auth_rate_limits(request, phone=phone, action="auth-phone-bind")
-    result = auth.bind_phone_for_user(user["id"], phone, code)
-    if not result.get("success"):
-        return JSONResponse(status_code=400, content={"error": result.get("error", "绑定手机号失败")})
-
-    return {"success": True, "user": _build_user_payload(result.get("user") or {})}
+        error_msg = quote(result.get("error", "GitHub 登录失败"))
+        return RedirectResponse(f"/?auth_error={error_msg}")
+    token = result.get("token", "")
+    return RedirectResponse(f"/?token={quote(token)}")
 
 
 @app.get("/api/auth/me")
@@ -347,7 +290,7 @@ async def list_models():
 
 @app.post("/api/chat")
 async def chat(body: ChatRequest, authorization: Optional[str] = Header(None)):
-    user = require_bound_phone_user(authorization)
+    user = require_current_user(authorization)
 
     message = body.message.strip()
     if not message:
@@ -452,7 +395,7 @@ async def create_review(
     body: ContractReviewRequest,
     authorization: Optional[str] = Header(None),
 ):
-    user = require_bound_phone_user(authorization)
+    user = require_current_user(authorization)
 
     session_id = body.session_id or f"session-{uuid.uuid4().hex}"
 
