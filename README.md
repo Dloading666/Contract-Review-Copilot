@@ -33,7 +33,6 @@
 
 **在线免费体验：[https://ctsafe.top](https://ctsafe.top)**
 
-![首页截图](docs/screenshots/01-hero.png)
 
 ---
 
