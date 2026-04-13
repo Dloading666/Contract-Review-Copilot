@@ -2,11 +2,11 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     ports:
-      - '${POSTGRES_PORT:-5432}:5432'
+      - '5432:5432'
     environment:
       POSTGRES_DB: contract_review
       POSTGRES_USER: contract_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: a10a9d55640cab9f42bbc5b4f47de28cd72ea7c5910907a8
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/db/init:/docker-entrypoint-initdb.d:ro
@@ -20,13 +20,13 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: ['sh', '-c', 'redis-server --requirepass "$REDIS_PASSWORD"']
+    command: ['sh', '-c', 'redis-server --requirepass "798a10975a6b9b8f6ae67b9dbb9e941ea38de57a3e831f24"']
     ports:
       - '6379:6379'
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_PASSWORD: 798a10975a6b9b8f6ae67b9dbb9e941ea38de57a3e831f24
     healthcheck:
-      test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" ping']
+      test: ['CMD-SHELL', 'redis-cli -a "798a10975a6b9b8f6ae67b9dbb9e941ea38de57a3e831f24" ping']
       interval: 5s
       timeout: 5s
       retries: 12
@@ -57,24 +57,26 @@ services:
         condition: service_healthy
     environment:
       - LOG_LEVEL=INFO
-      - DATABASE_URL=postgresql://contract_user:${POSTGRES_PASSWORD}@postgres:5432/contract_review
+      - DATABASE_URL=postgresql://contract_user:a10a9d55640cab9f42bbc5b4f47de28cd72ea7c5910907a8@postgres:5432/contract_review
       - AUTO_SEED_LEGAL_KNOWLEDGE=1
       - PADDLE_PDX_MODEL_SOURCE=BOS
       - REDIS_ENABLED=true
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-      - JWT_SECRET=${JWT_SECRET}
+      - REDIS_URL=redis://:798a10975a6b9b8f6ae67b9dbb9e941ea38de57a3e831f24@redis:6379/0
+      - JWT_SECRET=06c4b938991febfa9f93fe5ee0d285ac60651e66c87b3c1b7704bf6a87fb216c
       - JWT_SECRET_FILE=/app/data/jwt_secret
-      - ALLOW_DEV_CODE_RESPONSE=${ALLOW_DEV_CODE_RESPONSE:-false}
-      - HTTP_PROXY=${BACKEND_HTTP_PROXY:-}
-      - HTTPS_PROXY=${BACKEND_HTTPS_PROXY:-}
-      - ALL_PROXY=${BACKEND_ALL_PROXY:-}
-      - NO_PROXY=${BACKEND_NO_PROXY:-localhost,127.0.0.1,postgres,redis}
-      - OCR_API_KEY=${OCR_API_KEY:-}
-      - OCR_BASE_URL=${OCR_BASE_URL:-https://api.siliconflow.cn/v1}
+      - ALLOW_DEV_CODE_RESPONSE=true
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - ALL_PROXY=
+      - NO_PROXY=localhost,127.0.0.1,postgres,redis
+      - OCR_API_KEY=sk-onijuiocrxnpaoeelddlyagfvwpempxwruemexyngcuqodil
+      - OCR_BASE_URL=https://api.siliconflow.cn/v1
       - OCR_MODEL=PaddlePaddle/PaddleOCR-VL-1.5
-
-    env_file:
-      - ./backend/.env
+      - OPENAI_API_KEY=sk-cp-rOB2azclrj-YFiW_Zm2fuS48kSrQPqFChbA-fvdSTeRDE3nDafOJN_uSv4IcIHuXBgiel8n-SMBqYlrRB1MLSN8M2sVOZ2p6eA6PoXEvR0BPgQ-oYE_zVIY
+      - OPENAI_BASE_URL=https://api.minimax.chat/v1
+      - REVIEW_MODEL=minimax-m2.7
+      - EMBEDDING_API_KEY=sk-onijuiocrxnpaoeelddlyagfvwpempxwruemexyngcuqodil
+      - EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
     volumes:
       - backend_data:/app/data
     restart: unless-stopped
