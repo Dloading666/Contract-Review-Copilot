@@ -735,8 +735,22 @@ body.landing-page-active h4 {
 .workspace {
   flex: 1;
   display: grid;
-  grid-template-columns: 480px 1fr;
+  grid-template-columns: 480px 6px 1fr;
   overflow: hidden;
+}
+
+.workspace__resizer {
+  width: 6px;
+  background: black;
+  cursor: col-resize;
+  flex-shrink: 0;
+  transition: background 0.15s;
+  position: relative;
+  z-index: 10;
+}
+.workspace__resizer:hover,
+.workspace__resizer:active {
+  background: var(--color-orange);
 }
 
 /* ── Chat Panel ── */
@@ -744,7 +758,6 @@ body.landing-page-active h4 {
   display: flex;
   flex-direction: column;
   background: var(--color-paper);
-  border-right: 4px solid black;
   overflow: hidden;
 }
 
@@ -973,8 +986,8 @@ body.landing-page-active h4 {
   border: 4px solid black;
   background: white;
   font-family: var(--font-pixel);
-  font-size: 16px;
-  line-height: 1.8;
+  font-size: 14px;
+  line-height: 1.9;
   color: var(--color-ink);
   box-shadow: 3px 3px 0 rgba(0,0,0,1);
 }
@@ -985,6 +998,38 @@ body.landing-page-active h4 {
 }
 
 .chat-msg__bubble p + p { margin-top: 6px; }
+
+/* Inline highlight for **bold** text in assistant replies */
+.chat-msg__bubble mark {
+  background: #fff176;
+  color: var(--color-ink);
+  padding: 0 3px;
+  border-radius: 2px;
+  font-weight: 700;
+}
+.chat-msg__bubble strong {
+  font-weight: 700;
+  color: var(--color-orange);
+}
+.chat-msg__bubble .reply-section-title {
+  font-weight: 700;
+  display: block;
+  margin-top: 8px;
+  margin-bottom: 2px;
+  color: var(--color-ink);
+  border-bottom: 2px solid black;
+  padding-bottom: 2px;
+}
+.chat-msg__bubble .reply-list-item {
+  display: block;
+  padding-left: 14px;
+  position: relative;
+}
+.chat-msg__bubble .reply-list-item::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+}
 
 /* ── Risk Cards ── */
 .risk-cards {
@@ -2869,10 +2914,14 @@ body.landing-page-active h4 {
   }
 
   .workspace {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
     grid-template-rows: 1fr;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .workspace__resizer {
+    display: none;
   }
 
   .workspace__panel--hidden {

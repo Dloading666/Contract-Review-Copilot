@@ -360,6 +360,9 @@ async def chat(body: ChatRequest, authorization: Optional[str] = Header(None)):
     system_prompt = (
         "你是一个专业的合同审查助手。请基于合同原文和已识别风险回答用户问题，"
         "结论要简洁直接，优先指出风险、影响和可执行建议。"
+        "格式要求：用 **关键词** 标注重要的金额、条款名称、风险结论等关键内容（两个星号包裹）；"
+        "多条建议用「- 」开头分行列出；章节标题后加冒号另起一行。"
+        "不要输出 HTML 标签。"
     )
     if context_sections:
         system_prompt = f"{system_prompt}\n\n" + "\n\n".join(context_sections)

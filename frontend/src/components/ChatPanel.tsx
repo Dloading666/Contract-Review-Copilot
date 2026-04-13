@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import {
   CheckSquare,
@@ -21,6 +21,36 @@ function handleDogeImageError(event: SyntheticEvent<HTMLImageElement>) {
   if (image.dataset.fallbackApplied === 'true') return
   image.dataset.fallbackApplied = 'true'
   image.src = '/doge.png'
+}
+
+/** Render inline **bold** markers as highlighted <mark> elements */
+function renderInline(text: string): ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g)
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <mark key={i}>{part.slice(2, -2)}</mark>
+    }
+    return part
+  })
+}
+
+/** Render one line of an assistant reply with section titles and list items */
+function renderChatLine(line: string, key: string): ReactNode {
+  const trimmed = line.trim()
+  // Section title: line ending with colon, or starting with ## / ###
+  if (/^#{1,3}\s/.test(trimmed)) {
+    return <span key={key} className="reply-section-title">{trimmed.replace(/^#{1,3}\s/, '')}</span>
+  }
+  if (/^[\w\u4e00-\u9fff].*[：:]$/.test(trimmed)) {
+    return <span key={key} className="reply-section-title">{renderInline(trimmed)}</span>
+  }
+  // List item: starts with -, *, or digit+dot
+  if (/^[-*•]\s/.test(trimmed) || /^\d+[.、]\s/.test(trimmed)) {
+    const content = trimmed.replace(/^[-*•]\s/, '').replace(/^\d+[.、]\s/, '')
+    return <span key={key} className="reply-list-item">{renderInline(content)}</span>
+  }
+  if (!trimmed) return <p key={key} style={{ marginTop: 4 }} />
+  return <p key={key}>{renderInline(trimmed)}</p>
 }
 
 interface ChatPanelProps {
@@ -520,9 +550,7 @@ export function ChatPanel({
                 >
                   <div className="chat-msg__label">{message.role === 'assistant' ? '助手' : '你'}</div>
                   <div className="chat-msg__bubble">
-                    {visibleContent.split('\n').map((line, index) => (
-                      <p key={`${message.id}-${index}`}>{line}</p>
-                    ))}
+                    {visibleContent.split('\n').map((line, index) => renderChatLine(line, `${message.id}-${index}`))}
                   </div>
                 </motion.div>
               )
