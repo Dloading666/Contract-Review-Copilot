@@ -2882,7 +2882,7 @@ body.landing-page-active h4 {
 }
 
 /* ── Workspace panel wrappers: transparent to grid on all screen sizes ── */
-.workspace > div {
+.workspace > div:not(.workspace__resizer) {
   display: contents;
 }
 
