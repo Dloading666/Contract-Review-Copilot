@@ -72,12 +72,6 @@ services:
       - OCR_API_KEY=${OCR_API_KEY:-}
       - OCR_BASE_URL=${OCR_BASE_URL:-https://api.siliconflow.cn/v1}
       - OCR_MODEL=PaddlePaddle/PaddleOCR-VL-1.5
-      - OPENAI_API_KEY=your key
-      - OPENAI_BASE_URL=https://api.siliconflow.cn/v1
-      - REVIEW_MODEL=Qwen/Qwen3.5-4B
-      - EMBEDDING_API_KEY=your key
-      - EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-      - EMBEDDING_MODEL=text-embedding-v4
 
     env_file:
       - ./backend/.env
