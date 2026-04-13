@@ -591,6 +591,11 @@ export default function App() {
         }))
       } else {
         const errorMessage = err instanceof Error ? err.message : '网络错误，请重试。'
+        // Auto-logout on expired token
+        if (err instanceof Error && err.message.includes('登录已过期')) {
+          logout()
+          return
+        }
         setReview((prev) => ({
           ...prev,
           chatMessages: prev.chatMessages.map((chatMessage) => (
