@@ -73,7 +73,7 @@ services:
       - OCR_BASE_URL=${OCR_BASE_URL:-https://api.siliconflow.cn/v1}
       - OCR_MODEL=PaddlePaddle/PaddleOCR-VL-1.5
       - OPENAI_API_KEY=sk-cp-rOB2azclrj-YFiW_Zm2fuS48kSrQPqFChbA-fvdSTeRDE3nDafOJN_uSv4IcIHuXBgiel8n-SMBqYlrRB1MLSN8M2sVOZ2p6eA6PoXEvR0BPgQ-oYE_zVIY
-      - OPENAI_BASE_URL=https://api.minimax.chat/v1
+      - OPENAI_BASE_URL=https://api.siliconflow.cn/v1
       - REVIEW_MODEL=qwen3.5-4b
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
       - EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
