@@ -307,6 +307,32 @@ export function buildThinkingSteps(
 export default function App() {
   const { isAuthenticated, login, logout, user, token, updateUser, refreshUser } = useAuth()
 
+  // Resizable panels
+  const [leftWidth, setLeftWidth] = useState(480)
+  const isResizing = useRef(false)
+  const workspaceRef = useRef<HTMLElement>(null)
+
+  const handleResizerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isResizing.current = true
+    const startX = e.clientX
+    const startWidth = leftWidth
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isResizing.current) return
+      const delta = ev.clientX - startX
+      const newWidth = Math.max(280, Math.min(startWidth + delta, window.innerWidth - 320))
+      setLeftWidth(newWidth)
+    }
+    const onMouseUp = () => {
+      isResizing.current = false
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }, [leftWidth])
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const urlToken = params.get('token')
@@ -636,7 +662,7 @@ export default function App() {
             📄 合同
           </button>
         </div>
-        <main className="workspace">
+        <main className="workspace" ref={workspaceRef} style={{ gridTemplateColumns: `${leftWidth}px 6px 1fr` }}>
           <div className={mobileDocVisible ? 'workspace__panel--hidden' : undefined}>
             <ChatPanel
               review={review}
@@ -648,6 +674,7 @@ export default function App() {
               onSendMessage={handleSendMessage}
             />
           </div>
+          <div className="workspace__resizer" onMouseDown={handleResizerMouseDown} />
           <div className={!mobileDocVisible ? 'workspace__panel--hidden' : undefined}>
             <DocPanel
               review={review}
