@@ -61,6 +61,8 @@ interface ChatPanelProps {
   onBreakpointConfirm: () => void
   onReset: () => void
   onSendMessage: (message: string) => void
+  isChatPending?: boolean
+  onCancelChat?: () => void
 }
 
 function isNoRiskPlaceholderCard(card: RiskCard) {
@@ -84,6 +86,8 @@ export function ChatPanel({
   onBreakpointConfirm,
   onReset,
   onSendMessage,
+  isChatPending = false,
+  onCancelChat,
 }: ChatPanelProps) {
   const [inputValue, setInputValue] = useState('')
   const [expandedCard, setExpandedCard] = useState<string | null>(null)
@@ -573,9 +577,15 @@ export function ChatPanel({
                   onChange={(event) => setInputValue(event.target.value)}
                   onKeyDown={handleKeyDown}
                 />
-                <button className="chat-input-send" onClick={handleSend} disabled={!inputValue.trim()}>
-                  <Send size={24} />
-                </button>
+                {isChatPending ? (
+                  <button className="chat-input-cancel" onClick={onCancelChat} title="停止回答">
+                    <span style={{ fontSize: 18, lineHeight: 1 }}>■</span>
+                  </button>
+                ) : (
+                  <button className="chat-input-send" onClick={handleSend} disabled={!inputValue.trim()}>
+                    <Send size={24} />
+                  </button>
+                )}
               </div>
             </div>
           ) : (

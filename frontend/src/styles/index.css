@@ -1389,6 +1389,21 @@ body.landing-page-active h4 {
 .chat-input-send:hover:not(:disabled) { background: var(--color-blue-hover); }
 .chat-input-send:disabled { background: var(--color-cream-dark); cursor: not-allowed; }
 
+.chat-input-cancel {
+  width: 72px;
+  background: #e53935;
+  border: none;
+  border-left: 4px solid black;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+.chat-input-cancel:hover { background: #b71c1c; }
+
 /* ── Doc Panel ── */
 .doc-panel {
   display: flex;
