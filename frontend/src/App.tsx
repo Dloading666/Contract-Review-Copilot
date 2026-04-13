@@ -528,13 +528,26 @@ export default function App() {
       .finally(() => setIsExportingReport(false))
   }, [isExportingReport, review.filename, review.finalReport, token])
 
+  const [isChatPending, setIsChatPending] = useState(false)
+  const chatAbortRef = useRef<AbortController | null>(null)
+
+  const handleCancelChat = useCallback(() => {
+    chatAbortRef.current?.abort()
+  }, [])
+
   const handleSendMessage = useCallback(async (message: string) => {
     const normalizedMessage = message.trim()
     if (!normalizedMessage) return
 
+    // Cancel any in-progress request
+    chatAbortRef.current?.abort()
+    const abortController = new AbortController()
+    chatAbortRef.current = abortController
+
     const userMsgId = `user-${Date.now()}`
     const assistantMsgId = `assistant-${Date.now() + 1}`
 
+    setIsChatPending(true)
     setReview((prev) => ({
       ...prev,
       chatMessages: [
@@ -548,6 +561,7 @@ export default function App() {
       const riskSummary = review.riskCards.map((card) => `[${card.level}] ${card.title}: ${card.issue}`).join('\n')
       const payload = await safeFetchJSON<{ reply?: string; error?: string }>('/api/chat', {
         method: 'POST',
+        signal: abortController.signal,
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -569,15 +583,25 @@ export default function App() {
         )),
       }))
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '网络错误，请重试。'
-      setReview((prev) => ({
-        ...prev,
-        chatMessages: prev.chatMessages.map((chatMessage) => (
-          chatMessage.id === assistantMsgId
-            ? { ...chatMessage, content: errorMessage }
-            : chatMessage
-        )),
-      }))
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Remove the pending assistant bubble on cancel
+        setReview((prev) => ({
+          ...prev,
+          chatMessages: prev.chatMessages.filter((m) => m.id !== assistantMsgId),
+        }))
+      } else {
+        const errorMessage = err instanceof Error ? err.message : '网络错误，请重试。'
+        setReview((prev) => ({
+          ...prev,
+          chatMessages: prev.chatMessages.map((chatMessage) => (
+            chatMessage.id === assistantMsgId
+              ? { ...chatMessage, content: errorMessage }
+              : chatMessage
+          )),
+        }))
+      }
+    } finally {
+      setIsChatPending(false)
     }
   }, [review.contractText, review.riskCards, review.sessionId, token])
 
@@ -672,6 +696,8 @@ export default function App() {
               onBreakpointConfirm={handleBreakpointConfirm}
               onReset={handleReset}
               onSendMessage={handleSendMessage}
+              isChatPending={isChatPending}
+              onCancelChat={handleCancelChat}
             />
           </div>
           <div className="workspace__resizer" onMouseDown={handleResizerMouseDown} />
