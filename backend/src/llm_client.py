@@ -339,8 +339,8 @@ def create_chat_completion(
     tertiary_model = _get_tertiary_review_model()  # Qwen/Qwen3.5-4B (SiliconFlow)
 
     attempt_list = [
-        (primary_model, "openrouter", _get_openrouter_client),
-        (fallback_model, "openrouter", _get_openrouter_client),
+        (primary_model, "siliconflow", _get_siliconflow_client),
+        (fallback_model, "siliconflow", _get_siliconflow_client),
         (tertiary_model, "siliconflow", _get_siliconflow_client),
     ]
 
