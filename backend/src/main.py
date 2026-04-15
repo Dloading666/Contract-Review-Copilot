@@ -389,7 +389,8 @@ async def chat(body: ChatRequest, authorization: Optional[str] = Header(None)):
             "model": getattr(response, "model", settings.primary_review_model) or settings.primary_review_model,
         }
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        fallback_reply = f"抱歉，AI模型暂时繁忙。请稍后重试，或联系管理员检查服务状态。"
+        return JSONResponse(status_code=503, content={"reply": fallback_reply})
 
 
 @app.post("/api/ocr/ingest")
