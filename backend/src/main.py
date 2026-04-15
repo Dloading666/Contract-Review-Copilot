@@ -386,7 +386,7 @@ async def chat(body: ChatRequest, authorization: Optional[str] = Header(None)):
             reply = build_empty_chat_fallback_reply(body.risk_summary)
         return {
             "reply": reply,
-            "model": getattr(response, "model", settings.review_model) or settings.review_model,
+            "model": getattr(response, "model", settings.primary_review_model) or settings.primary_review_model,
         }
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})

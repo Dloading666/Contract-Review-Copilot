@@ -17,15 +17,16 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.siliconflow.cn/v1"
 
     # 主力模型（OpenRouter）— Gemma 4 26B A4B MoE 速度最快
-    primary_review_model: str = "google/gemma-4-26b-a4b-it:free"      # 推理/审查/报告/问答
-    primary_ocr_model: str = "nvidia/nemotron-nano-12b-v2-vl:free"    # 图片 OCR 识别
+    primary_review_model: str = "Qwen/Qwen3.5-4B"      # 推理/审查/报告/问答（SiliconFlow）
 
-    # 备用模型（OpenRouter）— Gemma 4 31B dense 质量更优
-    fallback_review_model: str = "google/gemma-4-31b-it:free"          # 第二备用（OpenRouter）
-    fallback_ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"          # 图片 OCR（SiliconFlow）
+    # 备用模型
+    fallback_review_model: str = "Qwen/Qwen3.5-4B"          # 第二备用（SiliconFlow）
 
-    # 第三备用模型（SiliconFlow）
+    # 第三备用模型
     tertiary_review_model: str = "Qwen/Qwen3.5-4B"  # 第三备用（SiliconFlow）
+
+    primary_ocr_model: str = "nvidia/nemotron-nano-12b-v2-vl:free"    # 图片 OCR 识别
+    fallback_ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"          # 图片 OCR（SiliconFlow）
 
     jwt_secret: str | None = None
     jwt_secret_file: str | None = None
