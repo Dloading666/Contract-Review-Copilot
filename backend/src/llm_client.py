@@ -113,10 +113,6 @@ def _get_fallback_review_model() -> str:
     return get_settings().fallback_review_model
 
 
-def _get_tertiary_review_model() -> str:
-    return get_settings().tertiary_review_model
-
-
 def _get_primary_ocr_model() -> str:
     return get_settings().primary_ocr_model
 
@@ -334,14 +330,12 @@ def create_chat_completion(
     """
     del model
 
-    primary_model = _get_primary_review_model()     # google/gemma-4-31b-it:free
-    fallback_model = _get_fallback_review_model()    # nvidia/nemotron-3-nano-30b-a3b:free
-    tertiary_model = _get_tertiary_review_model()  # Qwen/Qwen3.5-4B (SiliconFlow)
+    primary_model = _get_primary_review_model()     # Qwen/Qwen3.5-4B
+    fallback_model = _get_fallback_review_model()  # deepseek-ai/DeepSeek-V2.5
 
     attempt_list = [
         (primary_model, "siliconflow", _get_siliconflow_client),
         (fallback_model, "siliconflow", _get_siliconflow_client),
-        (tertiary_model, "siliconflow", _get_siliconflow_client),
     ]
 
     last_exc = None
