@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+import asyncio
 from asyncio import to_thread
 from contextlib import asynccontextmanager
 from io import BytesIO
@@ -25,6 +26,8 @@ from .llm_client import DEFAULT_MODEL_KEY, available_models, create_chat_complet
 from .ocr import UploadedContractFile, ingest_contract_files
 from .rate_limit import RateLimitRule, enforce_rate_limits, get_request_ip
 from .report_export import build_report_docx, build_report_download_name
+from .services import queue_service
+from .workers import review_worker
 from .schemas import (
     ChatRequest,
     ConfirmRequest,
@@ -542,6 +545,129 @@ async def confirm_breakpoint(
                 yield format_sse(event_type, event_data)
         except Exception as exc:
             yield format_sse("error", {"message": str(exc)})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/review/queue")
+async def queue_review(
+    body: ContractReviewRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Submit a contract review to the background queue.
+
+    Returns immediately with a ``task_id`` that the client can use to
+    stream progress via ``GET /api/review/queue/{task_id}/stream``.
+    Useful when the server is under load and cannot start a review inline.
+    """
+    user = require_current_user(authorization)
+    session_id = body.session_id or f"session-{uuid.uuid4().hex}"
+
+    pending = queue_service.get_pending_count()
+    task_id = queue_service.create_task(
+        user_id=user["id"],
+        contract_text=body.contract_text,
+        session_id=session_id,
+        filename=body.filename or "",
+    )
+
+    def _on_breakpoint(sid: str, session_data: dict) -> None:
+        store_paused_session(sid, session_data)
+
+    asyncio.create_task(
+        review_worker.run_queued_review(
+            task_id=task_id,
+            contract_text=body.contract_text,
+            session_id=session_id,
+            user_id=user["id"],
+            on_breakpoint=_on_breakpoint,
+        )
+    )
+
+    return {
+        "task_id": task_id,
+        "session_id": session_id,
+        "status": "pending",
+        "queue_position": pending + 1,
+        "estimated_wait": f"约 {max(1, pending) * 2} 分钟" if pending > 0 else "即将开始",
+    }
+
+
+@app.get("/api/review/queue/{task_id}")
+async def get_queue_task_status(
+    task_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Return the current status of a queued review task."""
+    user = require_current_user(authorization)
+    task = await to_thread(queue_service.get_task, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.get("user_id") != user.get("id"):
+        raise HTTPException(status_code=403, detail="无权访问该任务")
+    return task
+
+
+@app.get("/api/review/queue/{task_id}/stream")
+async def stream_queue_task(
+    task_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    SSE stream for a queued review task.
+
+    The endpoint polls the Redis event list and relays events to the client
+    as they are produced by the background worker.  The stream closes when
+    the worker pushes the internal ``_done`` sentinel or the task reaches a
+    terminal status (completed / failed / paused).
+    """
+    user = require_current_user(authorization)
+    task = await to_thread(queue_service.get_task, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.get("user_id") != user.get("id"):
+        raise HTTPException(status_code=403, detail="无权访问该任务")
+
+    async def event_generator() -> AsyncGenerator[bytes, None]:
+        offset = 0
+        poll_interval = 0.5      # seconds between Redis polls
+        idle_polls = 0
+        max_idle_polls = 120     # 60 s of silence → timeout
+
+        while True:
+            events = await to_thread(queue_service.get_events, task_id, offset)
+
+            if events:
+                idle_polls = 0
+                for ev in events:
+                    event_type = ev.get("event", "message")
+                    # Internal sentinel — close the stream
+                    if event_type == queue_service.DONE_SENTINEL:
+                        return
+                    yield format_sse(event_type, ev.get("data", {}))
+                offset += len(events)
+            else:
+                idle_polls += 1
+                # Also exit if the worker already marked the task terminal
+                current_task = await to_thread(queue_service.get_task, task_id)
+                if current_task and current_task.get("status") in (
+                    "completed", "failed", "paused"
+                ):
+                    return
+                if idle_polls >= max_idle_polls:
+                    yield format_sse("error", {"message": "任务等待超时，请刷新页面重试"})
+                    return
+
+            await asyncio.sleep(poll_interval)
 
     return StreamingResponse(
         event_generator(),

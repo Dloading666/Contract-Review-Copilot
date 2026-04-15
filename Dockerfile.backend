@@ -18,7 +18,7 @@ COPY pyproject.toml .
 COPY src/ ./src/
 
 # Keep the install step compatible with environments where BuildKit is unavailable.
-RUN pip install --no-cache-dir --default-timeout=300 -e .
+RUN pip install --no-cache-dir --default-timeout=300 -e . --trusted-host pypi.tuna.tsinghua.edu.cn -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # .env is provided via env_file in docker-compose
 

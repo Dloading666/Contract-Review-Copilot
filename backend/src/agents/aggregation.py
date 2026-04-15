@@ -108,8 +108,8 @@ def generate_report(
                     lessee=lessee,
                     property_address=prop,
                     property_area=area,
-                    monthly_rent=rent,
-                    deposit=deposit,
+                    monthly_rent=_safe_num(rent),
+                    deposit=_safe_num(deposit),
                     lease_term=lease_term,
                     risk_summary=risk_summary,
                     legal_basis=legal_basis,
@@ -117,12 +117,14 @@ def generate_report(
             ],
             temperature=0.3,
             max_tokens=3072,
-            timeout=60.0,
+            timeout=90.0,
         )
 
         report_text = response.choices[0].message.content.strip()
 
-        # Split into paragraphs by double newlines or section headers
+        # Split into paragraphs by section headers or blank lines.
+        # Keep any non-empty block — don't apply a length filter that silently
+        # drops valid short sections.
         paragraphs = []
         current = ""
         for line in report_text.split("\n"):
@@ -131,8 +133,7 @@ def generate_report(
                     paragraphs.append(current.strip())
                 current = line
             elif line.strip() == "" and current.strip():
-                if len(current) > 50:
-                    paragraphs.append(current.strip())
+                paragraphs.append(current.strip())
                 current = ""
             else:
                 current += "\n" + line
@@ -140,18 +141,22 @@ def generate_report(
         if current.strip():
             paragraphs.append(current.strip())
 
-        # Add metadata paragraph if not present
+        # Add metadata footer if not already present
         if not any("免责声明" in p for p in paragraphs):
             paragraphs.append(
-                f"---\n⚠️ *本报告由 AI 自动生成，仅供参考。具体法律问题请咨询专业律师。*\n"
-                f"📋 *报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*"
+                f"---\n⚠️ 本报告由 AI 自动生成，仅供参考。具体法律问题请咨询专业律师。\n"
+                f"报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
 
-        return paragraphs if paragraphs else [report_text]
+        return paragraphs if paragraphs else _template_report(contract_text, issues)
 
     except Exception as e:
         print(f"[Aggregation] LLM call failed: {e}, using template fallback")
-        return _template_report(contract_text, issues, model_key=model_key)
+        try:
+            return _template_report(contract_text, issues, model_key=model_key)
+        except Exception as fallback_exc:
+            print(f"[Aggregation] Template fallback also failed: {fallback_exc}")
+            return _minimal_report(issues)
 
 
 def _template_report(
@@ -204,3 +209,26 @@ def _template_report(
     )
 
     return paragraphs
+
+
+def _safe_num(value) -> float:
+    """Safely convert any value to float for use in format specs."""
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _minimal_report(issues: list[dict] | None) -> list[str]:
+    """Emergency fallback report when both LLM and template generation fail."""
+    issues = issues or []
+    lines = ["## 合同审查报告\n\n审查已完成，以下是风险条款摘要："]
+    for issue in issues:
+        level_map = {"critical": "🔴 高危", "high": "🟠 高风险", "medium": "🟡 中风险", "low": "🟢 提示"}
+        label = level_map.get(issue.get("level", "low"), "⚪")
+        lines.append(f"{label} **{issue.get('clause', '风险项')}**：{issue.get('issue', '')}")
+    lines.append(
+        f"\n⚠️ 本报告由规则引擎生成，仅供参考。具体法律问题请咨询专业律师。\n"
+        f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    return lines

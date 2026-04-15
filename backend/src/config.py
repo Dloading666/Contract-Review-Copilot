@@ -8,17 +8,24 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # SiliconFlow API（OpenAI 兼容接口）- 用于审查/推理/OCR
+    # OpenRouter API（主力模型）
+    openrouter_api_key: str | None = "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"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
+    # SiliconFlow API（备用模型）
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.siliconflow.cn/v1"
 
-    # 模型配置
-    review_model: str = "Qwen/Qwen3.5-4B"                # 推理/审查/报告/问答
-    ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"    # 图片 OCR 识别
+    # 主力模型（OpenRouter）— Gemma 4 26B A4B MoE 速度最快
+    primary_review_model: str = "google/gemma-4-26b-a4b-it:free"      # 推理/审查/报告/问答
+    primary_ocr_model: str = "nvidia/nemotron-nano-12b-v2-vl:free"    # 图片 OCR 识别
 
-    # OCR 独立 API（可与审查模型使用不同的 provider）
-    ocr_api_key: str | None = None
-    ocr_base_url: str = "https://api.siliconflow.cn/v1"
+    # 备用模型（OpenRouter）— Gemma 4 31B dense 质量更优
+    fallback_review_model: str = "google/gemma-4-31b-it:free"          # 第二备用（OpenRouter）
+    fallback_ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"          # 图片 OCR（SiliconFlow）
+
+    # 第三备用模型（SiliconFlow）
+    tertiary_review_model: str = "Qwen/Qwen3.5-4B"  # 第三备用（SiliconFlow）
 
     jwt_secret: str | None = None
     jwt_secret_file: str | None = None

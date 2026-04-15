@@ -1,4 +1,4 @@
-"""
+﻿"""
 Logic Review Agent — LLM-powered clause review with rule-based fallback.
 """
 from __future__ import annotations
@@ -13,82 +13,7 @@ from .routing import decide_routing
 from .legal_skill import _is_claude_enabled, REVIEW_CONTRACT_SKILL
 from ..search import build_search_context
 from ..llm_client import get_primary_model_key
-
-AUTOFIX_PROMPT = """你是一个专业的合同修订专家。请根据以下风险信息，生成一条修正后的合同条款。
-
-风险条款：{clause}
-问题描述：{issue}
-修正建议：{suggestion}
-法律依据：{legal_ref}
-
-请直接输出一段修正后的合同条款文本，用中括号【】标注关键修改处。
-输出格式示例：
-【建议将"押金不予退还"修改为"押金在扣除应由乙方承担的水电费及合理损耗费用后无息退还"】
-
-直接输出修正文本，不要其他内容。
-"""
-
-REVIEW_PROMPT = """你是一个专业的合同审查律师。请严格依据合同原文逐条审查风险，不要脱离原文臆测。
-
-合同信息：
-{contract_info}
-
-已提取的关键变量：
-- 月租金：{monthly_rent} 元
-- 押金：{deposit} 元
-- 押金退还条件：{deposit_conditions}
-- 违约金条款：{penalty_clause}
-- 滞纳金条款：{late_fee}
-- 解约条款：{termination_clause}
-
-法规检索上下文：
-{rag_context}
-
-合同原文（重点逐条审查）：
-{contract_text}
-
-请审查以下风险点并返回 JSON 数组格式的风险列表：
-
-审查维度：
-1. 押金是否超过 2-3 个月租金（违反地方规定）
-2. 违约金是否超过实际损失的 30%（民法典第585条）
-3. 滞纳金是否超过年化 LPR 四倍（约 14.8%）
-4. 押金退还条件是否明确（有无模糊地带）
-5. 提前解约违约金是否过高
-6. 合同是否存在其他显失公平的条款
-7. 是否存在单方调整租金或服务费用的权利
-8. 自动续租条款是否对等，是否存在“未通知即视为续租”
-9. 维修责任是否被完全转嫁给承租人，尤其是主体结构、管道、家电大修
-10. 解约权是否明显不对等，是否存在甲方可随时解约而乙方受限
-11. 提前通知期是否明显不对等，是否只约束乙方
-12. 是否存在不合理的禁止行为并配套高额违约金或罚款
-13. 房屋交付标准、设施状态和损坏责任是否写明，是否存在模糊交付
-
-输出要求：
-- 必须优先依据合同原文识别问题，尽量在 issue 中点明具体条款内容
-- clause 应写明条款编号、条款名称或可以定位的条款主题
-- 没有把握时不要输出
-
-对于每条发现的风险，返回：
-- clause: 涉及的合同条款编号/名称
-- level: critical/high/medium/low
-- risk_level: 1-5 的数字
-- issue: 问题描述
-- suggestion: 修正建议
-- legal_reference: 相关法条
-
-直接返回 JSON 数组，不要其他文字：
-[
-  {{
-    "clause": "第8.2条",
-    "level": "critical",
-    "risk_level": 5,
-    "issue": "合同写明“押金不予退还”，明显加重承租人责任。",
-    "suggestion": "改为在扣除实际欠费和合理损耗后退还押金，并明确退还时限。",
-    "legal_reference": "《民法典》第497条"
-  }}
-]
-"""
+from ..prompts.review_prompt import AUTOFIX_PROMPT, REVIEW_PROMPT
 
 RISK_KEYWORDS = (
     "押金",
@@ -355,6 +280,7 @@ def _normalize_issue(issue: dict) -> dict:
         "issue": issue.get("issue", "未提供问题描述。"),
         "suggestion": issue.get("suggestion", "建议进一步核对原合同条款。"),
         "legal_reference": issue.get("legal_reference") or issue.get("legalRef") or "《民法典》合同编",
+        "confidence": issue.get("confidence", "high"),
     }
 
 
@@ -528,6 +454,39 @@ def _build_issue(
     }
 
 
+def _parse_llm_json(text: str) -> list[dict] | None:
+    """
+    Extract and parse a JSON array from raw LLM output.
+
+    Handles markdown code fences (```json ... ```) and returns None
+    when the text cannot be parsed as valid JSON.
+    """
+    if "```json" in text:
+        text = text.split("```json", 1)[1].split("```", 1)[0]
+    elif "```" in text:
+        text = text.split("```", 1)[1].split("```", 1)[0]
+
+    # Try to locate the outermost JSON array or object
+    array_start = text.find("[")
+    obj_start = text.find("{")
+    if array_start == -1 and obj_start == -1:
+        return None
+
+    start = array_start if obj_start == -1 else (
+        obj_start if array_start == -1 else min(array_start, obj_start)
+    )
+
+    try:
+        parsed = json.loads(text[start:].strip())
+        if isinstance(parsed, dict):
+            return [parsed]
+        if isinstance(parsed, list):
+            return parsed
+        return None
+    except json.JSONDecodeError:
+        return None
+
+
 def review_clauses(
     contract_text: str,
     routing: dict | None = None,
@@ -560,6 +519,7 @@ def review_clauses(
 
         prompt = REVIEW_PROMPT.format(
             contract_info=contract_info,
+            contract_type=entities.get("contract_type", "租赁合同"),
             monthly_rent=rent,
             deposit=deposit,
             deposit_conditions=entities.get("deposit", {}).get("conditions", "未明确"),
@@ -583,12 +543,35 @@ def review_clauses(
         )
 
         result_text = response.choices[0].message.content.strip()
-        if "```json" in result_text:
-            result_text = result_text.split("```json", 1)[1].split("```", 1)[0]
-        elif "```" in result_text:
-            result_text = result_text.split("```", 1)[1].split("```", 1)[0]
+        issues = _parse_llm_json(result_text)
 
-        issues = json.loads(result_text.strip())
+        # If first attempt returned malformed JSON, retry once with a stricter prompt
+        if issues is None:
+            print("[LogicReview] JSON parse failed on first attempt, retrying...", flush=True)
+            retry_response = create_chat_completion(
+                model=model_key or get_primary_model_key(),
+                messages=[
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": prompt},
+                    {"role": "assistant", "content": response.choices[0].message.content},
+                    {
+                        "role": "user",
+                        "content": (
+                            "你的上一条回复中JSON格式有误，请只输出合法的JSON数组，"
+                            "不要包含任何解释文字或代码块标记。"
+                        ),
+                    },
+                ],
+                temperature=0.0,
+                max_tokens=2048,
+                timeout=30.0,
+            )
+            retry_text = retry_response.choices[0].message.content.strip()
+            issues = _parse_llm_json(retry_text)
+
+        if issues is None:
+            raise ValueError("LLM 两次均未返回合法 JSON，回退规则引擎")
+
         if isinstance(issues, dict):
             issues = [issues]
         issues = [_normalize_issue(issue) for issue in issues]

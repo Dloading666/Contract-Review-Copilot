@@ -1,8 +1,14 @@
 """
-SiliconFlow LLM client using the OpenAI-compatible API.
+Multi-provider LLM client with primary (OpenRouter) + fallback (SiliconFlow) support.
 
-- Review/chat model: configured via `review_model`
-- OCR model: configured via `ocr_model`
+Review/chat model chain:
+  1. google/gemma-4-26b-a4b-it:free  (primary — MoE, fastest)
+  2. google/gemma-4-31b-it:free      (fallback — dense, higher quality)
+  3. Qwen/Qwen3.5-4B                 (tertiary — SiliconFlow, free)
+
+OCR model chain:
+  1. nvidia/nemotron-nano-12b-v2-vl:free   (primary — OpenRouter)
+  2. PaddlePaddle/PaddleOCR-VL-1.5         (fallback — SiliconFlow)
 """
 from __future__ import annotations
 
@@ -19,9 +25,8 @@ from openai import APIConnectionError, APITimeoutError, OpenAI
 from .config import get_settings
 
 DEFAULT_MODEL_KEY = "review"
-FALLBACK_MODEL_KEY = DEFAULT_MODEL_KEY
 OCR_UNREADABLE_MARKER = "OCR_UNREADABLE_CONTRACT_IMAGE"
-TRANSIENT_LLM_ERRORS = (APIConnectionError, APITimeoutError)
+TRANSIENT_LLM_ERRORS = (APIConnectionError, APITimeoutError, Exception)
 
 SUPPORTED_IMAGE_MIME_TYPES = {
     "image/jpeg",
@@ -62,57 +67,71 @@ OCR_CORRECTION_SYSTEM_PROMPT = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Client factories
+# ---------------------------------------------------------------------------
+
+def _get_openrouter_client() -> OpenAI:
+    settings = get_settings()
+    return OpenAI(
+        api_key=os.getenv("OPENROUTER_API_KEY") or settings.openrouter_api_key,
+        base_url=os.getenv("OPENROUTER_BASE_URL") or settings.openrouter_base_url,
+        timeout=httpx.Timeout(120.0, connect=15.0),
+    )
+
+
+def _get_siliconflow_client(api_key: Optional[str] = None) -> OpenAI:
+    settings = get_settings()
+    return OpenAI(
+        api_key=api_key or os.getenv("OPENAI_API_KEY") or settings.openai_api_key,
+        base_url=os.getenv("OPENAI_BASE_URL") or settings.openai_base_url,
+        timeout=httpx.Timeout(120.0, connect=15.0),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Model resolution
+# ---------------------------------------------------------------------------
+
 def get_primary_model_key() -> str:
     return DEFAULT_MODEL_KEY
 
 
-def _get_client() -> OpenAI:
-    """Get client for review/chat (SiliconFlow)."""
-    settings = get_settings()
-    return OpenAI(
-        api_key=os.getenv("OPENAI_API_KEY") or settings.openai_api_key or "sk-fhqbknokfwhselfchqjhsumfkwcwrhltmwujswbindgviwzs",
-        base_url=os.getenv("OPENAI_BASE_URL") or settings.openai_base_url,
-        timeout=httpx.Timeout(60.0, connect=10.0),
-    )
-
-
-def _get_ocr_client() -> OpenAI:
-    """Get client for OCR (SiliconFlow PaddleOCR)."""
-    settings = get_settings()
-    api_key = (
-        os.getenv("OCR_API_KEY")
-        or settings.ocr_api_key
-        or "sk-fhqbknokfwhselfchqjhsumfkwcwrhltmwujswbindgviwzs"
-    )
-    base_url = (
-        os.getenv("OCR_BASE_URL")
-        or settings.ocr_base_url
-        or "https://api.siliconflow.cn/v1"
-    )
-    return OpenAI(
-        api_key=api_key,
-        base_url=base_url,
-        timeout=httpx.Timeout(90.0, connect=10.0),
-    )
-
-
-def _resolve_model_id(model: Optional[str]) -> str:
-    settings = get_settings()
-    if not model or model in (DEFAULT_MODEL_KEY, FALLBACK_MODEL_KEY):
-        return settings.review_model
-    if model == "ocr":
-        return settings.ocr_model
-    return model
-
-
 def available_models() -> list[dict[str, str]]:
     settings = get_settings()
-    return [{"key": DEFAULT_MODEL_KEY, "label": settings.review_model}]
+    return [
+        {"key": DEFAULT_MODEL_KEY, "label": settings.primary_review_model},
+        {"key": "fallback", "label": settings.fallback_review_model},
+    ]
 
+
+def _get_primary_review_model() -> str:
+    return get_settings().primary_review_model
+
+
+def _get_fallback_review_model() -> str:
+    return get_settings().fallback_review_model
+
+
+def _get_tertiary_review_model() -> str:
+    return get_settings().tertiary_review_model
+
+
+def _get_primary_ocr_model() -> str:
+    return get_settings().primary_ocr_model
+
+
+def _get_fallback_ocr_model() -> str:
+    return get_settings().fallback_ocr_model
+
+
+# ---------------------------------------------------------------------------
+# Thinking mode helpers
+# ---------------------------------------------------------------------------
 
 def _should_disable_thinking(model_id: str) -> bool:
-    normalized_model = model_id.lower()
-    return "qwen/qwen3" in normalized_model or normalized_model.startswith("qwen3")
+    normalized = model_id.lower()
+    return "qwen/qwen3" in normalized or normalized.startswith("qwen3")
 
 
 def _apply_chat_extra_body_defaults(model_id: str, kwargs: dict) -> dict:
@@ -128,35 +147,14 @@ def _apply_chat_extra_body_defaults(model_id: str, kwargs: dict) -> dict:
     else:
         return request_kwargs
 
-    # Qwen3/3.5 can spend the whole token budget in reasoning_content.
-    # Disabling thinking keeps normal chat replies in message.content.
     extra_body.setdefault("enable_thinking", False)
     request_kwargs["extra_body"] = extra_body
     return request_kwargs
 
 
-def normalize_image_mime_type(mime_type: Optional[str], filename: Optional[str] = None) -> str:
-    candidate = (mime_type or "").split(";", 1)[0].strip().lower()
-    if candidate in SUPPORTED_IMAGE_MIME_TYPES:
-        return candidate
-
-    guessed_type, _ = mimetypes.guess_type(filename or "")
-    guessed = (guessed_type or "").lower()
-    if guessed in SUPPORTED_IMAGE_MIME_TYPES:
-        return guessed
-
-    raise ValueError("只支持 JPG、PNG、WEBP 图片格式。")
-
-
-def image_bytes_to_base64(image_bytes: bytes) -> str:
-    if not image_bytes:
-        raise ValueError("图片内容不能为空。")
-    return base64.b64encode(image_bytes).decode("ascii")
-
-
-def _build_image_data_url(image_bytes: bytes, mime_type: str) -> str:
-    return f"data:{mime_type};base64,{image_bytes_to_base64(image_bytes)}"
-
+# ---------------------------------------------------------------------------
+# Response parsing
+# ---------------------------------------------------------------------------
 
 def _extract_response_text(response) -> str:
     if not getattr(response, "choices", None):
@@ -174,6 +172,10 @@ def _extract_response_text(response) -> str:
         return "\n".join(fragments).strip()
     return ""
 
+
+# ---------------------------------------------------------------------------
+# OCR text cleanup
+# ---------------------------------------------------------------------------
 
 def _sanitize_ocr_text(text: str) -> str:
     sanitized = text.strip()
@@ -208,26 +210,18 @@ def _deduplicate_repeated_lines(text: str, max_repeats: int = 3) -> str:
 
 
 def _deduplicate_repeated_phrases(text: str, max_repeats: int = 3) -> str:
-    """
-    Truncate repeated short label phrases within OCR text.
-    Handles inline repetition like '水表底: ___水表底: ___...' across lines.
-    Kicks in after max_repeats+1 occurrences of the same label.
-    """
     from collections import Counter
 
-    # Match short Chinese label (1-6 chars) + colon (half or full width) + optional blanks
     label_re = re.compile(r"([\u4e00-\u9fff]{1,6})[:：][\s_\u25a1\u2014\-]{0,10}")
     matches = list(label_re.finditer(text))
     if not matches:
         return text
 
-    # Count by the Chinese label characters only (ignores colon style and trailing blanks)
     label_counts: Counter = Counter(m.group(1) for m in matches)
 
-    # Truncate at the (max_repeats+1)-th occurrence of the most-repeated label
     for label_chars, count in sorted(label_counts.items(), key=lambda x: -x[1]):
         if count <= max_repeats + 1:
-            break  # sorted descending, no more candidates
+            break
         search_re = re.compile(re.escape(label_chars) + r"[:：][\s_\u25a1\u2014\-]{0,10}")
         positions = [m.start() for m in search_re.finditer(text)]
         if len(positions) > max_repeats:
@@ -267,13 +261,11 @@ def _is_suspicious_repetitive_ocr_text(text: str) -> bool:
         text,
     ))
     has_strong_contract_context = (
-        contract_signal_count >= 6
-        and unique_visible_chars > 60
-        and len(meaningful_text) >= 120
+        contract_signal_count >= 6 and unique_visible_chars > 60 and len(meaningful_text) >= 120
     )
     kana_count = len(re.findall(r"[\u3040-\u30ff\u31f0-\u31ff]", text))
     non_contract_noise = re.search(
-        r"(ヘア|シャンプー|トリートメント|おすすめ|ランキング|レビュー|口コミ|商品|価格|Amazon|楽天)",
+        r"(ヘア|シャンプー|トリートメント|おすすめ|ランキング|レビュー|口コミ|株式会社|本件|の詳細|楽天|Amazon)",
         text,
         flags=re.IGNORECASE,
     )
@@ -299,24 +291,67 @@ def _is_suspicious_repetitive_ocr_text(text: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Image utilities
+# ---------------------------------------------------------------------------
+
+def normalize_image_mime_type(mime_type: Optional[str], filename: Optional[str] = None) -> str:
+    candidate = (mime_type or "").split(";", 1)[0].strip().lower()
+    if candidate in SUPPORTED_IMAGE_MIME_TYPES:
+        return candidate
+    guessed_type, _ = mimetypes.guess_type(filename or "")
+    guessed = (guessed_type or "").lower()
+    if guessed in SUPPORTED_IMAGE_MIME_TYPES:
+        return guessed
+    raise ValueError("只支持 JPG、PNG、WEBP 图片格式。")
+
+
+def image_bytes_to_base64(image_bytes: bytes) -> str:
+    if not image_bytes:
+        raise ValueError("图片内容不能为空。")
+    return base64.b64encode(image_bytes).decode("ascii")
+
+
+def _build_image_data_url(image_bytes: bytes, mime_type: str) -> str:
+    return f"data:{mime_type};base64,{image_bytes_to_base64(image_bytes)}"
+
+
+# ---------------------------------------------------------------------------
+# Chat completion (primary → fallback → tertiary)
+# ---------------------------------------------------------------------------
+
 def create_chat_completion(
     messages: list,
     model: Optional[str] = None,
     temperature: float = 0.1,
     max_tokens: int = 2048,
     timeout: float = 60.0,
-    allow_fallback: bool = False,
+    allow_fallback: bool = True,
     **kwargs,
 ):
-    del allow_fallback
-    model_id = _resolve_model_id(model)
-    request_kwargs = _apply_chat_extra_body_defaults(model_id, kwargs)
+    """
+    Create chat completion: primary (OpenRouter Gemma4) → fallback (OpenRouter Nemotron) → tertiary (SiliconFlow Qwen).
+    """
+    del model
 
-    for attempt in range(2):
-        client = _get_client()
-        print(f"[LLM] Calling: {model_id}", flush=True)
+    primary_model = _get_primary_review_model()     # google/gemma-4-31b-it:free
+    fallback_model = _get_fallback_review_model()    # nvidia/nemotron-3-nano-30b-a3b:free
+    tertiary_model = _get_tertiary_review_model()  # Qwen/Qwen3.5-4B (SiliconFlow)
+
+    attempt_list = [
+        (primary_model, "openrouter", _get_openrouter_client),
+        (fallback_model, "openrouter", _get_openrouter_client),
+        (tertiary_model, "siliconflow", _get_siliconflow_client),
+    ]
+
+    last_exc = None
+    for model_id, provider, client_fn in attempt_list:
+        client = client_fn()
+        request_kwargs = _apply_chat_extra_body_defaults(model_id, kwargs)
+        print(f"[LLM] Calling review model ({provider}): {model_id}", flush=True)
+
         try:
-            return client.chat.completions.create(
+            response = client.chat.completions.create(
                 model=model_id,
                 messages=messages,
                 temperature=temperature,
@@ -324,14 +359,23 @@ def create_chat_completion(
                 timeout=timeout,
                 **request_kwargs,
             )
-        except TRANSIENT_LLM_ERRORS as exc:
-            if attempt == 1:
-                raise
-            print(f"[LLM] Transient error, retrying once: {type(exc).__name__}", flush=True)
-            time.sleep(0.8)
+            print(f"[LLM] Success: {model_id}", flush=True)
+            return response
 
-    raise RuntimeError("LLM request failed unexpectedly")
+        except Exception as exc:
+            print(f"[LLM] Error with {model_id}: {type(exc).__name__}: {exc}", flush=True)
+            last_exc = exc
+            if provider == "siliconflow":
+                # Last resort, no more fallbacks
+                break
+            continue
 
+    raise RuntimeError(f"All review models failed. Last error: {last_exc}")
+
+
+# ---------------------------------------------------------------------------
+# OCR (primary → fallback)
+# ---------------------------------------------------------------------------
 
 def extract_text_from_image(
     image_bytes: bytes,
@@ -340,28 +384,34 @@ def extract_text_from_image(
     filename: Optional[str] = None,
     prompt: str = DEFAULT_OCR_PROMPT,
     max_tokens: int = 4096,
-    timeout: float = 60.0,
+    timeout: float = 120.0,
 ) -> tuple[str, str]:
+    """
+    Extract text from image with primary (OpenRouter VL) first, fallback to SiliconFlow PaddleOCR.
+    """
     del model
+
     normalized_mime_type = normalize_image_mime_type(mime_type, filename)
     settings = get_settings()
-    model_id = settings.ocr_model
+    primary_model = _get_primary_ocr_model()
+    fallback_model = _get_fallback_ocr_model()
 
-    client = _get_ocr_client()
+    # Always use OpenRouter for primary OCR
+    primary_client = _get_openrouter_client()
+    # Use SiliconFlow for fallback OCR
+    fallback_client = _get_siliconflow_client()
+
     image_url = _build_image_data_url(image_bytes, normalized_mime_type)
 
-    def run_ocr(current_prompt: str):
+    def run_ocr(client: OpenAI, client_model: str, current_prompt: str):
         return client.chat.completions.create(
-            model=model_id,
+            model=client_model,
             messages=[
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": current_prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": image_url},
-                        },
+                        {"type": "image_url", "image_url": {"url": image_url}},
                     ],
                 }
             ],
@@ -370,32 +420,61 @@ def extract_text_from_image(
             timeout=timeout,
         )
 
-    response = run_ocr(prompt)
-    extracted_text = _sanitize_ocr_text(_extract_response_text(response))
-    extracted_text = _deduplicate_repeated_lines(extracted_text, max_repeats=3)
-    extracted_text = _deduplicate_repeated_phrases(extracted_text, max_repeats=3)
-    if not extracted_text:
-        raise RuntimeError(f"{model_id} 未返回可用的 OCR 文本。")
+    def process_response(response, model_id: str) -> tuple[str, str]:
+        extracted = _sanitize_ocr_text(_extract_response_text(response))
+        extracted = _deduplicate_repeated_lines(extracted, max_repeats=3)
+        extracted = _deduplicate_repeated_phrases(extracted, max_repeats=3)
+        if not extracted:
+            raise RuntimeError(f"{model_id} 未返回可用的 OCR 文本。")
+        used = getattr(response, "model", model_id) or model_id
+        print(f"[LLM] OCR using model: {used}", flush=True)
+        return extracted, used
 
-    if _is_unreadable_ocr_marker(extracted_text) or _is_suspicious_repetitive_ocr_text(extracted_text):
-        retry_response = run_ocr(STRICT_OCR_PROMPT)
-        retry_text = _sanitize_ocr_text(_extract_response_text(retry_response))
-        retry_text = _deduplicate_repeated_lines(retry_text, max_repeats=3)
-        retry_text = _deduplicate_repeated_phrases(retry_text, max_repeats=3)
-        if (
-            retry_text
-            and not _is_unreadable_ocr_marker(retry_text)
-            and not _is_suspicious_repetitive_ocr_text(retry_text)
-        ):
-            response = retry_response
-            extracted_text = retry_text
-        else:
-            raise RuntimeError("OCR 结果疑似为模型补全的空白模板或非合同噪音，请上传更清晰的合同原图，或手动输入合同文字。")
+    # Try primary model
+    try:
+        print(f"[LLM] Trying primary OCR model: {primary_model}", flush=True)
+        response = run_ocr(primary_client, primary_model, prompt)
+        extracted_text, used_model = process_response(response, primary_model)
 
-    used_model = getattr(response, "model", model_id) or model_id
-    print(f"[LLM] OCR using model: {used_model}", flush=True)
-    return extracted_text, used_model
+        if _is_unreadable_ocr_marker(extracted_text) or _is_suspicious_repetitive_ocr_text(extracted_text):
+            print(f"[LLM] Primary OCR result suspicious, retrying with strict prompt...", flush=True)
+            retry_response = run_ocr(primary_client, primary_model, STRICT_OCR_PROMPT)
+            retry_text = _sanitize_ocr_text(_extract_response_text(retry_response))
+            retry_text = _deduplicate_repeated_lines(retry_text, max_repeats=3)
+            retry_text = _deduplicate_repeated_phrases(retry_text, max_repeats=3)
+            if retry_text and not _is_unreadable_ocr_marker(retry_text) and not _is_suspicious_repetitive_ocr_text(retry_text):
+                extracted_text, used_model = retry_text, getattr(retry_response, "model", primary_model) or primary_model
+            else:
+                raise RuntimeError("OCR 结果疑似为模型补全的空白模板或非合同噪音，请上传更清晰的合同原图，或手动输入合同文字。")
 
+        return extracted_text, used_model
+
+    except Exception as exc:
+        print(f"[LLM] Primary OCR failed: {exc}, falling back to {fallback_model}", flush=True)
+        # Fallback to SiliconFlow PaddleOCR
+        try:
+            response = run_ocr(fallback_client, fallback_model, prompt)
+            extracted_text, used_model = process_response(response, fallback_model)
+
+            if _is_unreadable_ocr_marker(extracted_text) or _is_suspicious_repetitive_ocr_text(extracted_text):
+                retry_response = run_ocr(fallback_client, fallback_model, STRICT_OCR_PROMPT)
+                retry_text = _sanitize_ocr_text(_extract_response_text(retry_response))
+                retry_text = _deduplicate_repeated_lines(retry_text, max_repeats=3)
+                retry_text = _deduplicate_repeated_phrases(retry_text, max_repeats=3)
+                if retry_text and not _is_unreadable_ocr_marker(retry_text) and not _is_suspicious_repetitive_ocr_text(retry_text):
+                    extracted_text, used_model = retry_text, getattr(retry_response, "model", fallback_model) or fallback_model
+                else:
+                    raise RuntimeError("OCR 结果疑似为模型补全的空白模板或非合同噪音，请上传更清晰的合同原图，或手动输入合同文字。")
+
+            return extracted_text, used_model
+
+        except Exception as fallback_exc:
+            raise RuntimeError(f"OCR 备用模型也失败了: {fallback_exc}")
+
+
+# ---------------------------------------------------------------------------
+# OCR correction (uses review chat model)
+# ---------------------------------------------------------------------------
 
 def correct_ocr_text(
     raw_text: str,
@@ -437,6 +516,5 @@ def correct_ocr_text(
     if not corrected_text:
         raise RuntimeError("模型未返回可用的 OCR 校对文本。")
 
-    settings = get_settings()
-    used_model = getattr(response, "model", settings.review_model) or settings.review_model
+    used_model = getattr(response, "model", _get_primary_review_model()) or _get_primary_review_model()
     return corrected_text, used_model
