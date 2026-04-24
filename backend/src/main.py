@@ -123,7 +123,7 @@ EMPTY_CHAT_REPLY_TEXT = "模型没有返回可见内容，请再试一次。"
 INVISIBLE_CHAT_REPLY_PATTERN = re.compile(r"[\u200b\u200c\u200d\u2060\ufeff]")
 THINK_BLOCK_PATTERN = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
 THINK_TAG_PATTERN = re.compile(r"</?think>", re.IGNORECASE)
-AUTH_BOT_GUARD_MESSAGE = "????????????"
+AUTH_BOT_GUARD_MESSAGE = "检测到异常注册行为，请刷新后重试"
 AUTH_SEND_CODE_MIN_ELAPSED_MS = 600
 AUTH_REGISTER_MIN_ELAPSED_MS = 1200
 

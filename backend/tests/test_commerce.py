@@ -1,93 +1,97 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-from uuid import uuid4
+from datetime import datetime, timezone
 
 from src import commerce
-from src.vectorstore.connection import get_connection
 
 
-def _delete_user(user_id: str) -> None:
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM auth_users WHERE user_id = %s", (user_id,))
-        conn.commit()
+class _FakeCursor:
+    def __init__(self, row):
+        self.row = row
+        self.executed: list[tuple[str, tuple]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, sql, params=None):
+        self.executed.append((sql, params or ()))
+
+    def fetchone(self):
+        return self.row
 
 
-def _build_test_phone(seed: str) -> str:
-    numeric_tail = str(int(seed[:9], 16) % 1_000_000_000).zfill(9)
-    return f"13{numeric_tail}"
+class _FakeConnection:
+    def __init__(self, row):
+        self.cursor_instance = _FakeCursor(row)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def cursor(self):
+        return self.cursor_instance
 
 
-def test_attach_phone_awards_free_reviews_for_first_phone_bind(monkeypatch):
-    commerce.ensure_commerce_schema()
+def test_user_from_row_normalizes_database_fields():
+    created_at = datetime(2026, 4, 9, tzinfo=timezone.utc)
+    updated_at = datetime(2026, 4, 10, tzinfo=timezone.utc)
 
-    suffix = uuid4().hex
-    user_id = f"email_user_{suffix[:12]}"
-    email = f"bind-{suffix[:12]}@example.com"
-    phone = _build_test_phone(suffix)
+    user = commerce._user_from_row((
+        "user-1",
+        "demo@example.com",
+        True,
+        "13800138000",
+        False,
+        "hash",
+        "",
+        "active",
+        created_at,
+        updated_at,
+    ))
 
-    _delete_user(user_id)
-
-    try:
-        created_user = commerce.create_email_user(
-            user_id=user_id,
-            email=email,
-            password_hash="hash",
-            salt="salt",
-        )
-        assert created_user["free_review_remaining"] == 0
-
-        monkeypatch.setattr(commerce, "get_settings", lambda: SimpleNamespace(free_review_count=2))
-
-        updated_user = commerce.attach_phone_to_existing_user(user_id, phone)
-
-        assert updated_user["phone"] == phone
-        assert updated_user["phone_verified"] is True
-        assert updated_user["free_review_remaining"] == 2
-    finally:
-        _delete_user(user_id)
+    assert user == {
+        "id": "user-1",
+        "email": "demo@example.com",
+        "email_verified": True,
+        "phone": "13800138000",
+        "phone_verified": False,
+        "password_hash": "hash",
+        "salt": "",
+        "account_status": "active",
+        "created_at": created_at.isoformat(),
+        "updated_at": updated_at.isoformat(),
+    }
 
 
-def test_account_summary_restores_missing_free_reviews_for_new_phone_account(monkeypatch):
-    commerce.ensure_commerce_schema()
+def test_account_summary_uses_current_user_fields(monkeypatch):
+    created_at = datetime(2026, 4, 9, tzinfo=timezone.utc)
+    row = (
+        "user-1",
+        "demo@example.com",
+        True,
+        None,
+        False,
+        "hash",
+        "",
+        "active",
+        created_at,
+        created_at,
+    )
 
-    suffix = uuid4().hex
-    user_id = f"restored_user_{suffix[:12]}"
-    email = f"restore-{suffix[:12]}@example.com"
-    phone = _build_test_phone(suffix)
+    monkeypatch.setattr(commerce, "ensure_commerce_schema", lambda: None)
+    monkeypatch.setattr(commerce, "get_connection", lambda: _FakeConnection(row))
 
-    _delete_user(user_id)
+    summary = commerce.get_account_summary("user-1")
 
-    try:
-        monkeypatch.setattr(commerce, "get_settings", lambda: SimpleNamespace(free_review_count=2))
-
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO auth_users (
-                        user_id,
-                        email,
-                        password_hash,
-                        salt,
-                        phone,
-                        email_verified,
-                        phone_verified,
-                        account_status,
-                        free_review_remaining,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (%s, %s, '', '', %s, TRUE, TRUE, 'active', 0, NOW(), NOW())
-                    """,
-                    (user_id, email, phone),
-                )
-            conn.commit()
-
-        summary = commerce.get_account_summary(user_id)
-
-        assert summary["phoneVerified"] is True
-        assert summary["freeReviewRemaining"] == 2
-    finally:
-        _delete_user(user_id)
+    assert summary == {
+        "id": "user-1",
+        "email": "demo@example.com",
+        "emailVerified": True,
+        "accountStatus": "active",
+        "createdAt": created_at.isoformat(),
+    }

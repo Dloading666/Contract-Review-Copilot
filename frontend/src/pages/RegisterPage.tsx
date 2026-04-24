@@ -129,6 +129,9 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
               <div className="auth-field__control">
                 <span className="auth-field__icon"><Mail size={16} /></span>
                 <input
+                  type="email"
+                  name="email"
+                  autoComplete="email"
                   className="pixel-input pixel-input--literal auth-field__input"
                   placeholder="name@example.com"
                   value={email}
@@ -143,6 +146,10 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
                 <div className="auth-field__control">
                   <span className="auth-field__icon"><ShieldCheck size={16} /></span>
                   <input
+                    type="text"
+                    name="code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
                     className="pixel-input pixel-input--literal auth-field__input"
                     placeholder="请输入 6 位验证码"
                     value={code}
@@ -167,6 +174,8 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
               <div className="auth-field__control">
                 <input
                   type="password"
+                  name="password"
+                  autoComplete="new-password"
                   className="pixel-input pixel-input--literal auth-field__input auth-field__input--plain"
                   placeholder="请输入登录密码"
                   value={password}
@@ -180,6 +189,8 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
               <div className="auth-field__control">
                 <input
                   type="password"
+                  name="confirm-password"
+                  autoComplete="new-password"
                   className="pixel-input pixel-input--literal auth-field__input auth-field__input--plain"
                   placeholder="再次输入密码"
                   value={confirmPassword}

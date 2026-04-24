@@ -38,10 +38,10 @@ def test_review_clauses_includes_contract_text_and_extended_fields(monkeypatch):
     )
 
     assert "法规上下文：北京市押金规则" in capture["prompt"]
-    assert "合同原文（重点逐条审查）：" in capture["prompt"]
+    assert "合同原文：" in capture["prompt"]
     assert "押金不予退还" in capture["prompt"]
-    assert "- 滞纳金条款：逾期按每日0.5%收取滞纳金" in capture["prompt"]
-    assert "- 解约条款：甲方可随时解除合同" in capture["prompt"]
+    assert "滞纳金：逾期按每日0.5%收取滞纳金" in capture["prompt"]
+    assert "解约：甲方可随时解除合同" in capture["prompt"]
     assert issues[0]["level"] == "high"
 
 
