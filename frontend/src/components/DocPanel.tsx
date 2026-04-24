@@ -718,7 +718,7 @@ function UploadArea({
 
 
       <p className="upload-area__hint">
-        鐩存帴鎷栨嫿鏂囦欢鎴栫収鐗囧埌杩欓噷锛屼篃鍙互鐐瑰嚮涓嬫柟鎸夐挳閫夋嫨
+        直接拖拽文件或照片到这里，也可以点击下方按钮选择
       </p>
 
       <div className="upload-area__actions">
