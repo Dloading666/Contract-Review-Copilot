@@ -10,6 +10,7 @@ const noRiskIssue = '未发现明显不公平条款'
 function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
   return {
     status: 'complete',
+    reviewStage: 'complete',
     sessionId: 'session-1',
     contractText: 'contract body',
     filename: 'contract.txt',
@@ -30,6 +31,8 @@ function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
     routingDecision: null,
     riskCards: [],
     finalReport: ['## Review summary', 'There are 2 clauses that should be revised first.'],
+    initialSummary: null,
+    deepUpdateNotice: null,
     breakpointMessage: null,
     errorMessage: null,
     chatMessages: [
@@ -55,34 +58,30 @@ describe('ChatPanel', () => {
   })
 
   it('keeps Q&A collapsed until the user explicitly opens it for a generated report', () => {
-    const { container } = render(
+    render(
       <ChatPanel
         review={buildReviewState()}
-        onExportReport={vi.fn()}
         onBreakpointConfirm={vi.fn()}
         onReset={vi.fn()}
         onSendMessage={vi.fn()}
       />,
     )
 
-    expect(screen.queryByRole('textbox')).toBeNull()
-    expect(container.querySelector('.px-btn--ghost')).toBeTruthy()
-    expect(container.querySelector('.chat-input-send')).toBeNull()
+    expect(screen.getByRole('textbox')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /继续问答/i })).toBeNull()
+    expect(screen.queryByText('避坑指南')).toBeNull()
   })
 
-  it('opens Q&A after clicking continue and sends the message', async () => {
+  it('allows sending a question immediately after the full report is ready', async () => {
     const onSendMessage = vi.fn()
     const { container } = render(
       <ChatPanel
         review={buildReviewState()}
-        onExportReport={vi.fn()}
         onBreakpointConfirm={vi.fn()}
         onReset={vi.fn()}
         onSendMessage={onSendMessage}
       />,
     )
-
-    fireEvent.click(container.querySelector('.px-btn--ghost') as HTMLButtonElement)
 
     const textbox = await screen.findByRole('textbox')
     fireEvent.change(textbox, { target: { value: 'Where is the deposit risk?' } })
@@ -100,7 +99,6 @@ describe('ChatPanel', () => {
             { id: 'assistant-empty', role: 'assistant', content: '\u200b\n\ufeff' },
           ],
         })}
-        onExportReport={vi.fn()}
         onBreakpointConfirm={vi.fn()}
         onReset={vi.fn()}
         onSendMessage={vi.fn()}
@@ -110,6 +108,51 @@ describe('ChatPanel', () => {
     await waitFor(() => {
       expect(screen.getByText(EMPTY_ASSISTANT_REPLY_TEXT)).toBeTruthy()
     })
+  })
+
+  it('does not show retrieval copy inside the assistant bubble while loading', () => {
+    render(
+      <ChatPanel
+        review={buildReviewState({
+          chatMessages: [
+            { id: 'user-1', role: 'user', content: '帮我看看这个条款' },
+            { id: 'assistant-loading', role: 'assistant', content: '', status: 'retrieving' },
+          ],
+        })}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText(EMPTY_ASSISTANT_REPLY_TEXT)).toBeNull()
+    expect(screen.queryByText(/Retrieving evidence/i)).toBeNull()
+    expect(screen.getByLabelText('retrieving')).toBeTruthy()
+  })
+
+  it('does not render reference blocks under assistant answers', async () => {
+    render(
+      <ChatPanel
+        review={buildReviewState({
+          chatMessages: [
+            { id: 'user-1', role: 'user', content: 'Can I ask for the deposit back?' },
+            {
+              id: 'assistant-1',
+              role: 'assistant',
+              content: 'The deposit return term should be clear and time-bound.',
+              status: 'complete',
+            },
+          ],
+        })}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText('The deposit return term should be clear and time-bound.')).toBeTruthy()
+    expect(screen.queryByText('参考来源')).toBeNull()
+    expect(screen.queryByText(/Civil Code Article 585/)).toBeNull()
   })
 
   it('requests autofix suggestions with authorization and renders the result', async () => {
@@ -132,11 +175,11 @@ describe('ChatPanel', () => {
               suggestion: 'Lower the penalty',
               legalRef: 'Civil Code Art. 585',
               matchedText: 'Penalty: 100% of contract value',
+              changeType: 'none',
             },
           ],
         })}
         authToken="jwt-token"
-        onExportReport={vi.fn()}
         onBreakpointConfirm={vi.fn()}
         onReset={vi.fn()}
         onSendMessage={vi.fn()}
@@ -173,10 +216,10 @@ describe('ChatPanel', () => {
               suggestion: 'Lower the penalty',
               legalRef: 'Civil Code Art. 585',
               matchedText: 'Penalty: 100% of contract value',
+              changeType: 'none',
             },
           ],
         })}
-        onExportReport={vi.fn()}
         onBreakpointConfirm={vi.fn()}
         onReset={vi.fn()}
         onSendMessage={vi.fn()}
@@ -192,14 +235,12 @@ describe('ChatPanel', () => {
     })
   })
 
-  it('shows report content in the dialog and exports from there', () => {
-    const onExportReport = vi.fn()
-    const { container } = render(
+  it('renders the final report inline without showing the old completion popup', () => {
+    render(
       <ChatPanel
         review={buildReviewState({
           finalReport: ['## Review summary', 'There are 2 clauses that should be revised first.'],
         })}
-        onExportReport={onExportReport}
         onBreakpointConfirm={vi.fn()}
         onReset={vi.fn()}
         onSendMessage={vi.fn()}
@@ -208,10 +249,8 @@ describe('ChatPanel', () => {
 
     expect(screen.getAllByText('Review summary').length).toBeGreaterThan(0)
     expect(screen.getAllByText('There are 2 clauses that should be revised first.').length).toBeGreaterThan(0)
-
-    fireEvent.click(container.querySelector('.px-btn--orange') as HTMLButtonElement)
-
-    expect(onExportReport).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('避坑指南')).toBeNull()
+    expect(screen.queryByRole('button', { name: /导出报告/i })).toBeNull()
   })
 
   it('renders the no-risk fallback as a zero-risk green state', () => {
@@ -229,10 +268,10 @@ describe('ChatPanel', () => {
               suggestion: 'Keep checking the contract before signing.',
               legalRef: 'Civil Code Contract Book',
               matchedText: '',
+              changeType: 'none',
             },
           ],
         })}
-        onExportReport={vi.fn()}
         onBreakpointConfirm={vi.fn()}
         onReset={vi.fn()}
         onSendMessage={vi.fn()}
@@ -260,10 +299,10 @@ describe('ChatPanel', () => {
               suggestion: 'Keep checking the contract before signing.',
               legalRef: 'Civil Code Contract Book',
               matchedText: '',
+              changeType: 'none',
             },
           ],
         })}
-        onExportReport={vi.fn()}
         onBreakpointConfirm={vi.fn()}
         onReset={vi.fn()}
         onSendMessage={onSendMessage}
@@ -278,5 +317,166 @@ describe('ChatPanel', () => {
     fireEvent.click(container.querySelector('.chat-input-send') as HTMLButtonElement)
 
     expect(onSendMessage).toHaveBeenCalledWith('What should I still double-check before signing?')
+  })
+
+  it('opens Q&A after a light scan with intermediate findings even without a full report', async () => {
+    const onSendMessage = vi.fn()
+    const { container } = render(
+      <ChatPanel
+        review={buildReviewState({
+          finalReport: [],
+          initialSummary: '初步审查已完成。',
+          deepUpdateNotice: '轻度扫描已完成，你可以继续深度扫描。',
+          riskCards: [
+            {
+              id: 'risk-1',
+              level: 'high',
+              title: 'Deposit clause',
+              clause: 'Clause 3',
+              issue: 'Deposit is too high',
+              suggestion: 'Reduce the deposit',
+              legalRef: 'Civil Code Art. 585',
+              matchedText: 'Deposit: 20000',
+              changeType: 'none',
+            },
+          ],
+        })}
+        canRetryDeepReview
+        onRetryDeepReview={vi.fn()}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={onSendMessage}
+      />,
+    )
+
+    const textbox = await screen.findByRole('textbox')
+    expect(textbox).toBeTruthy()
+    expect(screen.getByRole('button', { name: /继续深度扫描/i })).toBeTruthy()
+
+    fireEvent.change(textbox, { target: { value: 'What is the main deposit risk?' } })
+    fireEvent.click(container.querySelector('.chat-input-send') as HTMLButtonElement)
+
+    expect(onSendMessage).toHaveBeenCalledWith('What is the main deposit risk?')
+  })
+
+  it('keeps Q&A available while deep scan continues in the background', async () => {
+    const onSendMessage = vi.fn()
+    const { container } = render(
+      <ChatPanel
+        review={buildReviewState({
+          status: 'reviewing',
+          reviewStage: 'deep',
+          finalReport: [],
+          initialSummary: '初步审查已完成。',
+          deepUpdateNotice: '正在继续补全深度分析与完整报告...',
+          riskCards: [
+            {
+              id: 'risk-1',
+              level: 'high',
+              title: 'Deposit clause',
+              clause: 'Clause 3',
+              issue: 'Deposit is too high',
+              suggestion: 'Reduce the deposit',
+              legalRef: 'Civil Code Art. 585',
+              matchedText: 'Deposit: 20000',
+              changeType: 'none',
+            },
+          ],
+        })}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={onSendMessage}
+      />,
+    )
+
+    expect(await screen.findByRole('textbox')).toBeTruthy()
+    expect(screen.getByText(/初步审查结果已经可以问答/)).toBeTruthy()
+
+    fireEvent.change(container.querySelector('.chat-input-textarea') as HTMLTextAreaElement, {
+      target: { value: 'Can I keep asking while deep scan runs?' },
+    })
+    fireEvent.click(container.querySelector('.chat-input-send') as HTMLButtonElement)
+
+    expect(onSendMessage).toHaveBeenCalledWith('Can I keep asking while deep scan runs?')
+  })
+
+  it('keeps Q&A available after the user already entered chat and the full report is ready', async () => {
+    render(
+      <ChatPanel
+        review={buildReviewState({
+          chatMessages: [
+            { id: 'user-1', role: 'user', content: 'Can you explain the deposit risk?' },
+            { id: 'assistant-1', role: 'assistant', content: 'Yes, the deposit amount is above the typical range.' },
+          ],
+        })}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByRole('textbox')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /导出报告/i })).toBeNull()
+  })
+
+  it('keeps Q&A open once the full report is ready even before the final completion event lands', async () => {
+    render(
+      <ChatPanel
+        review={buildReviewState({
+          status: 'reviewing',
+          reviewStage: 'complete',
+          finalReport: ['## Review summary', 'Complete report body'],
+          chatMessages: [
+            { id: 'user-1', role: 'user', content: 'Can you explain the latest changes?' },
+            { id: 'assistant-1', role: 'assistant', content: 'The report is now complete.' },
+          ],
+        })}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByRole('textbox')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /导出报告/i })).toBeNull()
+  })
+
+  it('hides the continue deep review action once a full report already exists', () => {
+    render(
+      <ChatPanel
+        review={buildReviewState({
+          finalReport: ['## Review summary', 'Complete report body'],
+          deepUpdateNotice: '深度审查已完成，页面内容已自动更新。',
+        })}
+        canRetryDeepReview
+        onRetryDeepReview={vi.fn()}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: '继续深度扫描' })).toBeNull()
+  })
+
+  it('shows a continue deep review action after a degraded completion', () => {
+    const onRetryDeepReview = vi.fn()
+
+    render(
+      <ChatPanel
+        review={buildReviewState({
+          finalReport: [],
+          deepUpdateNotice: '深度分析暂未补全，当前先展示初步审查结果。',
+        })}
+        canRetryDeepReview
+        onRetryDeepReview={onRetryDeepReview}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '继续深度扫描' }))
+    expect(onRetryDeepReview).toHaveBeenCalledTimes(1)
   })
 })

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, BadgeCheck, KeyRound, Mail, ShieldCheck } from 'lucide-react'
 import type { User } from '../contexts/AuthContext'
 import { safeFetchJSON } from '../lib/apiClient'
+import { apiPath } from '../lib/apiPaths'
+import { getPasswordValidationError, PASSWORD_POLICY_MESSAGE } from '../lib/passwordPolicy'
 
 interface SettingsPageProps {
   user: User
@@ -42,6 +44,7 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
   const hasBoundEmail = !!user.email?.trim()
   const canChangePassword = hasBoundEmail && user.hasPassword !== false
   const passwordMismatch = confirmPassword.length > 0 && newPassword !== confirmPassword
+  const passwordValidationError = newPassword ? getPasswordValidationError(newPassword) : null
 
   useEffect(() => {
     if (countdown <= 0) return undefined
@@ -73,7 +76,7 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
     setDevCode('')
 
     try {
-      const payload = await safeFetchJSON<PasswordCodeResponse>('/api/auth/security/send-password-code', {
+      const payload = await safeFetchJSON<PasswordCodeResponse>(apiPath('/auth/security/send-password-code'), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -106,8 +109,8 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
       return
     }
 
-    if (newPassword.trim().length < 6) {
-      setErrorMessage('新密码不能少于 6 位。')
+    if (passwordValidationError) {
+      setErrorMessage(passwordValidationError)
       return
     }
 
@@ -119,7 +122,7 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
     setIsSubmitting(true)
 
     try {
-      const payload = await safeFetchJSON<PasswordResetResponse>('/api/auth/security/reset-password', {
+      const payload = await safeFetchJSON<PasswordResetResponse>(apiPath('/auth/security/reset-password'), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -229,7 +232,7 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
                     type="password"
                     value={newPassword}
                     onChange={(event) => setNewPassword(event.target.value)}
-                    placeholder="至少 6 位"
+                    placeholder="请输入新密码"
                     autoComplete="new-password"
                   />
                 </label>
@@ -247,9 +250,17 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
                 </label>
               </div>
 
+              <p className="account-security__hint" role="status">
+                {PASSWORD_POLICY_MESSAGE}
+              </p>
               {devCode && (
                 <p className="account-security__hint" role="status">
                   开发环境验证码：{devCode}
+                </p>
+              )}
+              {passwordValidationError && (
+                <p className="account-security__error" role="alert">
+                  {passwordValidationError}
                 </p>
               )}
               {passwordMismatch && (
@@ -272,7 +283,7 @@ export function SettingsPage({ user, token, onUserUpdate, onBack }: SettingsPage
                 <button
                   type="submit"
                   className="pixel-button account-security__submit"
-                  disabled={isSubmitting || passwordMismatch}
+                  disabled={isSubmitting || passwordMismatch || !!passwordValidationError}
                 >
                   {isSubmitting ? '提交中...' : '确认修改密码'}
                 </button>

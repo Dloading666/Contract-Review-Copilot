@@ -1032,6 +1032,77 @@ body.landing-page-active h4 {
 }
 
 /* ── Risk Cards ── */
+.chat-msg__status {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--color-ink-muted);
+  text-transform: uppercase;
+}
+
+.chat-msg__cursor {
+  display: inline-block;
+  width: 10px;
+  height: 18px;
+  margin-top: 8px;
+  border-right: 3px solid var(--color-orange);
+  animation: chat-cursor-blink 1s steps(1) infinite;
+  vertical-align: middle;
+}
+
+.chat-sources {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.chat-sources__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-ink);
+  margin-bottom: 8px;
+}
+
+.chat-sources__list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-source-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-ui);
+}
+
+.chat-source-link {
+  color: var(--color-blue);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.chat-source-link:hover {
+  color: var(--color-blue-hover);
+}
+
+.chat-source-link--plain {
+  color: var(--color-ink);
+}
+
+.chat-source-meta {
+  font-size: 11px;
+  color: var(--color-ink-muted);
+}
+
+@keyframes chat-cursor-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
 .risk-cards {
   display: flex;
   flex-direction: column;
@@ -1684,6 +1755,12 @@ body.landing-page-active h4 {
   padding: 40px;
 }
 
+.upload-area--drag-active {
+  background: rgba(83, 145, 230, 0.08);
+  outline: 4px dashed var(--color-blue);
+  outline-offset: -12px;
+}
+
 .upload-area__frame {
   width: 120px;
   height: 160px;
@@ -1730,6 +1807,15 @@ body.landing-page-active h4 {
   text-align: center;
   line-height: 1.8;
   max-width: 240px;
+}
+
+.upload-area__hint {
+  max-width: 280px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--color-blue);
+  text-align: center;
 }
 
 .upload-area__model {

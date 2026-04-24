@@ -1,3 +1,5 @@
+﻿import { getPersistentStoreSafe, getTransientStoreSafe } from './browserStorage'
+
 const HISTORY_STORAGE_KEY = 'reviewHistory'
 
 function normalizeOwnerKey(ownerKey?: string | null) {
@@ -28,25 +30,6 @@ interface StoredHistoryEntry {
   sessionId?: string
 }
 
-function getLocalStorageSafe() {
-  if (typeof window === 'undefined') return null
-
-  try {
-    return window.localStorage
-  } catch {
-    return null
-  }
-}
-
-function getSessionStorageSafe() {
-  if (typeof window === 'undefined') return null
-
-  try {
-    return window.sessionStorage
-  } catch {
-    return null
-  }
-}
 
 function parseStoredEntries<T>(rawValue: string | null): T[] | null {
   if (!rawValue) return null
@@ -61,8 +44,8 @@ function parseStoredEntries<T>(rawValue: string | null): T[] | null {
 
 export function loadPersistedReviewHistory<T = unknown>(ownerKey?: string | null): T[] {
   const storageKey = buildScopedHistoryStorageKey(ownerKey)
-  const localStorageRef = getLocalStorageSafe()
-  const localEntries = parseStoredEntries<T>(localStorageRef?.getItem(storageKey) ?? null)
+  const persistentStoreRef = getPersistentStoreSafe()
+  const localEntries = parseStoredEntries<T>(persistentStoreRef?.getItem(storageKey) ?? null)
 
   if (localEntries) {
     return localEntries
@@ -72,19 +55,19 @@ export function loadPersistedReviewHistory<T = unknown>(ownerKey?: string | null
     return []
   }
 
-  const sessionStorageRef = getSessionStorageSafe()
-  const legacyEntries = parseStoredEntries<T>(sessionStorageRef?.getItem(HISTORY_STORAGE_KEY) ?? null)
+  const transientStoreRef = getTransientStoreSafe()
+  const legacyEntries = parseStoredEntries<T>(transientStoreRef?.getItem(HISTORY_STORAGE_KEY) ?? null)
 
   if (!legacyEntries) {
     return []
   }
 
-  if (localStorageRef) {
+  if (persistentStoreRef) {
     try {
-      localStorageRef.setItem(HISTORY_STORAGE_KEY, JSON.stringify(legacyEntries))
-      sessionStorageRef?.removeItem(HISTORY_STORAGE_KEY)
+      persistentStoreRef.setItem(HISTORY_STORAGE_KEY, JSON.stringify(legacyEntries))
+      transientStoreRef?.removeItem(HISTORY_STORAGE_KEY)
     } catch {
-      // Keep using the legacy session copy when localStorage writes fail.
+      // Keep using the legacy transient copy when persistent-store writes fail.
     }
   }
 
@@ -94,22 +77,22 @@ export function loadPersistedReviewHistory<T = unknown>(ownerKey?: string | null
 export function savePersistedReviewHistory<T>(entries: T[], ownerKey?: string | null) {
   const storageKey = buildScopedHistoryStorageKey(ownerKey)
   const serializedEntries = JSON.stringify(entries)
-  const localStorageRef = getLocalStorageSafe()
+  const persistentStoreRef = getPersistentStoreSafe()
 
-  if (localStorageRef) {
+  if (persistentStoreRef) {
     try {
-      localStorageRef.setItem(storageKey, serializedEntries)
-      getSessionStorageSafe()?.removeItem(storageKey)
+      persistentStoreRef.setItem(storageKey, serializedEntries)
+      getTransientStoreSafe()?.removeItem(storageKey)
       if (storageKey !== HISTORY_STORAGE_KEY) {
-        getSessionStorageSafe()?.removeItem(HISTORY_STORAGE_KEY)
+        getTransientStoreSafe()?.removeItem(HISTORY_STORAGE_KEY)
       }
       return
     } catch {
-      // Fall through to sessionStorage if localStorage is unavailable.
+      // Fall through to transient storage if the persistent store is unavailable.
     }
   }
 
-  getSessionStorageSafe()?.setItem(storageKey, serializedEntries)
+  getTransientStoreSafe()?.setItem(storageKey, serializedEntries)
 }
 
 export function loadPersistedReviewHistoryFromOwners<T = unknown>(ownerKeys?: Array<string | null | undefined>): T[] {
@@ -151,3 +134,4 @@ export function deletePersistedReviewHistoryEntry(
 
   return deleted
 }
+

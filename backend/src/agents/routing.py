@@ -5,6 +5,7 @@ Decides search strategy: pgvector RAG vs DuckDuckGo web search.
 import os
 import json
 from .entity_extraction import create_chat_completion
+from ..config import get_settings
 from ..llm_client import get_primary_model_key
 
 # pgvector imports
@@ -55,6 +56,7 @@ def decide_routing(contract_text: str, entities: dict, model_key: str | None = N
         return _default_routing(contract_text, entities)
 
     try:
+        settings = get_settings()
         rent = entities.get("rent", {}).get("monthly", 0)
         deposit = entities.get("deposit", {}).get("amount", 0)
         prop_type = "住宅租赁" if any(w in contract_text for w in ["住宅", "公寓", "住房"]) else "商业租赁"
@@ -70,9 +72,10 @@ def decide_routing(contract_text: str, entities: dict, model_key: str | None = N
                     property_type=prop_type,
                 )},
             ],
-            temperature=0.1,
+            temperature=settings.review_temperature,
             max_tokens=512,
-            timeout=15.0,
+            timeout=settings.review_routing_timeout_seconds,
+            allow_fallback=False,
         )
         print(f"[Routing] LLM response received", flush=True)
 

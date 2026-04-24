@@ -1,14 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { Download, Plus, Upload, ZoomIn, ZoomOut } from 'lucide-react'
-import type { ReviewState, RiskCard } from '../App'
-import { APIError } from '../lib/apiClient'
+import type { ReviewMode, ReviewState, RiskCard } from '../App'
+import { APIError, safeFetchJSON } from '../lib/apiClient'
+import { apiPath } from '../lib/apiPaths'
+import { MAX_CONTRACT_IMAGE_BATCH, MAX_CONTRACT_UPLOAD_FILE_BYTES, formatUploadBytes } from '../lib/uploadLimits'
 interface DocPanelProps {
   review: ReviewState
   authToken?: string | null
+  canExportReport?: boolean
+  onExportReport?: () => void
+  isExportingReport?: boolean
   onFileUpload: (text: string, filename: string) => void
   onOcrReady: (text: string, filename: string, warnings?: string[]) => void
   onContractTextChange: (text: string) => void
-  onConfirmReview: () => void
+  onConfirmReview: (mode: ReviewMode) => void
   onReset: () => void
   onNewConversation?: () => void
 }
@@ -21,6 +26,24 @@ interface OcrIngestResponse {
   error?: unknown
   detail?: unknown
 }
+
+interface OcrQueueCreateResponse {
+  task_id?: unknown
+  status?: unknown
+  queue_position?: unknown
+  estimated_wait?: unknown
+}
+
+interface OcrQueueStatusResponse {
+  status?: unknown
+  progress_message?: unknown
+  last_error?: unknown
+  error_code?: unknown
+  result?: unknown
+}
+
+const OCR_QUEUE_POLL_INTERVAL_MS = 800
+const OCR_QUEUE_MAX_POLLS = 150
 
 const RISK_KEYWORDS = [
   '押金',
@@ -62,6 +85,19 @@ function getFileExtension(filename: string) {
 
 function isImageFilename(filename: string) {
   return IMAGE_EXTENSIONS.has(getFileExtension(filename))
+}
+
+function buildUploadValidationMessage(files: File[]) {
+  const oversizedFile = files.find((file) => file.size > MAX_CONTRACT_UPLOAD_FILE_BYTES)
+  if (oversizedFile) {
+    return `${oversizedFile.name} \u8d85\u8fc7\u5355\u6587\u4ef6\u4e0a\u4f20\u9650\u5236\uff0c\u8bf7\u538b\u7f29\u5230 ${formatUploadBytes(MAX_CONTRACT_UPLOAD_FILE_BYTES)} \u4ee5\u5185\u540e\u91cd\u8bd5\u3002`
+  }
+
+  if (files.length > MAX_CONTRACT_IMAGE_BATCH && files.every((file) => isImageFilename(file.name))) {
+    return `\u4e00\u6b21\u6700\u591a\u4e0a\u4f20 ${MAX_CONTRACT_IMAGE_BATCH} \u5f20\u5408\u540c\u56fe\u7247\uff0c\u8bf7\u5206\u6279\u4e0a\u4f20\u3002`
+  }
+
+  return null
 }
 
 function buildRiskKeywords(risk: RiskCard) {
@@ -170,9 +206,43 @@ function buildUploadProgressText(files: File[]) {
   return '正在导入合同内容...'
 }
 
+function shouldUseAsyncOcrQueue(files: File[]) {
+  if (files.length === 0) {
+    return false
+  }
+
+  if (files.length > 1) {
+    return true
+  }
+
+  const extension = getFileExtension(files[0].name)
+  return extension === 'pdf' || IMAGE_EXTENSIONS.has(extension)
+}
+
+function buildAuthHeaders(authToken?: string | null) {
+  return authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+}
+
+function getQueueTaskMessage(payload: OcrQueueStatusResponse) {
+  if (typeof payload.progress_message === 'string' && payload.progress_message.trim()) {
+    return payload.progress_message
+  }
+  if (typeof payload.last_error === 'string' && payload.last_error.trim()) {
+    return payload.last_error
+  }
+  return ''
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
 export function DocPanel({
   review,
   authToken,
+  canExportReport = false,
+  onExportReport,
+  isExportingReport = false,
   onFileUpload,
   onOcrReady,
   onContractTextChange,
@@ -190,6 +260,13 @@ export function DocPanel({
   const isOcrReady = review.status === 'ocr_ready'
   const contractText = review.contractText
   const ocrWarnings = review.ocrWarnings ?? []
+  const shouldHideOcrSourceAfterDeepReview = (
+    review.documentSource === 'ocr'
+    && review.reviewStage === 'complete'
+    && review.finalReport.length > 0
+    && !isOcrReady
+  )
+  const canInspectContractText = !shouldHideOcrSourceAfterDeepReview
   const riskCards = useMemo(
     () => (review.riskCards || []).filter((card) => !isNoRiskPlaceholderCard(card)),
     [review.riskCards],
@@ -274,6 +351,18 @@ export function DocPanel({
         <div className="doc-panel__toolbar-right">
           {!isEmpty && (
             <>
+              {canExportReport && onExportReport && (
+                <button
+                  className="px-btn px-btn--sm px-btn--orange"
+                  onClick={onExportReport}
+                  title="导出报告"
+                  disabled={isExportingReport}
+                >
+                  <Download size={14} />
+                  {isExportingReport ? '导出中...' : '导出报告'}
+                </button>
+              )}
+
               {onNewConversation && (
                 <button
                   className="px-btn px-btn--sm px-btn--ghost"
@@ -286,31 +375,35 @@ export function DocPanel({
                 </button>
               )}
 
-              <div className="doc-panel__zoom-group">
-                <button
-                  className="doc-panel__zoom-btn"
-                  onClick={() => setZoom((value) => Math.max(50, value - 10))}
-                  title="缩小"
-                >
-                  <ZoomOut size={14} />
-                </button>
-                <span className="doc-panel__zoom-level">{zoom}%</span>
-                <button
-                  className="doc-panel__zoom-btn"
-                  onClick={() => setZoom((value) => Math.min(200, value + 10))}
-                  title="放大"
-                >
-                  <ZoomIn size={14} />
-                </button>
-              </div>
+              {canInspectContractText && (
+                <>
+                  <div className="doc-panel__zoom-group">
+                    <button
+                      className="doc-panel__zoom-btn"
+                      onClick={() => setZoom((value) => Math.max(50, value - 10))}
+                      title="缩小"
+                    >
+                      <ZoomOut size={14} />
+                    </button>
+                    <span className="doc-panel__zoom-level">{zoom}%</span>
+                    <button
+                      className="doc-panel__zoom-btn"
+                      onClick={() => setZoom((value) => Math.min(200, value + 10))}
+                      title="放大"
+                    >
+                      <ZoomIn size={14} />
+                    </button>
+                  </div>
 
-              <button
-                className="doc-panel__icon-btn"
-                onClick={handleDownload}
-                title="下载合同文本"
-              >
-                <Download size={16} />
-              </button>
+                  <button
+                    className="doc-panel__icon-btn"
+                    onClick={handleDownload}
+                    title="下载合同文本"
+                  >
+                    <Download size={16} />
+                  </button>
+                </>
+              )}
             </>
           )}
         </div>
@@ -327,7 +420,7 @@ export function DocPanel({
           <div className="doc-paper doc-paper--editable" style={{ fontSize: `${zoom}%` }}>
             <div className="doc-editor__heading">合同识别结果</div>
             <p className="doc-editor__hint">
-              识别结果已经回填到右侧文档区。请先检查并修正错字、漏字或页序问题，再点击“确认并开始分析”。
+              识别结果已经回填到右侧文档区。请先检查并修正错字、漏字或页序问题，再选择“轻度扫描”或“深度扫描”。
             </p>
             {ocrWarnings.length > 0 && (
               <div className="doc-editor__warnings" role="status" aria-live="polite">
@@ -345,6 +438,13 @@ export function DocPanel({
               style={{ fontSize: `${15 * zoom / 100}px` }}
               spellCheck={false}
             />
+          </div>
+        ) : shouldHideOcrSourceAfterDeepReview ? (
+          <div className="doc-paper" style={{ fontSize: `${zoom}%` }}>
+            <div className="doc-editor__heading">深度扫描已完成</div>
+            <p className="doc-editor__hint">
+              原始照片识别内容已自动收起，当前保留完整审查报告与问答结果。
+            </p>
           </div>
         ) : (
           <div className="doc-paper" style={{ fontSize: `${zoom}%` }}>
@@ -370,7 +470,13 @@ export function DocPanel({
                 )}
               </>
             ) : (
-              <>
+              shouldHideOcrSourceAfterDeepReview ? (
+                <>
+                  <span>深度扫描已完成</span>
+                  <span style={{ color: 'var(--color-ink-muted)' }}>原始照片识别内容已自动收起</span>
+                </>
+              ) : (
+                <>
                 <span>字数：{contractText.length.toLocaleString()}</span>
                 {riskCards.length > 0 && (
                   <span style={{ color: 'var(--color-red)' }}>
@@ -378,7 +484,8 @@ export function DocPanel({
                     {riskCards.filter((card) => card.level === 'medium').length} 处提示
                   </span>
                 )}
-              </>
+                </>
+              )
             )}
           </div>
 
@@ -389,11 +496,18 @@ export function DocPanel({
                   重新上传
                 </button>
                 <button
-                  className="px-btn px-btn--sm px-btn--green"
-                  onClick={onConfirmReview}
+                  className="px-btn px-btn--sm px-btn--ghost"
+                  onClick={() => onConfirmReview('light')}
                   disabled={!contractText.trim()}
                 >
-                  确认并开始分析
+                  轻度扫描
+                </button>
+                <button
+                  className="px-btn px-btn--sm px-btn--green"
+                  onClick={() => onConfirmReview('deep')}
+                  disabled={!contractText.trim()}
+                >
+                  深度扫描
                 </button>
               </>
             ) : (
@@ -423,24 +537,31 @@ function UploadArea({
 }: UploadAreaProps) {
   const hiddenFileInput = useRef<HTMLInputElement>(null)
   const [isProcessingFile, setIsProcessingFile] = useState(false)
+  const [isDragActive, setIsDragActive] = useState(false)
   const [processingText, setProcessingText] = useState('')
 
   const handleUploadClick = () => hiddenFileInput.current?.click()
 
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? [])
+  const processFiles = useCallback(async (files: File[], resetInput?: () => void) => {
     if (files.length === 0) return
 
     const unsupportedFile = files.find((file) => !SUPPORTED_EXTENSIONS.has(getFileExtension(file.name)))
     if (unsupportedFile) {
       alert(`暂不支持 ${unsupportedFile.name} 这种文件格式，请上传 TXT、DOCX、PDF 或合同图片。`)
-      event.target.value = ''
+      resetInput?.()
       return
     }
 
     if (files.length > 1 && !files.every((file) => isImageFilename(file.name))) {
       alert('一次仅支持批量上传多张合同图片；TXT、DOCX、PDF 请单独上传。')
-      event.target.value = ''
+      resetInput?.()
+      return
+    }
+
+    const validationMessage = buildUploadValidationMessage(files)
+    if (validationMessage) {
+      alert(validationMessage)
+      resetInput?.()
       return
     }
 
@@ -451,32 +572,61 @@ function UploadArea({
       const formData = new FormData()
       files.forEach((file) => formData.append('files', file))
 
-      const response = await fetch('/api/ocr/ingest', {
-        method: 'POST',
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
-        body: formData,
-      })
+      let payload: OcrIngestResponse | null = null
+      if (shouldUseAsyncOcrQueue(files)) {
+        const queuePayload = await safeFetchJSON<OcrQueueCreateResponse>(apiPath('/ocr/queue'), {
+          method: 'POST',
+          headers: buildAuthHeaders(authToken),
+          body: formData,
+        })
+        const taskId = typeof queuePayload.task_id === 'string' ? queuePayload.task_id : ''
+        if (!taskId) {
+          throw new APIError('OCR 队列创建失败，请稍后重试。')
+        }
 
-      const text = await response.text()
+        const estimatedWait = typeof queuePayload.estimated_wait === 'string' ? queuePayload.estimated_wait : ''
+        setProcessingText(estimatedWait ? `上传完成，正在排队识别（${estimatedWait}）...` : '上传完成，正在排队识别...')
 
-      // Check if response is HTML error page
-      if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
-        throw new APIError('服务器返回了错误页面，请稍后重试', response.status)
+        let latestTask: OcrQueueStatusResponse | null = null
+        for (let pollCount = 0; pollCount < OCR_QUEUE_MAX_POLLS; pollCount += 1) {
+          const task = await safeFetchJSON<OcrQueueStatusResponse>(apiPath(`/ocr/queue/${taskId}`), {
+            headers: buildAuthHeaders(authToken),
+          })
+          latestTask = task
+
+          const progressMessage = getQueueTaskMessage(task)
+          if (progressMessage) {
+            setProcessingText(progressMessage)
+          }
+
+          if (task.status === 'completed') {
+            if (!task.result || typeof task.result !== 'object') {
+              throw new APIError('OCR 任务已完成，但未返回可用结果。')
+            }
+            payload = task.result as OcrIngestResponse
+            break
+          }
+
+          if (task.status === 'failed' || task.status === 'dead_letter' || task.status === 'cancelled') {
+            throw new APIError(progressMessage || 'OCR 任务处理失败，请稍后重试。')
+          }
+
+          await sleep(OCR_QUEUE_POLL_INTERVAL_MS)
+        }
+
+        if (!latestTask || latestTask.status !== 'completed') {
+          throw new APIError('OCR 任务处理超时，请稍后重试。')
+        }
+      } else {
+        payload = await safeFetchJSON<OcrIngestResponse>(apiPath('/ocr/ingest'), {
+          method: 'POST',
+          headers: buildAuthHeaders(authToken),
+          body: formData,
+        })
       }
 
-      // Parse JSON response
-      let payload: OcrIngestResponse
-      try {
-        payload = JSON.parse(text)
-      } catch {
-        throw new APIError('服务器返回了无效的数据格式', response.status)
-      }
-
-      if (!response.ok) {
-        const errorMsg = (typeof payload.error === 'string' && payload.error)
-          || (typeof payload.detail === 'string' && payload.detail)
-          || `请求失败 (${response.status})`
-        throw new APIError(errorMsg, response.status)
+      if (!payload) {
+        throw new APIError('OCR 结果读取失败，请稍后重试。')
       }
 
       const mergedText = typeof payload.merged_text === 'string' ? payload.merged_text : ''
@@ -502,12 +652,48 @@ function UploadArea({
     } finally {
       setIsProcessingFile(false)
       setProcessingText('')
+      resetInput?.()
+    }
+  }, [authToken, onFileUpload, onOcrReady])
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    void processFiles(files, () => {
       event.target.value = ''
+    })
+  }
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    if (!isProcessingFile) {
+      setIsDragActive(true)
     }
   }
 
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return
+    }
+    setIsDragActive(false)
+  }
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    setIsDragActive(false)
+    if (isProcessingFile) return
+    const files = Array.from(event.dataTransfer.files ?? [])
+    void processFiles(files)
+  }
+
   return (
-    <div className="upload-area">
+    <div
+      className={`upload-area ${isDragActive ? 'upload-area--drag-active' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div className="upload-area__frame">
         <div className="upload-area__doc-icon">
           <div className="upload-area__doc-line" />
@@ -530,6 +716,10 @@ function UploadArea({
         可一次选择多张合同照片，系统会按选择顺序识别，再由你确认后开始分析
       </p>
 
+
+      <p className="upload-area__hint">
+        鐩存帴鎷栨嫿鏂囦欢鎴栫収鐗囧埌杩欓噷锛屼篃鍙互鐐瑰嚮涓嬫柟鎸夐挳閫夋嫨
+      </p>
 
       <div className="upload-area__actions">
         <button

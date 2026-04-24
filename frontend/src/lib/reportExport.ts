@@ -1,3 +1,6 @@
+import { getGatewayErrorMessage, isHTMLResponseText } from './apiClient'
+import { apiPath } from './apiPaths'
+
 function buildFallbackName(filename?: string) {
   const sourceName = (filename || '').replace(/\.[^.]+$/, '').trim()
   const date = new Date().toLocaleDateString('zh-CN').replace(/\//g, '-')
@@ -6,7 +9,7 @@ function buildFallbackName(filename?: string) {
 
 function getFriendlyErrorMessage(status: number, text: string): string {
   if (status === 502 || status === 503 || status === 504) {
-    return '服务器暂时不可用，请稍后重试'
+    return '服务暂时不可用，请稍后重试'
   }
   if (status === 401) {
     return '登录已过期，请重新登录'
@@ -20,9 +23,8 @@ function getFriendlyErrorMessage(status: number, text: string): string {
   if (status >= 500) {
     return '服务器内部错误，请稍后重试'
   }
-  // If response is HTML, show generic message
-  if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
-    return '服务器返回了错误页面，请稍后重试'
+  if (isHTMLResponseText(text)) {
+    return getGatewayErrorMessage(status, text)
   }
   return text || `导出失败 (${status})`
 }
@@ -32,7 +34,7 @@ export async function exportReportAsWord(params: {
   reportParagraphs: string[]
   token?: string | null
 }) {
-  const response = await fetch('/api/review/export-docx', {
+  const response = await fetch(apiPath('/review/export-docx'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

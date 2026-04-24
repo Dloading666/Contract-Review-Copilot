@@ -8,6 +8,7 @@ import os
 from types import SimpleNamespace
 
 from ..cache import build_cache_key, get_json, get_ttl_seconds, set_json
+from ..config import get_settings
 from ..llm_client import (
     create_chat_completion as _core_create_chat_completion,
     get_primary_model_key,
@@ -36,26 +37,28 @@ def create_chat_completion(**kwargs):
     from .legal_skill import _is_claude_enabled, create_claude_completion, _get_claude_model
     if _is_claude_enabled():
         model = kwargs.pop("model", _get_claude_model())
+        kwargs.pop("lane", None)
         messages = kwargs.pop("messages", [])
         return create_claude_completion(messages, model, **kwargs)
 
-    primary_model = kwargs.get("model", get_primary_model_key())
+    requested_lane = kwargs.get("lane") or kwargs.get("model") or get_primary_model_key()
 
     cache_data = {
-        "model": primary_model,
+        "lane": requested_lane,
+        "model": kwargs.get("model", requested_lane),
         "messages": kwargs.get("messages", []),
         "temperature": kwargs.get("temperature", 0.1),
         "max_tokens": kwargs.get("max_tokens", 1024),
     }
     cache_key = build_cache_key("llm", {
-        "model": primary_model,
+        "model": requested_lane,
         "hash": hashlib.md5(json.dumps(cache_data, ensure_ascii=False).encode()).hexdigest(),
     })
 
     cached = get_json(cache_key)
     if cached and cached.get("content"):
-        print(f"[LLM] 使用缓存: {primary_model}", flush=True)
-        return _cached_chat_completion(cached["content"], cached.get("model", primary_model))
+        print(f"[LLM] 使用缓存: {requested_lane}", flush=True)
+        return _cached_chat_completion(cached["content"], cached.get("model", requested_lane))
 
     response = _core_create_chat_completion(**kwargs)
 
@@ -63,7 +66,7 @@ def create_chat_completion(**kwargs):
     if content:
         set_json(
             cache_key,
-            {"content": content, "model": getattr(response, "model", primary_model)},
+            {"content": content, "model": getattr(response, "model", requested_lane)},
             get_ttl_seconds("llm"),
         )
 
@@ -102,15 +105,17 @@ def extract_entities(contract_text: str, model_key: str | None = None) -> dict:
         return _regex_fallback(contract_text)
 
     try:
+        settings = get_settings()
         response = create_chat_completion(
             model=model_key or get_primary_model_key(),
             messages=[
                 {"role": "system", "content": "你是一个专业的法律文档分析助手。"},
                 {"role": "user", "content": EXTRACTION_PROMPT.format(contract_text=contract_text)},
             ],
-            temperature=0.1,
+            temperature=settings.review_temperature,
             max_tokens=1024,
-            timeout=15.0,
+            timeout=settings.review_entity_timeout_seconds,
+            allow_fallback=False,
         )
         result_text = response.choices[0].message.content.strip()
 

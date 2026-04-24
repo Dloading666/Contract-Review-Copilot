@@ -1,14 +1,13 @@
 """
-Multi-provider LLM client with primary (OpenRouter) + fallback (SiliconFlow) support.
+Shared LLM client for Contract Review Copilot.
 
-Review/chat model chain:
-  1. google/gemma-4-26b-a4b-it:free  (primary — MoE, fastest)
-  2. google/gemma-4-31b-it:free      (fallback — dense, higher quality)
-  3. Qwen/Qwen3.5-4B                 (tertiary — SiliconFlow, free)
+Text generation lanes:
+  - review: DeepSeek primary chain for extraction, routing,
+    risk review, auto-fix, and report generation
+  - chat: DeepSeek primary chain tuned for faster interactive Q&A
 
-OCR model chain:
-  1. nvidia/nemotron-nano-12b-v2-vl:free   (primary — OpenRouter)
-  2. PaddlePaddle/PaddleOCR-VL-1.5         (fallback — SiliconFlow)
+OCR model:
+  - PaddlePaddle/PaddleOCR-VL-1.5 via SiliconFlow
 """
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ import mimetypes
 import os
 import re
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 from openai import APIConnectionError, APITimeoutError, OpenAI
@@ -25,8 +24,10 @@ from openai import APIConnectionError, APITimeoutError, OpenAI
 from .config import get_settings
 
 DEFAULT_MODEL_KEY = "review"
+CHAT_MODEL_KEY = "chat"
 OCR_UNREADABLE_MARKER = "OCR_UNREADABLE_CONTRACT_IMAGE"
 TRANSIENT_LLM_ERRORS = (APIConnectionError, APITimeoutError, Exception)
+SUPPORTED_MODEL_KEYS = {DEFAULT_MODEL_KEY, CHAT_MODEL_KEY}
 
 SUPPORTED_IMAGE_MIME_TYPES = {
     "image/jpeg",
@@ -80,7 +81,7 @@ def _get_openrouter_client() -> OpenAI:
     )
 
 
-def _get_siliconflow_client(api_key: Optional[str] = None) -> OpenAI:
+def _get_text_generation_client(api_key: Optional[str] = None) -> OpenAI:
     settings = get_settings()
     return OpenAI(
         api_key=api_key or os.getenv("OPENAI_API_KEY") or settings.openai_api_key,
@@ -89,28 +90,54 @@ def _get_siliconflow_client(api_key: Optional[str] = None) -> OpenAI:
     )
 
 
+def _get_ocr_fallback_client(api_key: Optional[str] = None) -> OpenAI:
+    settings = get_settings()
+    return OpenAI(
+        api_key=(
+            api_key
+            or os.getenv("OCR_FALLBACK_API_KEY")
+            or settings.ocr_fallback_api_key
+        ),
+        base_url=(
+            os.getenv("OCR_FALLBACK_BASE_URL")
+            or settings.ocr_fallback_base_url
+        ),
+        timeout=httpx.Timeout(120.0, connect=15.0),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Model resolution
 # ---------------------------------------------------------------------------
 
-def get_primary_model_key() -> str:
-    return DEFAULT_MODEL_KEY
+def get_primary_model_key(lane: str = DEFAULT_MODEL_KEY) -> str:
+    return lane if lane in SUPPORTED_MODEL_KEYS else DEFAULT_MODEL_KEY
 
 
-def available_models() -> list[dict[str, str]]:
-    settings = get_settings()
-    return [
-        {"key": DEFAULT_MODEL_KEY, "label": settings.primary_review_model},
-        {"key": "fallback", "label": settings.fallback_review_model},
+def available_models(lane: str = DEFAULT_MODEL_KEY) -> list[dict[str, str]]:
+    primary_model, fallback_model = _get_model_chain_for_lane(lane)
+    models = [
+        {"key": lane if lane in SUPPORTED_MODEL_KEYS else DEFAULT_MODEL_KEY, "label": primary_model},
     ]
+    if fallback_model:
+        models.append({"key": "fallback", "label": fallback_model})
+    return models
 
 
 def _get_primary_review_model() -> str:
     return get_settings().primary_review_model
 
 
-def _get_fallback_review_model() -> str:
+def _get_fallback_review_model() -> str | None:
     return get_settings().fallback_review_model
+
+
+def _get_primary_chat_model() -> str:
+    return get_settings().primary_chat_model
+
+
+def _get_fallback_chat_model() -> str | None:
+    return get_settings().fallback_chat_model
 
 
 def _get_primary_ocr_model() -> str:
@@ -121,13 +148,41 @@ def _get_fallback_ocr_model() -> str:
     return get_settings().fallback_ocr_model
 
 
+def _resolve_model_lane(model: Optional[str] = None, lane: Optional[str] = None) -> str:
+    candidate = lane or model or DEFAULT_MODEL_KEY
+    return candidate if candidate in SUPPORTED_MODEL_KEYS else DEFAULT_MODEL_KEY
+
+
+def _get_model_chain_for_lane(lane: str) -> tuple[str, str | None]:
+    resolved_lane = _resolve_model_lane(lane=lane)
+    if resolved_lane == CHAT_MODEL_KEY:
+        return _get_primary_chat_model(), _get_fallback_chat_model()
+    return _get_primary_review_model(), _get_fallback_review_model()
+
+
+def _build_attempt_list(
+    *,
+    primary_model: str,
+    fallback_model: str | None,
+    allow_fallback: bool,
+) -> list[tuple[str, str, Callable[..., OpenAI]]]:
+    attempts = [(primary_model, "deepseek", _get_text_generation_client)]
+    if allow_fallback and fallback_model and fallback_model != primary_model:
+        attempts.append((fallback_model, "fallback", _get_text_generation_client))
+    return attempts
+
+
 # ---------------------------------------------------------------------------
 # Thinking mode helpers
 # ---------------------------------------------------------------------------
 
 def _should_disable_thinking(model_id: str) -> bool:
     normalized = model_id.lower()
-    return "qwen/qwen3" in normalized or normalized.startswith("qwen3")
+    return (
+        "qwen/qwen3" in normalized
+        or normalized.startswith("qwen3")
+        or "deepseek-v4" in normalized
+    )
 
 
 def _apply_chat_extra_body_defaults(model_id: str, kwargs: dict) -> dict:
@@ -313,12 +368,13 @@ def _build_image_data_url(image_bytes: bytes, mime_type: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Chat completion (primary → fallback → tertiary)
+# Chat completion (lane-aware SiliconFlow chain)
 # ---------------------------------------------------------------------------
 
 def create_chat_completion(
     messages: list,
     model: Optional[str] = None,
+    lane: Optional[str] = None,
     temperature: float = 0.1,
     max_tokens: int = 2048,
     timeout: float = 60.0,
@@ -326,23 +382,22 @@ def create_chat_completion(
     **kwargs,
 ):
     """
-    Create chat completion: primary (OpenRouter Gemma4) → fallback (OpenRouter Nemotron) → tertiary (SiliconFlow Qwen).
+    Create an OpenAI-compatible chat completion for the requested lane.
     """
-    del model
+    resolved_lane = _resolve_model_lane(model=model, lane=lane)
+    primary_model, fallback_model = _get_model_chain_for_lane(resolved_lane)
 
-    primary_model = _get_primary_review_model()     # Qwen/Qwen3.5-4B
-    fallback_model = _get_fallback_review_model()  # deepseek-ai/DeepSeek-V2.5
-
-    attempt_list = [
-        (primary_model, "siliconflow", _get_siliconflow_client),
-        (fallback_model, "siliconflow", _get_siliconflow_client),
-    ]
+    attempt_list = _build_attempt_list(
+        primary_model=primary_model,
+        fallback_model=fallback_model,
+        allow_fallback=allow_fallback,
+    )
 
     last_exc = None
     for model_id, provider, client_fn in attempt_list:
         client = client_fn()
         request_kwargs = _apply_chat_extra_body_defaults(model_id, kwargs)
-        print(f"[LLM] Calling review model ({provider}): {model_id}", flush=True)
+        print(f"[LLM] Calling {resolved_lane} model ({provider}): {model_id}", flush=True)
 
         try:
             response = client.chat.completions.create(
@@ -353,22 +408,94 @@ def create_chat_completion(
                 timeout=timeout,
                 **request_kwargs,
             )
-            print(f"[LLM] Success: {model_id}", flush=True)
+            print(f"[LLM] Success ({resolved_lane}): {model_id}", flush=True)
             return response
 
         except Exception as exc:
             print(f"[LLM] Error with {model_id}: {type(exc).__name__}: {exc}", flush=True)
             last_exc = exc
-            if provider == "siliconflow":
-                # Last resort, no more fallbacks
-                break
             continue
 
-    raise RuntimeError(f"All review models failed. Last error: {last_exc}")
+    raise RuntimeError(f"All {resolved_lane} models failed. Last error: {last_exc}")
+
+
+def extract_stream_delta_text(chunk) -> str:
+    choices = getattr(chunk, "choices", None)
+    if not choices:
+        return ""
+
+    delta = getattr(choices[0], "delta", None)
+    if delta is None:
+        return ""
+
+    for candidate in (
+        getattr(delta, "content", ""),
+        getattr(delta, "text", ""),
+    ):
+        if isinstance(candidate, str):
+            return candidate
+        if isinstance(candidate, list):
+            fragments: list[str] = []
+            for block in candidate:
+                text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+                if isinstance(text, str) and text:
+                    fragments.append(text)
+            if fragments:
+                return "".join(fragments)
+
+    return ""
+
+
+def stream_chat_completion(
+    messages: list,
+    model: Optional[str] = None,
+    lane: Optional[str] = None,
+    temperature: float = 0.1,
+    max_tokens: int = 2048,
+    timeout: float = 60.0,
+    allow_fallback: bool = True,
+    **kwargs,
+) -> tuple[object, str]:
+    """
+    Create a streaming OpenAI-compatible chat completion for the requested lane.
+    Returns the stream object and the concrete model id used.
+    """
+    resolved_lane = _resolve_model_lane(model=model, lane=lane)
+    primary_model, fallback_model = _get_model_chain_for_lane(resolved_lane)
+
+    attempt_list = _build_attempt_list(
+        primary_model=primary_model,
+        fallback_model=fallback_model,
+        allow_fallback=allow_fallback,
+    )
+
+    last_exc = None
+    for model_id, provider, client_fn in attempt_list:
+        client = client_fn()
+        request_kwargs = _apply_chat_extra_body_defaults(model_id, kwargs)
+        print(f"[LLM] Streaming with {resolved_lane} model ({provider}): {model_id}", flush=True)
+
+        try:
+            stream = client.chat.completions.create(
+                model=model_id,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                stream=True,
+                **request_kwargs,
+            )
+            return stream, model_id
+        except Exception as exc:
+            print(f"[LLM] Streaming error with {model_id}: {type(exc).__name__}: {exc}", flush=True)
+            last_exc = exc
+            continue
+
+    raise RuntimeError(f"All {resolved_lane} models failed. Last error: {last_exc}")
 
 
 # ---------------------------------------------------------------------------
-# OCR (primary → fallback)
+# OCR
 # ---------------------------------------------------------------------------
 
 def extract_text_from_image(
@@ -381,19 +508,13 @@ def extract_text_from_image(
     timeout: float = 120.0,
 ) -> tuple[str, str]:
     """
-    Extract text from image with primary (OpenRouter VL) first, fallback to SiliconFlow PaddleOCR.
+    Extract text from image with SiliconFlow PaddleOCR.
     """
     del model
 
     normalized_mime_type = normalize_image_mime_type(mime_type, filename)
-    settings = get_settings()
-    primary_model = _get_primary_ocr_model()
-    fallback_model = _get_fallback_ocr_model()
-
-    # Always use OpenRouter for primary OCR
-    primary_client = _get_openrouter_client()
-    # Use SiliconFlow for fallback OCR
-    fallback_client = _get_siliconflow_client()
+    ocr_model = _get_primary_ocr_model()
+    ocr_client = _get_ocr_fallback_client()
 
     image_url = _build_image_data_url(image_bytes, normalized_mime_type)
 
@@ -424,46 +545,26 @@ def extract_text_from_image(
         print(f"[LLM] OCR using model: {used}", flush=True)
         return extracted, used
 
-    # Try primary model
     try:
-        print(f"[LLM] Trying primary OCR model: {primary_model}", flush=True)
-        response = run_ocr(primary_client, primary_model, prompt)
-        extracted_text, used_model = process_response(response, primary_model)
+        print(f"[LLM] Trying OCR model: {ocr_model}", flush=True)
+        response = run_ocr(ocr_client, ocr_model, prompt)
+        extracted_text, used_model = process_response(response, ocr_model)
 
         if _is_unreadable_ocr_marker(extracted_text) or _is_suspicious_repetitive_ocr_text(extracted_text):
-            print(f"[LLM] Primary OCR result suspicious, retrying with strict prompt...", flush=True)
-            retry_response = run_ocr(primary_client, primary_model, STRICT_OCR_PROMPT)
+            print(f"[LLM] OCR result suspicious, retrying with strict prompt...", flush=True)
+            retry_response = run_ocr(ocr_client, ocr_model, STRICT_OCR_PROMPT)
             retry_text = _sanitize_ocr_text(_extract_response_text(retry_response))
             retry_text = _deduplicate_repeated_lines(retry_text, max_repeats=3)
             retry_text = _deduplicate_repeated_phrases(retry_text, max_repeats=3)
             if retry_text and not _is_unreadable_ocr_marker(retry_text) and not _is_suspicious_repetitive_ocr_text(retry_text):
-                extracted_text, used_model = retry_text, getattr(retry_response, "model", primary_model) or primary_model
+                extracted_text, used_model = retry_text, getattr(retry_response, "model", ocr_model) or ocr_model
             else:
                 raise RuntimeError("OCR 结果疑似为模型补全的空白模板或非合同噪音，请上传更清晰的合同原图，或手动输入合同文字。")
 
         return extracted_text, used_model
 
     except Exception as exc:
-        print(f"[LLM] Primary OCR failed: {exc}, falling back to {fallback_model}", flush=True)
-        # Fallback to SiliconFlow PaddleOCR
-        try:
-            response = run_ocr(fallback_client, fallback_model, prompt)
-            extracted_text, used_model = process_response(response, fallback_model)
-
-            if _is_unreadable_ocr_marker(extracted_text) or _is_suspicious_repetitive_ocr_text(extracted_text):
-                retry_response = run_ocr(fallback_client, fallback_model, STRICT_OCR_PROMPT)
-                retry_text = _sanitize_ocr_text(_extract_response_text(retry_response))
-                retry_text = _deduplicate_repeated_lines(retry_text, max_repeats=3)
-                retry_text = _deduplicate_repeated_phrases(retry_text, max_repeats=3)
-                if retry_text and not _is_unreadable_ocr_marker(retry_text) and not _is_suspicious_repetitive_ocr_text(retry_text):
-                    extracted_text, used_model = retry_text, getattr(retry_response, "model", fallback_model) or fallback_model
-                else:
-                    raise RuntimeError("OCR 结果疑似为模型补全的空白模板或非合同噪音，请上传更清晰的合同原图，或手动输入合同文字。")
-
-            return extracted_text, used_model
-
-        except Exception as fallback_exc:
-            raise RuntimeError(f"OCR 备用模型也失败了: {fallback_exc}")
+        raise RuntimeError(f"OCR 模型调用失败: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +603,7 @@ def correct_ocr_text(
             {"role": "system", "content": OCR_CORRECTION_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
+        lane=CHAT_MODEL_KEY,
         temperature=0,
         max_tokens=min(max(len(raw_text) * 2, 2048), 8192),
         timeout=timeout,
@@ -510,5 +612,5 @@ def correct_ocr_text(
     if not corrected_text:
         raise RuntimeError("模型未返回可用的 OCR 校对文本。")
 
-    used_model = getattr(response, "model", _get_primary_review_model()) or _get_primary_review_model()
+    used_model = getattr(response, "model", _get_primary_chat_model()) or _get_primary_chat_model()
     return corrected_text, used_model

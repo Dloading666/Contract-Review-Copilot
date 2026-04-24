@@ -1,173 +1,196 @@
 """
-Review Queue Service — Redis-backed task queue for contract reviews.
+Background task queue service with Redis storage and in-memory fallback.
 
-Tasks are stored as Redis Hash keys; SSE events are stored as Redis Lists.
-This allows the background worker to push events while the stream endpoint
-polls and relays them to the connected client in real time.
+Tasks are stored as JSON blobs and can optionally carry SSE-style event lists.
+The default task type is ``review`` so existing review queue flows remain
+compatible while other background jobs (such as OCR ingestion) can reuse the
+same lifecycle and retry metadata.
 """
 from __future__ import annotations
 
 import json
 import time
 import uuid
+from threading import Lock
 from typing import Any, Optional
 
 from ..cache.redis_cache import get_redis_client
 
-# TTL for task metadata and event lists (2 hours)
 TASK_TTL = 7200
 EVENTS_TTL = 7200
-
-# Sentinel event type that signals end-of-stream to the SSE reader
 DONE_SENTINEL = "_done"
+TERMINAL_STATUSES = {"completed", "failed", "paused", "dead_letter", "cancelled"}
 
-_TASK_PREFIX = "review:task:"
-_EVENTS_PREFIX = "review:events:"
-_PENDING_COUNTER = "review:queue:pending_count"
-
-
-def _task_key(task_id: str) -> str:
-    return f"{_TASK_PREFIX}{task_id}"
+_memory_lock = Lock()
+_memory_tasks: dict[tuple[str, str], dict[str, Any]] = {}
+_memory_events: dict[tuple[str, str], list[dict[str, Any]]] = {}
+_memory_pending_counts: dict[str, int] = {}
 
 
-def _events_key(task_id: str) -> str:
-    return f"{_EVENTS_PREFIX}{task_id}"
+def _task_key(task_id: str, task_type: str = "review") -> str:
+    return f"queue:{task_type}:task:{task_id}"
 
 
-# ---------------------------------------------------------------------------
-# Task lifecycle
-# ---------------------------------------------------------------------------
+def _events_key(task_id: str, task_type: str = "review") -> str:
+    return f"queue:{task_type}:events:{task_id}"
+
+
+def _pending_counter_key(task_type: str = "review") -> str:
+    return f"queue:{task_type}:pending_count"
+
+
+def _task_storage_key(task_id: str, task_type: str) -> tuple[str, str]:
+    return task_type, task_id
+
 
 def create_task(
     user_id: str,
-    contract_text: str,
-    session_id: str,
+    contract_text: str = "",
+    session_id: str = "",
     filename: str = "",
+    review_mode: str = "deep",
+    *,
+    task_type: str = "review",
+    max_retries: int = 0,
+    metadata: Optional[dict[str, Any]] = None,
 ) -> str:
-    """
-    Register a new review task and return its task_id.
-
-    The task starts in "pending" status; the background worker will
-    transition it to "running" → "paused" | "completed" | "failed".
-    """
     task_id = uuid.uuid4().hex
+    now = time.time()
     task_data: dict[str, Any] = {
         "task_id": task_id,
+        "task_type": task_type,
         "session_id": session_id,
         "user_id": user_id,
         "status": "pending",
-        "created_at": time.time(),
+        "created_at": now,
+        "updated_at": now,
         "filename": filename,
+        "review_mode": review_mode,
         "contract_text_len": len(contract_text),
+        "retry_count": 0,
+        "max_retries": max(0, int(max_retries or 0)),
+        "last_error": None,
+        "error_code": None,
+        "dead_letter": False,
     }
+    if metadata:
+        task_data.update(metadata)
 
     client = get_redis_client()
     if client:
         try:
-            client.setex(
-                _task_key(task_id),
-                TASK_TTL,
-                json.dumps(task_data, ensure_ascii=False),
-            )
-            client.incr(_PENDING_COUNTER)
-            client.expire(_PENDING_COUNTER, TASK_TTL)
+            client.setex(_task_key(task_id, task_type), TASK_TTL, json.dumps(task_data, ensure_ascii=False))
+            counter_key = _pending_counter_key(task_type)
+            client.incr(counter_key)
+            client.expire(counter_key, TASK_TTL)
+            return task_id
         except Exception as exc:
-            print(f"[Queue] Failed to create task {task_id}: {exc}", flush=True)
+            print(f"[Queue] Redis create task fallback for {task_type}:{task_id}: {exc}", flush=True)
 
+    with _memory_lock:
+        _memory_tasks[_task_storage_key(task_id, task_type)] = task_data
+        _memory_pending_counts[task_type] = _memory_pending_counts.get(task_type, 0) + 1
     return task_id
 
 
-def get_task(task_id: str) -> Optional[dict]:
-    """Return task metadata dict, or None if not found."""
+def get_task(task_id: str, *, task_type: str = "review") -> Optional[dict[str, Any]]:
     client = get_redis_client()
-    if not client:
-        return None
-    try:
-        raw = client.get(_task_key(task_id))
-        return json.loads(raw) if raw else None
-    except Exception:
-        return None
+    if client:
+        try:
+            raw = client.get(_task_key(task_id, task_type))
+            return json.loads(raw) if raw else None
+        except Exception as exc:
+            print(f"[Queue] Redis get task fallback for {task_type}:{task_id}: {exc}", flush=True)
+
+    with _memory_lock:
+        task = _memory_tasks.get(_task_storage_key(task_id, task_type))
+        return dict(task) if task else None
 
 
-def update_task_status(task_id: str, status: str, **extra: Any) -> None:
-    """Atomically update task status and any extra fields."""
+def update_task_status(task_id: str, status: str, *, task_type: str = "review", **extra: Any) -> None:
+    now = time.time()
     client = get_redis_client()
-    if not client:
-        return
-    try:
-        raw = client.get(_task_key(task_id))
-        if not raw:
+    if client:
+        try:
+            raw = client.get(_task_key(task_id, task_type))
+            if raw:
+                task_data: dict[str, Any] = json.loads(raw)
+                prev_status = task_data.get("status", "")
+                task_data["status"] = status
+                task_data["updated_at"] = now
+                task_data.update(extra)
+                if status in TERMINAL_STATUSES and "finished_at" not in task_data:
+                    task_data["finished_at"] = now
+                client.setex(
+                    _task_key(task_id, task_type),
+                    TASK_TTL,
+                    json.dumps(task_data, ensure_ascii=False),
+                )
+                if prev_status == "pending" and status != "pending":
+                    try:
+                        client.decr(_pending_counter_key(task_type))
+                    except Exception:
+                        pass
+                return
+        except Exception as exc:
+            print(f"[Queue] Redis update task fallback for {task_type}:{task_id}: {exc}", flush=True)
+
+    with _memory_lock:
+        key = _task_storage_key(task_id, task_type)
+        task_data = dict(_memory_tasks.get(key) or {})
+        if not task_data:
             return
-        task_data: dict = json.loads(raw)
         prev_status = task_data.get("status", "")
         task_data["status"] = status
+        task_data["updated_at"] = now
         task_data.update(extra)
-
-        client.setex(
-            _task_key(task_id),
-            TASK_TTL,
-            json.dumps(task_data, ensure_ascii=False),
-        )
-
-        # Keep the pending counter accurate
-        if prev_status == "pending" and status in ("running", "completed", "failed", "paused"):
-            try:
-                client.decr(_PENDING_COUNTER)
-            except Exception:
-                pass
-    except Exception as exc:
-        print(f"[Queue] Failed to update task {task_id}: {exc}", flush=True)
+        if status in TERMINAL_STATUSES and "finished_at" not in task_data:
+            task_data["finished_at"] = now
+        _memory_tasks[key] = task_data
+        if prev_status == "pending" and status != "pending":
+            _memory_pending_counts[task_type] = max(0, _memory_pending_counts.get(task_type, 0) - 1)
 
 
-def get_pending_count() -> int:
-    """Return the approximate number of pending/running tasks."""
+def get_pending_count(*, task_type: str = "review") -> int:
     client = get_redis_client()
-    if not client:
-        return 0
-    try:
-        raw = client.get(_PENDING_COUNTER)
-        return max(0, int(raw or 0))
-    except Exception:
-        return 0
+    if client:
+        try:
+            raw = client.get(_pending_counter_key(task_type))
+            return max(0, int(raw or 0))
+        except Exception as exc:
+            print(f"[Queue] Redis get pending fallback for {task_type}: {exc}", flush=True)
+
+    with _memory_lock:
+        return max(0, int(_memory_pending_counts.get(task_type, 0)))
 
 
-# ---------------------------------------------------------------------------
-# Event bus
-# ---------------------------------------------------------------------------
-
-def push_event(task_id: str, event_type: str, data: dict) -> None:
-    """
-    Append an SSE-style event to the task's event list.
-
-    The list is read sequentially by the stream endpoint.
-    Use DONE_SENTINEL as event_type to signal end-of-stream.
-    """
+def push_event(task_id: str, event_type: str, data: dict, *, task_type: str = "review") -> None:
+    payload = {"event": event_type, "data": data}
     client = get_redis_client()
-    if not client:
-        return
-    try:
-        payload = json.dumps(
-            {"event": event_type, "data": data},
-            ensure_ascii=False,
-        )
-        key = _events_key(task_id)
-        client.rpush(key, payload)
-        client.expire(key, EVENTS_TTL)
-    except Exception as exc:
-        print(f"[Queue] Failed to push event for task {task_id}: {exc}", flush=True)
+    if client:
+        try:
+            key = _events_key(task_id, task_type)
+            client.rpush(key, json.dumps(payload, ensure_ascii=False))
+            client.expire(key, EVENTS_TTL)
+            return
+        except Exception as exc:
+            print(f"[Queue] Redis push event fallback for {task_type}:{task_id}: {exc}", flush=True)
+
+    with _memory_lock:
+        key = _task_storage_key(task_id, task_type)
+        events = list(_memory_events.get(key, []))
+        events.append(payload)
+        _memory_events[key] = events
 
 
-def get_events(task_id: str, offset: int = 0) -> list[dict]:
-    """
-    Return events from ``offset`` onwards (non-blocking).
-
-    Callers should track their offset and call this repeatedly.
-    """
+def get_events(task_id: str, offset: int = 0, *, task_type: str = "review") -> list[dict[str, Any]]:
     client = get_redis_client()
-    if not client:
-        return []
-    try:
-        raw_events = client.lrange(_events_key(task_id), offset, -1)
-        return [json.loads(e) for e in raw_events]
-    except Exception:
-        return []
+    if client:
+        try:
+            raw_events = client.lrange(_events_key(task_id, task_type), offset, -1)
+            return [json.loads(item) for item in raw_events]
+        except Exception as exc:
+            print(f"[Queue] Redis get events fallback for {task_type}:{task_id}: {exc}", flush=True)
+
+    with _memory_lock:
+        return list(_memory_events.get(_task_storage_key(task_id, task_type), []))[offset:]

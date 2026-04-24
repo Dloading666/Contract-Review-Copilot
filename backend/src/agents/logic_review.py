@@ -11,6 +11,7 @@ from datetime import datetime
 from .entity_extraction import create_chat_completion, extract_entities
 from .routing import decide_routing
 from .legal_skill import _is_claude_enabled, REVIEW_CONTRACT_SKILL
+from ..config import get_settings
 from ..search import build_search_context
 from ..llm_client import get_primary_model_key
 from ..prompts.review_prompt import AUTOFIX_PROMPT, REVIEW_PROMPT
@@ -246,6 +247,7 @@ PATTERN_RULES = [
 def generate_clause_fix(clause: str, issue: str, suggestion: str, legal_ref: str) -> str:
     """Use LLM to generate a suggested clause revision."""
     try:
+        settings = get_settings()
         response = create_chat_completion(
             model=get_primary_model_key(),
             messages=[
@@ -260,9 +262,10 @@ def generate_clause_fix(clause: str, issue: str, suggestion: str, legal_ref: str
                     ),
                 },
             ],
-            temperature=0.3,
+            temperature=settings.review_temperature,
             max_tokens=512,
             timeout=30.0,
+            allow_fallback=False,
         )
         return response.choices[0].message.content.strip()
     except Exception as exc:
@@ -493,107 +496,123 @@ def review_clauses(
     entities: dict | None = None,
     model_key: str | None = None,
 ) -> list[dict]:
-    """Use LLM to analyze contract clauses for risks."""
+    """Analyze contract clauses with DeepSeek plus deterministic rule fallback."""
+    rule_issues = rule_review_clauses(contract_text)
+
     if os.getenv("SKIP_LLM_REVIEW", "").lower() in ("1", "true", "yes"):
         print("[LogicReview] SKIP_LLM_REVIEW is set, using rule-based fallback")
-        return _rule_based_review(contract_text)
+        return rule_issues
 
     try:
-        if entities is None:
-            entities = extract_entities(contract_text, model_key=model_key)
-
-        if routing is None:
-            routing = decide_routing(contract_text, entities, model_key=model_key)
-
-        rent = entities.get("rent", {}).get("monthly", 0)
-        deposit = entities.get("deposit", {}).get("amount", 0)
-        review_text = _extract_suspicious_clauses(contract_text) if len(contract_text) > 4000 else contract_text
-        search_context = build_search_context(routing, entities)
-        contract_info = (
-            f"合同类型：{entities.get('contract_type', '租赁合同')}，"
-            f"出租方：{entities.get('parties', {}).get('lessor', '未知')}，"
-            f"承租方：{entities.get('parties', {}).get('lessee', '未知')}，"
-            f"标的物：{entities.get('property', {}).get('address', '未知')}，"
-            f"租赁期限：{entities.get('lease_term', {}).get('duration_text', '未知')}。"
+        model_issues = model_review_clauses(
+            contract_text,
+            routing=routing,
+            entities=entities,
+            model_key=model_key,
         )
+        issues = _merge_issue_lists(model_issues, rule_issues)
+        return issues or rule_issues
+    except Exception as exc:
+        print(f"[LogicReview] LLM call failed: {exc}, using rule-based fallback")
+        return rule_issues
 
-        prompt = REVIEW_PROMPT.format(
-            contract_info=contract_info,
-            contract_type=entities.get("contract_type", "租赁合同"),
-            monthly_rent=rent,
-            deposit=deposit,
-            deposit_conditions=entities.get("deposit", {}).get("conditions", "未明确"),
-            penalty_clause=entities.get("penalty_clause", "未约定"),
-            late_fee=entities.get("late_fee") or "未约定",
-            termination_clause=entities.get("termination_clause") or "未约定",
-            rag_context=search_context or "未检索到额外法规上下文，请基于合同文本和通用法律原则审查。",
-            contract_text=review_text[:5000],
-        )
 
-        system_content = REVIEW_CONTRACT_SKILL
-        response = create_chat_completion(
+def rule_review_clauses(contract_text: str) -> list[dict]:
+    return _rule_based_review(contract_text)
+
+
+def model_review_clauses(
+    contract_text: str,
+    routing: dict | None = None,
+    entities: dict | None = None,
+    model_key: str | None = None,
+    *,
+    timeout: float | None = None,
+    allow_retry: bool = True,
+) -> list[dict]:
+    """Use DeepSeek to analyze clauses without rule-engine fallback."""
+    settings = get_settings()
+
+    if entities is None:
+        entities = extract_entities(contract_text, model_key=model_key)
+
+    if routing is None:
+        routing = decide_routing(contract_text, entities, model_key=model_key)
+
+    rent = entities.get("rent", {}).get("monthly", 0)
+    deposit = entities.get("deposit", {}).get("amount", 0)
+    review_text = _extract_suspicious_clauses(contract_text) if len(contract_text) > 4000 else contract_text
+    search_context = build_search_context(routing, entities)
+    contract_info = (
+        f"合同类型：{entities.get('contract_type', '租赁合同')}，"
+        f"出租方：{entities.get('parties', {}).get('lessor', '未知')}，"
+        f"承租方：{entities.get('parties', {}).get('lessee', '未知')}，"
+        f"标的物：{entities.get('property', {}).get('address', '未知')}，"
+        f"租赁期限：{entities.get('lease_term', {}).get('duration_text', '未知')}。"
+    )
+
+    prompt = REVIEW_PROMPT.format(
+        contract_info=contract_info,
+        contract_type=entities.get("contract_type", "租赁合同"),
+        monthly_rent=rent,
+        deposit=deposit,
+        deposit_conditions=entities.get("deposit", {}).get("conditions", "未明确"),
+        penalty_clause=entities.get("penalty_clause", "未约定"),
+        late_fee=entities.get("late_fee") or "未约定",
+        termination_clause=entities.get("termination_clause") or "未约定",
+        rag_context=search_context or "未检索到额外法规上下文，请基于合同文本和通用法律原则审查。",
+        contract_text=review_text[:5000],
+    )
+
+    system_content = REVIEW_CONTRACT_SKILL
+    request_timeout = timeout or settings.review_model_timeout_seconds
+    response = create_chat_completion(
+        model=model_key or get_primary_model_key(),
+        messages=[
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=settings.review_temperature,
+        max_tokens=2048,
+        timeout=request_timeout,
+        allow_fallback=False,
+    )
+
+    result_text = response.choices[0].message.content.strip()
+    issues = _parse_llm_json(result_text)
+
+    if issues is None and allow_retry:
+        retry_timeout = max(4.0, min(request_timeout / 3, request_timeout))
+        print("[LogicReview] JSON parse failed on first attempt, retrying...", flush=True)
+        retry_response = create_chat_completion(
             model=model_key or get_primary_model_key(),
             messages=[
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": prompt},
-            ],
-            temperature=0.1,
-            max_tokens=2048,
-            timeout=30.0,
-        )
-
-        result_text = response.choices[0].message.content.strip()
-        issues = _parse_llm_json(result_text)
-
-        # If first attempt returned malformed JSON, retry once with a stricter prompt
-        if issues is None:
-            print("[LogicReview] JSON parse failed on first attempt, retrying...", flush=True)
-            retry_response = create_chat_completion(
-                model=model_key or get_primary_model_key(),
-                messages=[
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": prompt},
-                    {"role": "assistant", "content": response.choices[0].message.content},
-                    {
-                        "role": "user",
-                        "content": (
-                            "你的上一条回复中JSON格式有误，请只输出合法的JSON数组，"
-                            "不要包含任何解释文字或代码块标记。"
-                        ),
-                    },
-                ],
-                temperature=0.0,
-                max_tokens=2048,
-                timeout=30.0,
-            )
-            retry_text = retry_response.choices[0].message.content.strip()
-            issues = _parse_llm_json(retry_text)
-
-        if issues is None:
-            raise ValueError("LLM 两次均未返回合法 JSON，回退规则引擎")
-
-        if isinstance(issues, dict):
-            issues = [issues]
-        issues = [_normalize_issue(issue) for issue in issues]
-        issues = _attach_issue_context(issues, contract_text)
-        issues = _merge_issue_lists(issues, _rule_based_review(contract_text))
-
-        if not issues:
-            issues.append(
+                {"role": "assistant", "content": response.choices[0].message.content},
                 {
-                    "clause": "整体评估",
-                    "level": "low",
-                    "risk_level": 1,
-                    "issue": "未发现明显不公平条款，合同条款基本公平合理。",
-                    "suggestion": "建议仔细阅读各项条款，确保自身权益。",
-                    "legal_reference": "《民法典》合同编通则",
-                }
-            )
+                    "role": "user",
+                    "content": (
+                        "你的上一条回复中JSON格式有误，请只输出合法的JSON数组，"
+                        "不要包含任何解释文字或代码块标记。"
+                    ),
+                },
+            ],
+            temperature=0.0,
+            max_tokens=2048,
+            timeout=retry_timeout,
+            allow_fallback=False,
+        )
+        retry_text = retry_response.choices[0].message.content.strip()
+        issues = _parse_llm_json(retry_text)
 
-        return issues
-    except Exception as exc:
-        print(f"[LogicReview] LLM call failed: {exc}, using rule-based fallback")
-        return _rule_based_review(contract_text)
+    if issues is None:
+        raise ValueError("LLM 未返回合法 JSON")
+
+    if isinstance(issues, dict):
+        issues = [issues]
+    normalized = [_normalize_issue(issue) for issue in issues]
+    return _attach_issue_context(normalized, contract_text)
 
 
 def _rule_based_review(contract_text: str) -> list[dict]:

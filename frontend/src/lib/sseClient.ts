@@ -1,3 +1,4 @@
+import { getGatewayErrorMessage } from './apiClient'
 import type { SSEEvent } from '../types'
 
 interface SSECallbacks {
@@ -91,10 +92,12 @@ export function createSSEClient(
     })
       .then(async (res) => {
         if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          const errorMessage = getGatewayErrorMessage(res.status, text)
           if (res.status === 401 || res.status === 403 || res.status === 404) {
-            throw new NonRetriableSSEError(`HTTP ${res.status}`)
+            throw new NonRetriableSSEError(errorMessage)
           }
-          throw new Error(`HTTP ${res.status}`)
+          throw new Error(errorMessage)
         }
 
         const reader = res.body?.getReader()
@@ -136,13 +139,17 @@ export function createSSEClient(
       .catch((error) => {
         if (aborted) return
 
-        if (!(error instanceof NonRetriableSSEError) && retryCount < maxRetries) {
+        const normalizedError = error instanceof Error && /failed to fetch/i.test(error.message)
+          ? new Error('网络请求没有到达服务端，请检查网络或站点网关设置后重试')
+          : error
+
+        if (!(normalizedError instanceof NonRetriableSSEError) && retryCount < maxRetries) {
           retryCount += 1
           retryTimer = setTimeout(connect, 2 ** retryCount * 1000)
           return
         }
 
-        callbacks.onError?.(error)
+        callbacks.onError?.(normalizedError)
       })
   }
 
