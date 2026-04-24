@@ -584,7 +584,7 @@ async def chat_stream(body: ChatRequest, authorization: Optional[str] = Header(N
 
     message = body.message.strip()
     if not message:
-        return JSONResponse(status_code=400, content={"error": "娑堟伅涓嶈兘涓虹┖"})
+        return JSONResponse(status_code=400, content={"error": "消息不能为空"})
 
     async def event_generator() -> AsyncGenerator[bytes, None]:
         try:

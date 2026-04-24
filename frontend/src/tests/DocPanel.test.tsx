@@ -350,7 +350,7 @@ describe('DocPanel', () => {
       {
         status: 'ocr_ready',
         filename: 'lease.txt',
-        contractText: '绉熻祦鍚堝悓姝ｆ枃',
+        contractText: '租赁合同正文',
       },
       {
         onConfirmReview,
