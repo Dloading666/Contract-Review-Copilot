@@ -86,13 +86,13 @@ def write_report_files(report: AuditReport, output_dir: Path, base_name: str) ->
 
 def render_markdown(report: AuditReport) -> str:
     lines: list[str] = [
-        f'# {report.project_name} ??????????',
+        f'# {report.project_name} 六维工程审计报告',
         '',
-        f'- ?????{report.generated_at}',
-        f'- ?????{report.overall_score}',
-        f'- ?????{report.release_decision}',
+        f'- 生成时间：{report.generated_at}',
+        f'- 综合评分：{report.overall_score}',
+        f'- 发布建议：{report.release_decision}',
         '',
-        '## ??',
+        '## 摘要',
         '',
     ]
 
@@ -100,21 +100,21 @@ def render_markdown(report: AuditReport) -> str:
         lines.append(f'- {item}')
 
     if report.strengths:
-        lines.extend(['', '## ????', ''])
+        lines.extend(['', '## 已具备能力', ''])
         for item in report.strengths:
             lines.append(f'- {item}')
 
-    lines.extend(['', '## ????', '', '| ?? | ?? | ?? | ??? |', '| --- | ---: | ---: | ---: |'])
+    lines.extend(['', '## 维度评分', '', '| 维度 | 得分 | 权重 | 问题数 |', '| --- | ---: | ---: | ---: |'])
     for score in report.dimension_scores:
         lines.append(f'| {score.label} | {score.score} | {score.weight} | {score.finding_count} |')
 
-    lines.extend(['', '## ????', ''])
+    lines.extend(['', '## 指标快照', ''])
     for key, value in report.metrics.items():
         lines.append(f'- `{key}`: {value}')
 
-    lines.extend(['', '## ????', ''])
+    lines.extend(['', '## 发现的问题', ''])
     if not report.findings:
-        lines.append('- ???????????????')
+        lines.append('- 未发现需要立即处理的问题。')
         return '\n'.join(lines)
 
     for finding in report.findings:
@@ -122,12 +122,12 @@ def render_markdown(report: AuditReport) -> str:
             [
                 f'### [{finding.severity}] {finding.title}',
                 '',
-                f'- ???{_label_for_dimension(finding.dimension)}',
-                f'- ???{finding.impact}',
-                f'- ???{finding.recommendation}',
-                f'- ???{finding.acceptance_criteria}',
-                f'- ?????{finding.owner_hint}',
-                '- ???',
+                f'- 维度：{_label_for_dimension(finding.dimension)}',
+                f'- 影响：{finding.impact}',
+                f'- 建议：{finding.recommendation}',
+                f'- 验收标准：{finding.acceptance_criteria}',
+                f'- 建议负责人：{finding.owner_hint}',
+                '- 证据：',
             ]
         )
         for evidence in finding.evidence:
@@ -253,17 +253,17 @@ def _collect_strengths(snapshot: ProjectSnapshot, metrics: dict[str, object]) ->
     doc_panel = snapshot.file_texts.get('frontend/src/components/DocPanel.tsx', '')
 
     if metrics.get('hasQueueEndpoint') and metrics.get('hasReviewWorker'):
-        strengths.append('????????????? worker??????????????')
+        strengths.append('已具备审查队列和 worker，支持将长耗时审查从请求链路中拆出。')
     if metrics.get('hasRateLimitModule'):
-        strengths.append('????????????????? Redis ??????')
+        strengths.append('认证、审查和聊天接口已有 Redis 限流基础。')
     if metrics.get('hasRedisCache'):
-        strengths.append('Redis ???????????????????????????')
+        strengths.append('Redis 缓存层可复用到模型响应、审计结果和任务状态。')
     if metrics.get('hasVectorStore'):
-        strengths.append('??? PostgreSQL + pgvector?????????????????')
+        strengths.append('已接入 PostgreSQL + pgvector，具备法律知识检索基础。')
     if metrics.get('hasPdfPaging'):
-        strengths.append('PDF ???????? OCR????????????????')
+        strengths.append('PDF 按页渲染后再 OCR，降低了单次模型输入过大的风险。')
     if 'accept=".txt,.docx,.pdf,.jpg,.jpeg,.png,.webp"' in doc_panel:
-        strengths.append('???????????????????????')
+        strengths.append('上传入口覆盖文档和图片，且前端已有格式约束。')
     return strengths[:6]
 
 
@@ -308,14 +308,14 @@ def _build_findings(snapshot: ProjectSnapshot) -> list[AuditFinding]:
             'concurrency-sync-ocr-ingest',
             'concurrency_performance',
             'P1',
-            'OCR ?????????????',
+            '同步 OCR 入口仍可能阻塞请求',
             [
                 _line_ref(snapshot, 'backend/src/main.py', '@app.post("/api/ocr/ingest")'),
                 _line_ref(snapshot, 'backend/src/ocr/ingest_service.py', '_extract_text_from_uploaded_image'),
             ],
-            '?? PDF ?????????????????????????????',
-            '? OCR ?????????????? task_id???? SSE ??????????',
-            '?????? 1 ???? task_id?OCR ? worker ???????????',
+            '图片或 PDF OCR 可能占用较长时间，高峰期会拉长接口响应并挤占 Web worker。',
+            '优先使用 OCR 队列入口返回 task_id，前端通过轮询或 SSE 获取识别结果。',
+            '并发上传 1 个大文件时接口快速返回 task_id，OCR 由 worker 异步完成。',
             'backend',
         )
 
@@ -324,14 +324,14 @@ def _build_findings(snapshot: ProjectSnapshot) -> list[AuditFinding]:
             'concurrency-sync-export',
             'concurrency_performance',
             'P3',
-            '????????????',
+            '报告导出仍在同步请求链路中执行',
             [
                 _line_ref(snapshot, 'backend/src/main.py', '@app.post("/api/review/export-docx")'),
                 _line_ref(snapshot, 'backend/src/services/queue_service.py', 'def create_task('),
             ],
-            '????????????? CPU ? IO????????',
-            '??????????????????????????????',
-            '????????????????????????????',
+            'DOCX 生成会消耗 CPU 和 IO，大报告导出可能造成短时接口抖动。',
+            '将导出能力纳入队列，或为导出接口设置更严格的超时和大小限制。',
+            '导出大报告时不会阻塞审查和聊天接口，超时能给出稳定错误。',
             'backend',
         )
 
@@ -340,15 +340,15 @@ def _build_findings(snapshot: ProjectSnapshot) -> list[AuditFinding]:
             'async-partial-decoupling-review',
             'async_decoupling',
             'P2',
-            '?????????????????',
+            '审查流程仍存在同步与异步两套路径',
             [
                 _line_ref(snapshot, 'backend/src/main.py', '@app.post("/api/review")'),
                 _line_ref(snapshot, 'backend/src/main.py', '@app.post("/api/review/deepen")'),
                 _line_ref(snapshot, 'backend/src/main.py', '@app.post("/api/review/queue")'),
             ],
-            '??????????????????????????????????',
-            '?? review ? deepen ??????????????????/?????',
-            'review ? deepen ???????????????????????????',
+            '同步 review/deepen 与队列 review 同时存在，容易导致状态、错误处理和限流策略不一致。',
+            '统一 review 与 deepen 的任务模型，只保留轻量启动接口和任务状态接口。',
+            'review 与 deepen 均通过队列执行，并共享任务状态、取消、重试和限流策略。',
             'backend',
         )
 
@@ -357,14 +357,14 @@ def _build_findings(snapshot: ProjectSnapshot) -> list[AuditFinding]:
             'async-missing-retry-policy',
             'async_decoupling',
             'P2',
-            '??????????????????',
+            '后台任务缺少明确重试与死信策略',
             [
                 _line_ref(snapshot, 'backend/src/services/queue_service.py', 'def create_task('),
                 _line_ref(snapshot, 'backend/src/workers/review_worker.py', 'async def run_queued_review('),
             ],
-            '????????????????????????????',
-            '????????????????????????????',
-            '?????? retry_count?last_error ? dead_letter ???????????',
+            '外部模型、OCR 或网络短暂失败时，任务可能直接失败，用户只能手动重试。',
+            '为队列任务增加指数退避、最大重试次数、last_error 和 dead_letter 状态。',
+            '任务记录包含 retry_count、last_error 和 dead_letter 标记，临时错误会自动重试。',
             'backend',
         )
 
@@ -375,14 +375,14 @@ def _build_findings(snapshot: ProjectSnapshot) -> list[AuditFinding]:
             'content-raw-exception-leak',
             'content_safety',
             'P1',
-            '??? worker ????????????',
+            '接口或 worker 可能暴露原始异常',
             [
                 _line_ref(snapshot, 'backend/src/main.py', 'str(exc)'),
                 _line_ref(snapshot, 'backend/src/workers/review_worker.py', 'error_msg = str(exc)'),
             ],
-            '?? OCR???????????????????????????????',
-            '???????????????????????????????????',
-            '???????????????? str(exc) ???????????',
+            '模型、OCR、文件解析等异常可能携带供应商返回、路径或配置细节，不应直接返回给前端。',
+            '对外只返回稳定错误码和用户友好文案，将完整异常写入服务端日志。',
+            '前端响应不包含原始 str(exc)，日志中能通过 request_id 追踪完整异常。',
             'backend',
         )
 
@@ -391,14 +391,14 @@ def _build_findings(snapshot: ProjectSnapshot) -> list[AuditFinding]:
             'storage-browser-history',
             'storage_architecture',
             'P2',
-            '????????????????????',
+            '合同与报告历史仍保存在浏览器存储',
             [
                 _line_ref(snapshot, 'frontend/src/lib/reviewHistory.ts', 'localStorage'),
                 _line_ref(snapshot, 'frontend/src/hooks/useStreamingReview.ts', 'sessionStorage.setItem'),
             ],
-            '?????????????????????????????????????',
-            '?????????????????????????????????',
-            '??????????????????????????????',
+            '合同原文和报告可能包含敏感信息，长期放在浏览器本地存储会增加泄露风险。',
+            '将历史记录持久化到后端，浏览器侧仅保存短期会话索引或加密摘要。',
+            '退出登录后本地不保留合同全文，历史可从后端按账号安全加载。',
             'frontend+backend',
         )
 
@@ -407,15 +407,15 @@ def _build_findings(snapshot: ProjectSnapshot) -> list[AuditFinding]:
             'large-file-missing-limits',
             'large_file_handling',
             'P1',
-            '??????????????????',
+            '上传链路需要持续校验大小和页数限制',
             [
                 _line_ref(snapshot, 'backend/src/main.py', '@app.post("/api/ocr/ingest")'),
                 _line_ref(snapshot, 'backend/src/ocr/ingest_service.py', '_render_pdf_to_images'),
                 _line_ref(snapshot, 'frontend/src/components/DocPanel.tsx', 'accept=".txt,.docx,.pdf,.jpg,.jpeg,.png,.webp"'),
             ],
-            '?? PDF ?????? OCR ???????????????',
-            '?????????????????????????????',
-            '???????????? PDF ????????????/???????',
+            '超大 PDF 或高分辨率图片会放大 OCR 成本，并可能触发内存或超时问题。',
+            '在前端和后端同时校验文件大小、页数、像素数和批量图片数量。',
+            '超过限制的 PDF 或图片会被快速拒绝，并给出明确可恢复提示。',
             'backend+frontend',
         )
 
@@ -424,15 +424,15 @@ def _build_findings(snapshot: ProjectSnapshot) -> list[AuditFinding]:
             'anti-bot-missing-challenge',
             'anti_bot_registration',
             'P2',
-            '??????????? CAPTCHA ???????',
+            '注册链路缺少强挑战验证',
             [
                 _line_ref(snapshot, 'backend/src/main.py', '@app.post("/api/auth/register")'),
                 _line_ref(snapshot, 'backend/src/main.py', '_enforce_auth_rate_limits'),
                 _line_ref(snapshot, 'frontend/src/pages/RegisterPage.tsx', 'handleSendCode'),
             ],
-            '????????????????????????????????',
-            '? send-code ? register ?? CAPTCHA???????????????????????????',
-            '???????????????????????????',
+            '仅依赖时间阈值和限流仍可能被分布式脚本批量注册消耗短信、邮件或模型资源。',
+            '在 send-code 与 register 前增加 CAPTCHA/Turnstile，并结合设备指纹和风险分。',
+            '异常注册流量被挑战或拦截，正常用户仍能低摩擦完成注册。',
             'backend+frontend',
         )
 
@@ -484,9 +484,9 @@ def _build_summary(scores: list[AuditDimensionScore], findings: list[AuditFindin
     severe_counts = Counter(finding.severity for finding in findings)
     weakest = sorted(scores, key=lambda item: item.score)[:2]
     return [
-        f'??? {len(findings)} ???????? P1 {severe_counts.get("P1", 0)} ??P2 {severe_counts.get("P2", 0)} ??P3 {severe_counts.get("P3", 0)} ??',
-        f'???????????{weakest[0].label}?{weakest[0].score} ??? {weakest[1].label}?{weakest[1].score} ???',
-        '?????? OCR ??????????????????????????????',
+        f'共发现 {len(findings)} 个优化项，其中 P1 {severe_counts.get("P1", 0)} 个、P2 {severe_counts.get("P2", 0)} 个、P3 {severe_counts.get("P3", 0)} 个。',
+        f'当前短板集中在 {weakest[0].label}（{weakest[0].score} 分）和 {weakest[1].label}（{weakest[1].score} 分）。',
+        '建议优先处理 OCR/上传链路、后台任务可靠性和敏感数据存储边界。',
     ]
 
 

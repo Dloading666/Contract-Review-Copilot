@@ -14,12 +14,12 @@ DIMENSIONS = (
 )
 
 DIMENSION_LABELS = {
-    'concurrency_performance': '????',
-    'async_decoupling': '????',
-    'content_safety': '????',
-    'storage_architecture': '????',
-    'large_file_handling': '?????',
-    'anti_bot_registration': '?????',
+    'concurrency_performance': '并发性能',
+    'async_decoupling': '异步解耦',
+    'content_safety': '内容安全',
+    'storage_architecture': '存储架构',
+    'large_file_handling': '大文件处理',
+    'anti_bot_registration': '防机器注册',
 }
 
 DIMENSION_WEIGHTS = {

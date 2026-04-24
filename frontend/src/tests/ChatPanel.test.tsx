@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../components/ChatPanel'
 import type { ReviewState } from '../App'
 import { EMPTY_ASSISTANT_REPLY_TEXT } from '../lib/chatText'
@@ -43,6 +43,11 @@ function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
 }
 
 describe('ChatPanel', () => {
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {

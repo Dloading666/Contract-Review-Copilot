@@ -39,7 +39,7 @@ def test_available_models_exposes_current_review_model_chain():
 def test_create_chat_completion_uses_review_lane_primary_model(monkeypatch):
     call_log: list[str] = []
     settings = get_settings()
-    monkeypatch.setattr(llm_client, "_get_siliconflow_client", lambda api_key=None: _build_fake_client(call_log))
+    monkeypatch.setattr(llm_client, "_get_text_generation_client", lambda api_key=None: _build_fake_client(call_log))
 
     response = llm_client.create_chat_completion(
         model=llm_client.DEFAULT_MODEL_KEY,
@@ -55,7 +55,7 @@ def test_create_chat_completion_uses_review_lane_primary_model(monkeypatch):
 def test_create_chat_completion_uses_chat_lane_primary_model(monkeypatch):
     call_log: list[str] = []
     settings = get_settings()
-    monkeypatch.setattr(llm_client, "_get_siliconflow_client", lambda api_key=None: _build_fake_client(call_log))
+    monkeypatch.setattr(llm_client, "_get_text_generation_client", lambda api_key=None: _build_fake_client(call_log))
 
     response = llm_client.create_chat_completion(
         lane=llm_client.CHAT_MODEL_KEY,
@@ -71,10 +71,16 @@ def test_create_chat_completion_uses_chat_lane_primary_model(monkeypatch):
 def test_create_chat_completion_falls_back_within_chat_lane(monkeypatch):
     call_log: list[str] = []
     settings = get_settings()
+    fallback_model = settings.fallback_chat_model or "fallback-chat-model"
     monkeypatch.setattr(
         llm_client,
-        "_get_siliconflow_client",
+        "_get_text_generation_client",
         lambda api_key=None: _build_fake_client(call_log, failures={settings.primary_chat_model}),
+    )
+    monkeypatch.setattr(
+        llm_client,
+        "_get_model_chain_for_lane",
+        lambda lane: (settings.primary_chat_model, fallback_model),
     )
 
     response = llm_client.create_chat_completion(
@@ -85,7 +91,7 @@ def test_create_chat_completion_falls_back_within_chat_lane(monkeypatch):
     )
 
     assert response.choices[0].message.content == "ok"
-    assert call_log == [settings.primary_chat_model, settings.fallback_chat_model]
+    assert call_log == [settings.primary_chat_model, fallback_model]
 
 
 def test_chat_endpoint_uses_chat_lane_and_returns_degraded_reply_on_failure(monkeypatch):

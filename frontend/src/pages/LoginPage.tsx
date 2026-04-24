@@ -83,6 +83,9 @@ export function LoginPage({ onLogin, onNavigateRegister, onNavigateForgotPasswor
             <AuthField label="邮箱地址">
               <span className="auth-field__icon"><Mail size={16} /></span>
               <input
+                type="email"
+                name="email"
+                autoComplete="email"
                 className="pixel-input pixel-input--literal auth-field__input"
                 placeholder="name@example.com"
                 value={email}
@@ -93,6 +96,8 @@ export function LoginPage({ onLogin, onNavigateRegister, onNavigateForgotPasswor
               <span className="auth-field__icon"><Lock size={16} /></span>
               <input
                 type="password"
+                name="password"
+                autoComplete="current-password"
                 className="pixel-input pixel-input--literal auth-field__input"
                 placeholder="请输入密码"
                 value={password}

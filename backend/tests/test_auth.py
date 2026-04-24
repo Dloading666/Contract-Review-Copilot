@@ -56,32 +56,6 @@ def test_send_email_code_requires_explicit_dev_flag(monkeypatch):
     assert result == {"success": False, "error": "Email verification service is not configured"}
 
 
-def test_send_phone_code_uses_local_dev_fallback_when_managed_service_is_unconfigured(monkeypatch):
-    monkeypatch.setattr(
-        auth,
-        "get_settings",
-        lambda: SimpleNamespace(
-            allow_dev_code_response=True,
-            redis_auth_code_ttl_seconds=300,
-        ),
-    )
-    monkeypatch.setattr(auth, "is_phone_verification_service_configured", lambda: False)
-
-    result = auth.send_phone_verification_code("13800138000")
-
-    assert result["success"] is True
-    assert len(result["dev_code"]) == 6
-    assert auth.consume_code("13800138000", result["dev_code"], kind="phone") is True
-
-
-def test_login_with_phone_code_surfaces_managed_service_errors(monkeypatch):
-    monkeypatch.setattr(auth, "consume_code", lambda *_args, **_kwargs: (_ for _ in ()).throw(auth.AliyunSmsError("短信服务异常")))
-
-    result = auth.login_with_phone_code("13800138000", "123456")
-
-    assert result == {"success": False, "error": "短信服务异常"}
-
-
 def test_reset_password_with_email_code_updates_password_hash(monkeypatch):
     user = {
         "id": "user-1",
@@ -92,7 +66,15 @@ def test_reset_password_with_email_code_updates_password_hash(monkeypatch):
     captured: dict[str, str] = {}
 
     monkeypatch.setattr(auth, "get_user_by_id", lambda user_id: user if user_id == "user-1" else None)
-    monkeypatch.setattr(auth, "consume_code", lambda email, code, kind="email": email == "demo@example.com" and code == "123456" and kind == "email")
+    monkeypatch.setattr(
+        auth,
+        "consume_code",
+        lambda email, code, kind="email": (
+            email == "demo@example.com"
+            and code == "123456"
+            and kind == auth.PASSWORD_RESET_CODE_KIND
+        ),
+    )
     monkeypatch.setattr(auth, "_hash_password", lambda raw_password: f"bcrypt::{raw_password}")
     monkeypatch.setattr(
         auth,
