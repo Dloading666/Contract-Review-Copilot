@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { safeFetchJSON } from '../lib/apiClient'
+import { APIError, safeFetchJSON } from '../lib/apiClient'
+import { apiPath } from '../lib/apiPaths'
 
 export interface User {
   id: string
@@ -77,7 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const payload = await safeFetchJSON<{ user?: User }>('/api/auth/me', {
+      const payload = await safeFetchJSON<{ user?: User }>(apiPath('/auth/me'), {
         headers: { Authorization: `Bearer ${currentToken}` },
       })
       if (payload.user) {
@@ -87,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return null
     } catch (err) {
       // Handle 401 specifically for logout
-      if (err instanceof Error && err.message.includes('401')) {
+      if ((err instanceof APIError && err.status === 401) || (err instanceof Error && err.message.includes('登录已过期'))) {
         logout()
         return null
       }

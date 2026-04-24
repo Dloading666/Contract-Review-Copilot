@@ -26,6 +26,7 @@ from .commerce import (
     update_user_password_credentials,
 )
 from .config import get_settings
+from .password_policy import get_password_validation_error
 
 
 def _load_jwt_secret() -> str:
@@ -58,6 +59,7 @@ JWT_EXPIRE_HOURS = 24
 _code_store: dict[str, dict] = {}
 _user_cache: dict[str, dict] = {}
 _PASSWORD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
+PASSWORD_RESET_CODE_KIND = "password_reset"
 
 
 def _get_redis():
@@ -267,15 +269,19 @@ def _send_email_code(email: str, code: str) -> dict:
         return {"success": False, "error": "Failed to send verification email"}
 
 
-def send_verification_code(email: str) -> dict:
-    normalized_email = _normalize_email(email)
+def _send_code_with_kind(identifier: str, *, kind: str) -> dict:
+    normalized_identifier = _normalize_email(identifier)
     code = generate_code()
     expire_at = time.time() + get_settings().redis_auth_code_ttl_seconds
-    _save_code_record("email", normalized_email, {"code": code, "expire_at": expire_at})
-    result = _send_email_code(normalized_email, code)
+    _save_code_record(kind, normalized_identifier, {"code": code, "expire_at": expire_at})
+    result = _send_email_code(normalized_identifier, code)
     if not result.get("success"):
-        _delete_code_record("email", normalized_email)
+        _delete_code_record(kind, normalized_identifier)
     return result
+
+
+def send_verification_code(email: str) -> dict:
+    return _send_code_with_kind(email, kind="email")
 
 
 def send_password_reset_code_for_user(user_id: str) -> dict:
@@ -287,7 +293,21 @@ def send_password_reset_code_for_user(user_id: str) -> dict:
     if not email:
         return {"success": False, "error": "当前账号未绑定邮箱，暂不支持邮箱改密"}
 
-    return send_verification_code(email)
+    return _send_code_with_kind(email, kind=PASSWORD_RESET_CODE_KIND)
+
+
+def send_password_reset_code_for_email(email: str) -> dict:
+    normalized_email = _normalize_email(email)
+    user = get_user_by_email(normalized_email)
+    if not user:
+        return {"success": True, "sent": False}
+
+    user_email = _normalize_email(str(user.get("email") or ""))
+    if not user_email:
+        return {"success": True, "sent": False}
+
+    result = _send_code_with_kind(user_email, kind=PASSWORD_RESET_CODE_KIND)
+    return {"sent": True, **result}
 
 
 def verify_code_only(identifier: str, code: str, *, kind: str = "email") -> bool:
@@ -317,8 +337,9 @@ def register_user(email: str, code: str, password: str) -> dict:
     if not consume_code(normalized_email, code, kind="email"):
         return {"success": False, "error": "验证码无效或已过期"}
 
-    if len(password) < 6:
-        return {"success": False, "error": "密码不能少于6位"}
+    password_error = get_password_validation_error(password)
+    if password_error:
+        return {"success": False, "error": password_error}
 
     password_hash = _hash_password(password)
     try:
@@ -421,10 +442,11 @@ def reset_password_with_email_code(user_id: str, code: str, new_password: str) -
     if not email:
         return {"success": False, "error": "当前账号未绑定邮箱，暂不支持邮箱改密"}
 
-    if len(new_password.strip()) < 6:
-        return {"success": False, "error": "密码不能少于 6 位"}
+    password_error = get_password_validation_error(new_password)
+    if password_error:
+        return {"success": False, "error": password_error}
 
-    if not consume_code(email, code.strip(), kind="email"):
+    if not consume_code(email, code.strip(), kind=PASSWORD_RESET_CODE_KIND):
         return {"success": False, "error": "验证码无效或已过期"}
 
     password_hash = _hash_password(new_password.strip())
@@ -433,6 +455,27 @@ def reset_password_with_email_code(user_id: str, code: str, new_password: str) -
     user["salt"] = ""
     _cache_legacy_aliases(user)
     return {"success": True, "user": _build_public_user(user)}
+
+
+def reset_password_by_email_code(email: str, code: str, new_password: str) -> dict:
+    normalized_email = _normalize_email(email)
+    password_error = get_password_validation_error(new_password)
+    if password_error:
+        return {"success": False, "error": password_error}
+
+    user = get_user_by_email(normalized_email)
+    if not user:
+        return {"success": False, "error": "验证码无效或已过期"}
+
+    if not consume_code(normalized_email, code.strip(), kind=PASSWORD_RESET_CODE_KIND):
+        return {"success": False, "error": "验证码无效或已过期"}
+
+    password_hash = _hash_password(new_password.strip())
+    update_user_password_credentials(str(user["id"]), password_hash, "")
+    user["password_hash"] = password_hash
+    user["salt"] = ""
+    _cache_legacy_aliases(user)
+    return {"success": True}
 
 
 def verify_code(email: str, code: str) -> Optional[str]:

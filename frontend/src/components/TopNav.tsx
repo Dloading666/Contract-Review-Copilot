@@ -1,4 +1,5 @@
 import { FileDown, FilePlus } from 'lucide-react'
+import { readSessionReportSnapshot } from '../lib/browserStorage'
 
 interface TopNavProps {
   onNewReview?: () => void
@@ -8,7 +9,7 @@ interface TopNavProps {
 export function TopNav({ onNewReview, onExportReport }: TopNavProps) {
   const handleExportReport = () => {
     if (onExportReport) { onExportReport(); return }
-    const reportData = sessionStorage.getItem('lastReport')
+    const reportData = readSessionReportSnapshot()
     if (!reportData) return
     const blob = new Blob([reportData], { type: 'text/plain;charset=utf-8' })
     const url = URL.createObjectURL(blob)

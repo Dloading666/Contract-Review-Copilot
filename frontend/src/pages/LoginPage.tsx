@@ -3,11 +3,13 @@ import { motion } from 'motion/react'
 import { Github, KeyRound, Lock, Mail } from 'lucide-react'
 import type { User } from '../contexts/AuthContext'
 import { safeFetchJSON } from '../lib/apiClient'
+import { apiPath } from '../lib/apiPaths'
 import dogeImage from '../assets/branding/doge.png'
 
 interface LoginPageProps {
   onLogin: (token: string, user: User) => void
   onNavigateRegister?: () => void
+  onNavigateForgotPassword?: () => void
   onNavigateLanding?: () => void
 }
 
@@ -18,7 +20,7 @@ function handleDogeImageError(event: SyntheticEvent<HTMLImageElement>) {
   image.src = '/doge.png'
 }
 
-export function LoginPage({ onLogin, onNavigateRegister, onNavigateLanding }: LoginPageProps) {
+export function LoginPage({ onLogin, onNavigateRegister, onNavigateForgotPassword, onNavigateLanding }: LoginPageProps) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -39,7 +41,7 @@ export function LoginPage({ onLogin, onNavigateRegister, onNavigateLanding }: Lo
 
     setLoading(true)
     try {
-      const payload = await safeFetchJSON<{ error?: string; token?: string; user?: User }>('/api/auth/login', {
+      const payload = await safeFetchJSON<{ error?: string; token?: string; user?: User }>(apiPath('/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
@@ -98,6 +100,10 @@ export function LoginPage({ onLogin, onNavigateRegister, onNavigateLanding }: Lo
               />
             </AuthField>
 
+            <button type="button" className="auth-link-button auth-link-button--solo" onClick={onNavigateForgotPassword}>
+              忘记密码？
+            </button>
+
             {error && <div className="auth-error">{error}</div>}
 
             <button type="submit" className="pixel-button auth-submit" disabled={loading}>
@@ -111,7 +117,7 @@ export function LoginPage({ onLogin, onNavigateRegister, onNavigateLanding }: Lo
           <button
             type="button"
             className="pixel-button auth-github-button"
-            onClick={() => { window.location.href = '/api/auth/github' }}
+            onClick={() => { window.location.href = apiPath('/auth/github') }}
           >
             <Github size={16} />
             GitHub 登录

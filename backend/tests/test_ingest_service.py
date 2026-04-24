@@ -1,6 +1,20 @@
+from types import SimpleNamespace
+
 import pytest
 
 from src.ocr.ingest_service import UploadedContractFile, ingest_contract_files
+
+
+def build_ingest_settings(**overrides):
+    settings = SimpleNamespace(
+        ocr_max_upload_file_bytes=20 * 1024 * 1024,
+        ocr_max_batch_images=12,
+        ocr_max_pdf_pages=20,
+        ocr_max_image_pixels=20_000_000,
+    )
+    for key, value in overrides.items():
+        setattr(settings, key, value)
+    return settings
 
 
 def test_ingest_contract_files_merges_images_in_selected_order(monkeypatch):
@@ -63,6 +77,7 @@ def test_ingest_contract_files_uses_pdf_ocr_for_all_pdfs(monkeypatch):
             UploadedContractFile(filename="lease-page-2.png", content=b"img-2", content_type="image/png"),
         ],
     )
+    monkeypatch.setattr("src.ocr.ingest_service._count_pdf_pages", lambda _file: 2)
 
     def fake_extract_text_from_uploaded_image(file):
         page_number = "1" if file.filename.endswith("1.png") else "2"
@@ -106,4 +121,31 @@ def test_ingest_contract_files_surfaces_image_ocr_quality_failure(monkeypatch):
     with pytest.raises(RuntimeError, match="空白模板"):
         ingest_contract_files(
             [UploadedContractFile(filename="contract.png", content=b"img", content_type="image/png")]
+        )
+
+
+
+def test_ingest_contract_files_rejects_oversized_upload(monkeypatch):
+    monkeypatch.setattr(
+        'src.ocr.ingest_service.get_settings',
+        lambda: build_ingest_settings(ocr_max_upload_file_bytes=4),
+    )
+
+    with pytest.raises(ValueError):
+        ingest_contract_files(
+            [UploadedContractFile(filename='lease.txt', content=b'12345', content_type='text/plain')]
+        )
+
+
+
+def test_ingest_contract_files_rejects_pdf_over_page_limit(monkeypatch):
+    monkeypatch.setattr(
+        'src.ocr.ingest_service.get_settings',
+        lambda: build_ingest_settings(ocr_max_pdf_pages=1),
+    )
+    monkeypatch.setattr('src.ocr.ingest_service._count_pdf_pages', lambda _file: 2)
+
+    with pytest.raises(ValueError):
+        ingest_contract_files(
+            [UploadedContractFile(filename='lease.pdf', content=b'fake-pdf', content_type='application/pdf')]
         )

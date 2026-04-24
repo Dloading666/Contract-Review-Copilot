@@ -19,6 +19,7 @@ export interface ClauseIssue {
   suggestion?: string
   legal_reference: string
   matched_text?: string
+  change_type?: 'new' | 'upgraded' | 'none'
 }
 
 export interface RoutingDecision {
@@ -49,6 +50,8 @@ export type ReviewPhase =
   | 'extraction'
   | 'routing'
   | 'logic_review'
+  | 'initial_ready'
+  | 'deep_review'
   | 'breakpoint'
   | 'aggregation'
   | 'complete'

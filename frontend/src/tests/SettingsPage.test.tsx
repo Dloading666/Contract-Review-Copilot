@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SettingsPage } from '../pages/SettingsPage'
 import type { User } from '../contexts/AuthContext'
+import { PASSWORD_POLICY_MESSAGE } from '../lib/passwordPolicy'
 
 function buildUser(overrides: Partial<User> = {}): User {
   return {
@@ -13,6 +14,14 @@ function buildUser(overrides: Partial<User> = {}): User {
     createdAt: '2026-04-10T00:00:00Z',
     ...overrides,
   }
+}
+
+function createJSONResponse(body: unknown, init: ResponseInit = {}) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    ...init,
+  })
 }
 
 describe('SettingsPage', () => {
@@ -43,10 +52,7 @@ describe('SettingsPage', () => {
   })
 
   it('sends a password reset code and shows the dev code when returned', async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ success: true, dev_code: '123456' }),
-    }))
+    const fetchMock = vi.fn(async () => createJSONResponse({ success: true, dev_code: '123456' }))
     vi.stubGlobal('fetch', fetchMock)
 
     const { getByRole, findByText } = render(
@@ -70,11 +76,11 @@ describe('SettingsPage', () => {
     expect(await findByText('开发环境验证码：123456')).not.toBeNull()
   })
 
-  it('blocks submit when passwords do not match', async () => {
+  it('blocks submit when password strength is too weak', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
-    const { getByLabelText, getByRole, findByText } = render(
+    const { getByLabelText, getByRole, findAllByText } = render(
       <SettingsPage
         user={buildUser()}
         token="token-a"
@@ -84,25 +90,16 @@ describe('SettingsPage', () => {
     )
 
     fireEvent.change(getByLabelText('邮箱验证码'), { target: { value: '123456' } })
-    fireEvent.change(getByLabelText('新密码'), { target: { value: 'newSecret123' } })
-    fireEvent.change(getByLabelText('确认新密码'), { target: { value: 'anotherSecret' } })
+    fireEvent.change(getByLabelText('新密码'), { target: { value: 'weakpass' } })
+    fireEvent.change(getByLabelText('确认新密码'), { target: { value: 'weakpass' } })
     fireEvent.click(getByRole('button', { name: /确认修改密码/i }))
 
-    expect(await findByText('两次输入的新密码不一致。')).not.toBeNull()
+    expect((await findAllByText(PASSWORD_POLICY_MESSAGE)).length).toBeGreaterThan(0)
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('submits a password reset request and clears the form on success', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ success: true, dev_code: '123456' }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ success: true, message: '密码修改成功' }),
-      })
+    const fetchMock = vi.fn(async () => createJSONResponse({ success: true }))
     const onUserUpdate = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
@@ -116,12 +113,12 @@ describe('SettingsPage', () => {
     )
 
     fireEvent.change(getByLabelText('邮箱验证码'), { target: { value: '123456' } })
-    fireEvent.change(getByLabelText('新密码'), { target: { value: 'newSecret123' } })
-    fireEvent.change(getByLabelText('确认新密码'), { target: { value: 'newSecret123' } })
+    fireEvent.change(getByLabelText('新密码'), { target: { value: 'NewSecret123' } })
+    fireEvent.change(getByLabelText('确认新密码'), { target: { value: 'NewSecret123' } })
     fireEvent.click(getByRole('button', { name: /确认修改密码/i }))
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenLastCalledWith('/api/auth/security/reset-password', {
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/security/reset-password', {
         method: 'POST',
         headers: {
           Authorization: 'Bearer token-a',
@@ -129,7 +126,7 @@ describe('SettingsPage', () => {
         },
         body: JSON.stringify({
           code: '123456',
-          new_password: 'newSecret123',
+          new_password: 'NewSecret123',
         }),
       })
     })

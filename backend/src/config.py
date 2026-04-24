@@ -1,5 +1,6 @@
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -8,25 +9,66 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # OpenRouter API（主力模型）
-    openrouter_api_key: str | None = "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"
+    # OpenRouter is optional and currently not used for OCR.
+    openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
-    # SiliconFlow API（备用模型）
+    # DeepSeek backs review/report/chat text generation.
     openai_api_key: str | None = None
-    openai_base_url: str = "https://api.siliconflow.cn/v1"
+    openai_base_url: str = "https://api.deepseek.com"
 
-    # 主力模型（OpenRouter）— Gemma 4 26B A4B MoE 速度最快
-    primary_review_model: str = "Qwen/Qwen3.5-4B"      # 推理/审查/报告/问答（SiliconFlow）
-    fallback_review_model: str = "deepseek-ai/DeepSeek-V2.5"  # 备用（SiliconFlow）
+    # SiliconFlow powers OCR.
+    ocr_fallback_api_key: str | None = None
+    ocr_fallback_base_url: str = "https://api.siliconflow.cn/v1"
 
-    primary_ocr_model: str = "nvidia/nemotron-nano-12b-v2-vl:free"    # 图片 OCR 识别
-    fallback_ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"          # 图片 OCR（SiliconFlow）
+    primary_review_model: str = "deepseek-v4-flash"
+    fallback_review_model: str | None = None
+    primary_chat_model: str = "deepseek-v4-flash"
+    fallback_chat_model: str | None = None
+    primary_ocr_model: str = "PaddlePaddle/PaddleOCR-VL-1.5"
+    fallback_ocr_model: str | None = None
+    ocr_max_upload_file_bytes: int = 20 * 1024 * 1024
+    ocr_max_batch_images: int = 12
+    ocr_max_pdf_pages: int = 20
+    ocr_max_image_pixels: int = 20_000_000
+    review_queue_max_retries: int = 2
+    ocr_queue_max_retries: int = 2
+    queue_retry_backoff_seconds: float = 1.5
+
+    review_temperature: float = 1.0
+    chat_temperature: float = 1.0
+    report_temperature: float = 1.0
+
+    review_initial_deadline_seconds: float = 38.0
+    review_entity_timeout_seconds: float = 8.0
+    review_routing_timeout_seconds: float = 4.0
+    review_model_timeout_seconds: float = 20.0
+    review_report_timeout_seconds: float = 35.0
+    review_heartbeat_interval_seconds: float = 8.0
+
+    interactive_chat_timeout_seconds: float = 25.0
+    interactive_chat_max_tokens: int = 640
+    chat_query_rewrite_count: int = 3
+    chat_pgvector_top_k: int = 4
+    chat_pgvector_min_similarity: float = 0.3
+    chat_pgvector_min_hits_for_skip_search: int = 3
+    chat_pgvector_min_top_score_for_skip_search: float = 0.72
+    chat_targeted_search_top_k: int = 4
+    chat_targeted_search_min_hits_for_skip_web: int = 2
+    chat_web_search_top_k: int = 4
+    chat_max_evidence_items: int = 6
+    chat_stream_model: str = "deepseek-v4-flash"
+    chat_enable_targeted_search: bool = True
+    chat_enable_web_search: bool = True
 
     jwt_secret: str | None = None
     jwt_secret_file: str | None = None
     cors_allowed_origins: str = "http://localhost:3000,http://localhost:5173"
     allow_dev_code_response: bool = False
+    captcha_enabled: bool = False
+    captcha_provider: str = "turnstile"
+    captcha_secret_key: str | None = None
+    captcha_verify_url: str = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
     database_url: str | None = None
     redis_enabled: bool = True
@@ -36,14 +78,12 @@ class Settings(BaseSettings):
     redis_llm_ttl_seconds: int = 3600
     redis_auth_code_ttl_seconds: int = 300
 
-    # SMTP / Email 验证码
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_user: str | None = None
     smtp_password: str | None = None
     from_email: str | None = None
 
-    # GitHub OAuth
     github_client_id: str | None = None
     github_client_secret: str | None = None
     github_oauth_redirect_uri: str | None = None

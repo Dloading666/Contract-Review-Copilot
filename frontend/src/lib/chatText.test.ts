@@ -10,6 +10,10 @@ describe('normalizeAssistantReply', () => {
     expect(normalizeAssistantReply('\u200b\n\ufeff')).toBe(EMPTY_ASSISTANT_REPLY_TEXT)
   })
 
+  it('removes think blocks and keeps only the final answer', () => {
+    expect(normalizeAssistantReply('<think>????</think>????')).toBe('????')
+  })
+
   it('falls back when the reply is missing or not text', () => {
     expect(normalizeAssistantReply(undefined)).toBe(EMPTY_ASSISTANT_REPLY_TEXT)
   })

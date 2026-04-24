@@ -8,6 +8,7 @@ from datetime import datetime
 from .entity_extraction import create_chat_completion, extract_entities
 from .routing import decide_routing
 from .logic_review import review_clauses
+from ..config import get_settings
 from ..llm_client import get_primary_model_key
 from .legal_skill import LEGAL_RISK_ASSESSMENT_SKILL
 
@@ -57,6 +58,7 @@ def generate_report(
         return _template_report(contract_text, issues)
 
     try:
+        settings = get_settings()
         entities = extract_entities(contract_text, model_key=model_key)
         # Issues are passed from the review phase – do not re-call review agents
         if issues is None:
@@ -115,9 +117,10 @@ def generate_report(
                     legal_basis=legal_basis,
                 )},
             ],
-            temperature=0.3,
+            temperature=settings.report_temperature,
             max_tokens=3072,
-            timeout=90.0,
+            timeout=settings.review_report_timeout_seconds,
+            allow_fallback=False,
         )
 
         report_text = response.choices[0].message.content.strip()

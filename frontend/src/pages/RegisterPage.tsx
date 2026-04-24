@@ -1,7 +1,13 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { motion } from 'motion/react'
 import { ArrowLeft, Mail, ShieldCheck } from 'lucide-react'
 import { safeFetchJSON } from '../lib/apiClient'
+import { apiPath } from '../lib/apiPaths'
+import { getPasswordValidationError, PASSWORD_POLICY_MESSAGE } from '../lib/passwordPolicy'
+
+function buildClientElapsed(startedAt: number) {
+  return Math.max(0, Date.now() - startedAt)
+}
 
 interface RegisterPageProps {
   onNavigateLogin: () => void
@@ -18,6 +24,8 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
   const [devCode, setDevCode] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const interactionStartedAt = useMemo(() => Date.now(), [])
+  const passwordValidationError = password ? getPasswordValidationError(password) : null
 
   const startCountdown = useCallback(() => {
     setCountdown(60)
@@ -41,10 +49,15 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
     setSendingCode(true)
     setError('')
     try {
-      const payload = await safeFetchJSON<{ error?: string; dev_code?: string }>('/api/auth/send-code', {
+      const payload = await safeFetchJSON<{ error?: string; dev_code?: string }>(apiPath('/auth/send-code'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          website: '',
+          client_elapsed_ms: buildClientElapsed(interactionStartedAt),
+          captcha_token: null,
+        }),
       })
       setDevCode(payload.dev_code ?? '')
       startCountdown()
@@ -61,6 +74,10 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
       setError('请填写完整信息')
       return
     }
+    if (passwordValidationError) {
+      setError(passwordValidationError)
+      return
+    }
     if (password !== confirmPassword) {
       setError('两次输入的密码不一致，请重新确认')
       return
@@ -70,13 +87,16 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
     setError('')
     setSuccess('')
     try {
-      await safeFetchJSON('/api/auth/register', {
+      await safeFetchJSON(apiPath('/auth/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: email.trim().toLowerCase(),
           code: code.trim(),
           password,
+          website: '',
+          client_elapsed_ms: buildClientElapsed(interactionStartedAt),
+          captcha_token: null,
         }),
       })
       setSuccess('注册成功！即将跳转到登录页...')
@@ -103,6 +123,7 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
           </div>
 
           <form className="auth-form" onSubmit={handleSubmit}>
+            <input type="text" name="website" autoComplete="off" tabIndex={-1} style={{ display: 'none' }} aria-hidden="true" />
             <label className="auth-field">
               <span className="auth-field__label">邮箱地址</span>
               <div className="auth-field__control">
@@ -147,7 +168,7 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
                 <input
                   type="password"
                   className="pixel-input pixel-input--literal auth-field__input auth-field__input--plain"
-                  placeholder="至少 6 位"
+                  placeholder="请输入登录密码"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                 />
@@ -167,10 +188,12 @@ export function RegisterPage({ onNavigateLogin }: RegisterPageProps) {
               </div>
             </label>
 
+            <div className="auth-footer">{PASSWORD_POLICY_MESSAGE}</div>
+            {passwordValidationError && <div className="auth-error">{passwordValidationError}</div>}
             {error && <div className="auth-error">{error}</div>}
             {success && <div className="auth-success">{success}</div>}
 
-            <button type="submit" className="pixel-button auth-submit" disabled={submitting}>
+            <button type="submit" className="pixel-button auth-submit" disabled={submitting || !!passwordValidationError}>
               {submitting ? '注册中...' : '创建邮箱账户'}
             </button>
           </form>

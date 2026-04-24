@@ -13,6 +13,48 @@ export class APIError extends Error {
   }
 }
 
+export function isHTMLResponseText(text: string): boolean {
+  const trimmed = text.trim()
+  return trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')
+}
+
+export function isCloudflareChallengeText(text: string): boolean {
+  const normalized = text.toLowerCase()
+  return normalized.includes('just a moment') || normalized.includes('cloudflare')
+}
+
+export function getGatewayErrorMessage(status?: number, responseText = ''): string {
+  if (isCloudflareChallengeText(responseText)) {
+    return '站点防护拦截了接口请求，请稍后重试或联系管理员检查 Cloudflare 规则'
+  }
+
+  if (status === 401) {
+    return '登录已过期，请重新登录'
+  }
+  if (status === 502 || status === 503 || status === 504) {
+    return '服务暂时不可用，请稍后重试'
+  }
+  if (status === 403) {
+    return '没有权限执行此操作'
+  }
+  if (status === 404) {
+    return '请求的资源不存在'
+  }
+  if (status === 413) {
+    return '文件过大，请压缩后重试'
+  }
+  if (status === 429) {
+    return '请求过于频繁，请稍后再试'
+  }
+  if (typeof status === 'number' && status >= 500) {
+    return '服务器内部错误，请稍后重试'
+  }
+  if (isHTMLResponseText(responseText)) {
+    return '服务器返回了错误页面，请稍后重试'
+  }
+  return typeof status === 'number' ? `请求失败 (${status})` : '请求失败，请稍后重试'
+}
+
 /**
  * Safely parse JSON response with proper error handling.
  * Returns null if response is empty.
@@ -21,67 +63,53 @@ export async function safeFetchJSON<T>(
   url: string,
   options?: RequestInit
 ): Promise<T> {
-  const response = await fetch(url, options)
+  let response: Response
+  try {
+    response = await fetch(url, options)
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw error
+    }
 
-  // Check if response is OK
+    const message = error instanceof Error && /failed to fetch/i.test(error.message)
+      ? '网络请求没有到达服务端，请检查网络或站点网关设置后重试'
+      : '请求发送失败，请稍后重试'
+    throw new APIError(message)
+  }
+
   if (!response.ok) {
     const text = await response.text().catch(() => '')
 
-    // Try to extract backend error message from JSON body first
     let backendError: string | undefined
     try {
       const json = JSON.parse(text)
       backendError = json?.error || json?.detail || undefined
     } catch {
-      // not JSON, use fallback messages below
+      // Ignore invalid JSON error bodies and fall back to status-based messaging.
     }
 
-    // 401 always gets a friendly message regardless of backend body
     if (response.status === 401) {
-      throw new APIError('登录已过期，请重新登录', response.status, text)
+      throw new APIError(getGatewayErrorMessage(response.status, text), response.status, text)
     }
 
     if (backendError) {
       throw new APIError(backendError, response.status, text)
     }
 
-    // Handle common HTTP errors with friendly messages
-    if (response.status === 502 || response.status === 503 || response.status === 504) {
-      throw new APIError('服务器暂时不可用，请稍后重试', response.status, text)
-    }
-    if (response.status === 403) {
-      throw new APIError('没有权限执行此操作', response.status, text)
-    }
-    if (response.status === 404) {
-      throw new APIError('请求的资源不存在', response.status, text)
-    }
-    if (response.status === 413) {
-      throw new APIError('文件过大，请压缩后重试', response.status, text)
-    }
-    if (response.status === 429) {
-      throw new APIError('请求过于频繁，请稍后再试', response.status, text)
-    }
-    if (response.status >= 500) {
-      throw new APIError('服务器内部错误，请稍后重试', response.status, text)
-    }
-
-    throw new APIError(`请求失败 (${response.status})`, response.status, text)
+    throw new APIError(getGatewayErrorMessage(response.status, text), response.status, text)
   }
 
-  // Check Content-Type
   const contentType = response.headers.get('content-type') || ''
   const text = await response.text()
 
-  // If response is HTML (usually error page), throw error
-  if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+  if (isHTMLResponseText(text)) {
     throw new APIError(
-      '服务器返回了错误页面，请稍后重试',
+      getGatewayErrorMessage(response.status, text),
       response.status,
       text.slice(0, 200)
     )
   }
 
-  // If not JSON and not empty, throw error
   if (!contentType.includes('application/json') && text.trim()) {
     throw new APIError(
       '服务器返回了意外的格式，请稍后重试',
@@ -90,15 +118,13 @@ export async function safeFetchJSON<T>(
     )
   }
 
-  // Empty response
   if (!text.trim()) {
     throw new APIError('服务器返回了空响应', response.status)
   }
 
-  // Parse JSON
   try {
     return JSON.parse(text) as T
-  } catch (error) {
+  } catch {
     throw new APIError(
       '服务器返回了无效的数据格式',
       response.status,

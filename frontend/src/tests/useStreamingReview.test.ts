@@ -1,6 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { useStreamingReview } from '../hooks/useStreamingReview'
+import type { ClauseIssue } from '../types'
 
 const mockFetch = vi.fn()
 globalThis.fetch = mockFetch
@@ -35,13 +37,13 @@ describe('useStreamingReview', () => {
 
   it('parses entity extraction payloads', async () => {
     const entityData = {
-      contract_type: '租赁合同',
-      parties: { lessor: '张三', lessee: '李四' },
-      rent: { monthly: 8500, currency: '人民币', payment_cycle: '月付' },
-      deposit: { amount: 17000, conditions: '退租后返还' },
-      property: { address: '北京市朝阳区', area: '45' },
-      lease_term: { start: '2026-05-01', end: '2027-04-30', duration_text: '12个月' },
-      penalty_clause: '两个月租金',
+      contract_type: 'rental_contract',
+      parties: { lessor: 'Alice', lessee: 'Bob' },
+      rent: { monthly: 8500, currency: 'CNY', payment_cycle: 'monthly' },
+      deposit: { amount: 17000, conditions: 'refund after move out' },
+      property: { address: 'Beijing', area: '45' },
+      lease_term: { start: '2026-05-01', end: '2027-04-30', duration_text: '12 months' },
+      penalty_clause: 'two months rent',
     }
 
     const mockResponse = new Response(createMockStream([
@@ -50,7 +52,7 @@ describe('useStreamingReview', () => {
 
     mockFetch.mockResolvedValue(mockResponse)
 
-    const { result } = renderHook(() => useStreamingReview('test-session', '合同文本'))
+    const { result } = renderHook(() => useStreamingReview('test-session', 'contract text'))
 
     await waitFor(() => {
       expect(result.current.extractedEntities).toEqual(entityData)
@@ -59,8 +61,8 @@ describe('useStreamingReview', () => {
 
   it('accumulates logic review issues', async () => {
     const issues = [
-      { clause: '违约金条款', issue: '过高', level: 'high', risk_level: 3, legal_reference: '民法典585' },
-      { clause: '滞纳金条款', issue: '超标', level: 'critical', risk_level: 5, legal_reference: '民法典585' },
+      { clause: 'Penalty clause', issue: 'Too high', level: 'high', risk_level: 3, legal_reference: 'Art. 585' },
+      { clause: 'Late fee clause', issue: 'Above the cap', level: 'critical', risk_level: 5, legal_reference: 'Art. 585' },
     ]
 
     const mockResponse = new Response(createMockStream(
@@ -69,18 +71,18 @@ describe('useStreamingReview', () => {
 
     mockFetch.mockResolvedValue(mockResponse)
 
-    const { result } = renderHook(() => useStreamingReview('test-session', '合同文本'))
+    const { result } = renderHook(() => useStreamingReview('test-session', 'contract text'))
 
     await waitFor(() => {
       expect(result.current.issues).toHaveLength(2)
-      expect(result.current.issues[0].clause).toBe('违约金条款')
+      expect(result.current.issues[0].clause).toBe('Penalty clause')
     })
   })
 
   it('sets breakpoint data and pauses streaming', async () => {
     const breakpointData = {
       needs_review: true,
-      question: '确认继续？',
+      question: 'Continue?',
       issues_count: 3,
       critical_count: 1,
       high_count: 1,
@@ -93,7 +95,7 @@ describe('useStreamingReview', () => {
 
     mockFetch.mockResolvedValue(mockResponse)
 
-    const { result } = renderHook(() => useStreamingReview('test-session', '合同文本'))
+    const { result } = renderHook(() => useStreamingReview('test-session', 'contract text'))
 
     await waitFor(() => {
       expect(result.current.phase).toBe('breakpoint')
@@ -105,7 +107,7 @@ describe('useStreamingReview', () => {
   it('resumes aggregation after confirm and completes the report stream', async () => {
     const breakpointData = {
       needs_review: true,
-      question: '确认继续？',
+      question: 'Continue?',
       issues_count: 1,
       critical_count: 0,
       high_count: 1,
@@ -118,11 +120,11 @@ describe('useStreamingReview', () => {
       ])))
       .mockResolvedValueOnce(new Response(createMockStream([
         'event: stream_resume\ndata: {"session_id":"test-session"}\n\n',
-        `event: final_report\ndata: ${JSON.stringify({ paragraph: '报告第一段' })}\n\n`,
+        `event: final_report\ndata: ${JSON.stringify({ paragraph: 'Report paragraph one' })}\n\n`,
         'event: review_complete\ndata: {"session_id":"test-session"}\n\n',
       ])))
 
-    const { result } = renderHook(() => useStreamingReview('test-session', '合同文本'))
+    const { result } = renderHook(() => useStreamingReview('test-session', 'contract text'))
 
     await waitFor(() => {
       expect(result.current.phase).toBe('breakpoint')
@@ -134,7 +136,7 @@ describe('useStreamingReview', () => {
 
     await waitFor(() => {
       expect(result.current.phase).toBe('complete')
-      expect(result.current.reportParagraphs).toEqual(['报告第一段'])
+      expect(result.current.reportParagraphs).toEqual(['Report paragraph one'])
     })
 
     expect(mockFetch).toHaveBeenNthCalledWith(
@@ -142,13 +144,13 @@ describe('useStreamingReview', () => {
       '/api/review/confirm/test-session',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ confirmed: true, contract_text: '合同文本', issues: [] }),
+        body: JSON.stringify({ confirmed: true, contract_text: 'contract text', issues: [] }),
       }),
     )
   })
 
   it('accumulates final report paragraphs', async () => {
-    const paragraphs = [{ paragraph: '第一段' }, { paragraph: '第二段' }]
+    const paragraphs = [{ paragraph: 'Paragraph one' }, { paragraph: 'Paragraph two' }]
 
     const mockResponse = new Response(createMockStream(
       paragraphs.map((item) => `event: final_report\ndata: ${JSON.stringify(item)}\n\n`),
@@ -156,16 +158,16 @@ describe('useStreamingReview', () => {
 
     mockFetch.mockResolvedValue(mockResponse)
 
-    const { result } = renderHook(() => useStreamingReview('test-session', '合同文本'))
+    const { result } = renderHook(() => useStreamingReview('test-session', 'contract text'))
 
     await waitFor(() => {
-      expect(result.current.reportParagraphs).toEqual(['第一段', '第二段'])
+      expect(result.current.reportParagraphs).toEqual(['Paragraph one', 'Paragraph two'])
     })
   })
 
   it('resets stale streaming state after the contract text is cleared', async () => {
     const mockResponse = new Response(createMockStream([
-      `event: final_report\ndata: ${JSON.stringify({ paragraph: '第一段' })}\n\n`,
+      `event: final_report\ndata: ${JSON.stringify({ paragraph: 'Paragraph one' })}\n\n`,
       'event: review_complete\ndata: {}\n\n',
     ]))
 
@@ -176,14 +178,14 @@ describe('useStreamingReview', () => {
       {
         initialProps: {
           sessionId: 'test-session',
-          contractText: '合同文本',
+          contractText: 'contract text',
         },
       },
     )
 
     await waitFor(() => {
       expect(result.current.phase).toBe('complete')
-      expect(result.current.reportParagraphs).toEqual(['第一段'])
+      expect(result.current.reportParagraphs).toEqual(['Paragraph one'])
     })
 
     rerender({
@@ -202,7 +204,7 @@ describe('useStreamingReview', () => {
   it('sends authorization headers when a token is provided', async () => {
     mockFetch.mockResolvedValue(new Response(createMockStream([])))
 
-    renderHook(() => useStreamingReview('test-session', '合同文本', { token: 'jwt-token' }))
+    renderHook(() => useStreamingReview('test-session', 'contract text', { token: 'jwt-token' }))
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalled()
@@ -221,7 +223,7 @@ describe('useStreamingReview', () => {
   it('does not include a model when starting a review stream', async () => {
     mockFetch.mockResolvedValue(new Response(createMockStream([])))
 
-    renderHook(() => useStreamingReview('test-session', '合同文本'))
+    renderHook(() => useStreamingReview('test-session', 'contract text'))
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalled()
@@ -230,5 +232,108 @@ describe('useStreamingReview', () => {
     const request = mockFetch.mock.calls[0]?.[1] as { body?: string } | undefined
     expect(request?.body).toBeDefined()
     expect(request?.body).not.toContain('"model"')
+  })
+
+  it('includes the requested review mode when starting the stream', async () => {
+    mockFetch.mockResolvedValue(new Response(createMockStream([])))
+
+    renderHook(() => useStreamingReview('test-session', 'contract text', { reviewMode: 'light' }))
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled()
+    })
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/api/review',
+      expect.objectContaining({
+        body: JSON.stringify({
+          contract_text: 'contract text',
+          session_id: 'test-session',
+          review_mode: 'light',
+        }),
+      }),
+    )
+  })
+
+  it('keeps a continue deep review action after a light scan completes', async () => {
+    const initialIssues: ClauseIssue[] = [
+      {
+        clause: 'Deposit clause',
+        issue: 'Deposit is too high',
+        level: 'high',
+        risk_level: 4,
+        legal_reference: 'Art. 585',
+      },
+    ]
+
+    mockFetch.mockResolvedValue(new Response(createMockStream([
+      `event: initial_review_ready\ndata: ${JSON.stringify({ issues: initialIssues, summary: 'Initial review is ready.' })}\n\n`,
+      `event: deep_review_available\ndata: ${JSON.stringify({ issues: initialIssues, message: 'Light scan is complete. You can continue to deep review.' })}\n\n`,
+      'event: review_complete\ndata: {"session_id":"test-session","review_mode":"light"}\n\n',
+    ])))
+
+    const { result } = renderHook(() => useStreamingReview('test-session', 'contract text', { reviewMode: 'light' }))
+
+    await waitFor(() => {
+      expect(result.current.phase).toBe('complete')
+      expect(result.current.canRetryDeepReview).toBe(true)
+      expect(result.current.deepUpdateNotice).toContain('Light scan')
+    })
+  })
+
+  it('allows retrying deep review after a degraded completion', async () => {
+    const initialIssues: ClauseIssue[] = [
+      {
+        clause: 'Deposit clause',
+        issue: 'Deposit is too high',
+        level: 'high',
+        risk_level: 4,
+        legal_reference: 'Art. 585',
+      },
+    ]
+
+    mockFetch
+      .mockResolvedValueOnce(new Response(createMockStream([
+        `event: initial_review_ready\ndata: ${JSON.stringify({ issues: initialIssues, summary: 'Initial review is ready.' })}\n\n`,
+        'event: deep_review_failed\ndata: {"message":"Deep analysis could not be completed yet."}\n\n',
+        'event: review_complete\ndata: {"session_id":"test-session","degraded":true}\n\n',
+      ])))
+      .mockResolvedValueOnce(new Response(createMockStream([
+        'event: deep_review_started\ndata: {"message":"Continuing deep review."}\n\n',
+        `event: final_report\ndata: ${JSON.stringify({ paragraph: 'Completed report after retry' })}\n\n`,
+        'event: deep_review_complete\ndata: {"message":"Deep review completed."}\n\n',
+        'event: review_complete\ndata: {"session_id":"test-session"}\n\n',
+      ])))
+
+    const { result } = renderHook(() => useStreamingReview('test-session', 'contract text'))
+
+    await waitFor(() => {
+      expect(result.current.canRetryDeepReview).toBe(true)
+      expect(result.current.phase).toBe('complete')
+    })
+
+    act(() => {
+      result.current.retryDeepReview({
+        issues: initialIssues,
+      })
+    })
+
+    await waitFor(() => {
+      expect(result.current.reportParagraphs).toContain('Completed report after retry')
+      expect(result.current.canRetryDeepReview).toBe(false)
+    })
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      '/api/review/deepen',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          contract_text: 'contract text',
+          session_id: 'test-session',
+          issues: initialIssues,
+        }),
+      }),
+    )
   })
 })
