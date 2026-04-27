@@ -11,7 +11,10 @@
 - 扫描器：`backend/src/audit/scanner.py`
 - 命令行入口：`backend/src/audit/cli.py`
 - 数据模型：`backend/src/audit/models.py`
+- Golden eval：`backend/src/evals/golden_runner.py`
+- Golden 样本：`backend/evals/golden_contracts.json`
 - 自动化测试：`backend/tests/test_project_audit.py`
+- CI 门禁：`.github/workflows/ci.yml`
 - 持久化草案：`docs/architecture/auto-audit-schema-v1.sql`
 
 ## 工作流程
@@ -30,7 +33,10 @@
    - 生成 JSON 和 Markdown 报告，便于机器读取和人工审阅。
 6. 验收
    - 每个发现项都包含影响、建议、验收标准和建议负责人。
-7. 迭代
+7. 评测
+   - 使用 golden 合同样本集验证核心风险识别不回退。
+   - 当前 eval 默认走确定性规则审查，不依赖外部模型，适合 CI 稳定执行。
+8. 迭代
    - 修复后重新运行审计，对比评分和 finding 数量变化。
 
 ## 审计维度
@@ -110,6 +116,20 @@ python -m src.audit.cli --repo-root .. --output-dir ..\docs\audits --base-name c
 输出文件：
 - `docs/audits/current-baseline.json`
 - `docs/audits/current-baseline.md`
+
+运行 golden eval：
+
+```bash
+cd backend
+python -m src.evals.golden_runner --samples evals/golden_contracts.json
+```
+
+CI 会自动执行：
+- 后端 pytest
+- Golden eval
+- 六维工程审计
+- 前端 Vitest
+- 前端生产构建
 
 ## 后续计划
 
