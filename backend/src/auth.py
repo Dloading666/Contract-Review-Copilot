@@ -370,6 +370,33 @@ def login_with_password(email: str, password: str) -> Optional[str]:
     return _create_token(user)
 
 
+def _login_with_verified_email(email: str, *, provider_name: str) -> dict:
+    normalized_email = _normalize_email(email)
+    if not normalized_email:
+        return {"success": False, "error": f"无法获取 {provider_name} 邮箱"}
+
+    user = get_user_by_email(normalized_email)
+    if not user:
+        try:
+            user = create_email_user(
+                user_id=_make_email_user_id(normalized_email),
+                email=normalized_email,
+                password_hash="",
+                salt="",
+            )
+        except AccountStateError:
+            user = get_user_by_email(normalized_email)
+    if not user:
+        return {"success": False, "error": "创建账户失败"}
+
+    _cache_legacy_aliases(user)
+    return {
+        "success": True,
+        "token": _create_token(user),
+        "user": _build_public_user(user),
+    }
+
+
 def login_with_github(code: str) -> dict:
     settings = get_settings()
     client_id = (settings.github_client_id or "").strip()
@@ -410,27 +437,56 @@ def login_with_github(code: str) -> dict:
         print(f"[Auth] GitHub OAuth failed: {exc}", flush=True)
         return {"success": False, "error": "GitHub 登录失败，请稍后重试"}
 
-    normalized_email = _normalize_email(primary_email)
-    user = get_user_by_email(normalized_email)
-    if not user:
-        try:
-            user = create_email_user(
-                user_id=_make_email_user_id(normalized_email),
-                email=normalized_email,
-                password_hash="",
-                salt="",
-            )
-        except AccountStateError:
-            user = get_user_by_email(normalized_email)
-    if not user:
-        return {"success": False, "error": "创建账户失败"}
+    return _login_with_verified_email(primary_email, provider_name="GitHub")
 
-    _cache_legacy_aliases(user)
-    return {
-        "success": True,
-        "token": _create_token(user),
-        "user": _build_public_user(user),
-    }
+
+def login_with_google(code: str, redirect_uri: str) -> dict:
+    settings = get_settings()
+    client_id = (settings.google_client_id or "").strip()
+    client_secret = (settings.google_client_secret or "").strip()
+    if not client_id or not client_secret:
+        return {"success": False, "error": "Google OAuth 未配置"}
+
+    try:
+        token_response = httpx.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": redirect_uri,
+            },
+            headers={"Accept": "application/json"},
+            timeout=10.0,
+        )
+        token_response.raise_for_status()
+        token_data = token_response.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            return {"success": False, "error": "Google 授权失败，请重试"}
+
+        userinfo_response = httpx.get(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+            timeout=10.0,
+        )
+        userinfo_response.raise_for_status()
+        userinfo = userinfo_response.json()
+        primary_email = str(userinfo.get("email") or "").strip()
+        email_verified = userinfo.get("email_verified")
+        if isinstance(email_verified, str):
+            email_verified = email_verified.lower() == "true"
+        if not primary_email or not email_verified:
+            return {"success": False, "error": "无法获取已验证的 Google 邮箱"}
+    except Exception as exc:
+        print(f"[Auth] Google OAuth failed: {exc}", flush=True)
+        return {"success": False, "error": "Google 登录失败，请稍后重试"}
+
+    return _login_with_verified_email(primary_email, provider_name="Google")
 
 
 def reset_password_with_email_code(user_id: str, code: str, new_password: str) -> dict:

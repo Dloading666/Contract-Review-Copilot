@@ -128,6 +128,15 @@ export function LoginPage({ onLogin, onNavigateRegister, onNavigateForgotPasswor
             GitHub 登录
           </button>
 
+          <button
+            type="button"
+            className="pixel-button auth-google-button"
+            onClick={() => { window.location.href = apiPath('/auth/google') }}
+          >
+            <span className="auth-provider-mark" aria-hidden="true">G</span>
+            Google 邮箱登录
+          </button>
+
           <div className="auth-footer">
             <span>还没有账户？</span>
             <button type="button" className="auth-link-button" onClick={onNavigateRegister}>

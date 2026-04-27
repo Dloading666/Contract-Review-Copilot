@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
@@ -157,6 +159,71 @@ def test_reset_password_updates_current_user_password(client, monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"success": True, "message": "密码修改成功"}
+
+
+def test_google_oauth_redirect_sets_state_cookie_and_redirects(client, monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "get_settings",
+        lambda: SimpleNamespace(
+            google_client_id="google-client",
+            google_oauth_redirect_uri="https://ctsafe.top/gateway/auth/google/callback",
+        ),
+    )
+
+    response = client.get("/api/auth/google", follow_redirects=False)
+
+    assert response.status_code == 307
+    location = response.headers["location"]
+    parsed_location = urlparse(location)
+    query = parse_qs(parsed_location.query)
+    assert parsed_location.scheme == "https"
+    assert parsed_location.netloc == "accounts.google.com"
+    assert query["client_id"] == ["google-client"]
+    assert query["redirect_uri"] == ["https://ctsafe.top/gateway/auth/google/callback"]
+    assert query["response_type"] == ["code"]
+    assert query["scope"] == ["openid email profile"]
+    assert query["state"][0]
+    assert main.GOOGLE_OAUTH_STATE_COOKIE in response.headers["set-cookie"]
+
+
+def test_google_oauth_callback_validates_state_and_redirects_with_token(client, monkeypatch):
+    captured: dict[str, str] = {}
+    monkeypatch.setattr(
+        main,
+        "get_settings",
+        lambda: SimpleNamespace(google_oauth_redirect_uri="https://ctsafe.top/gateway/auth/google/callback"),
+    )
+    monkeypatch.setattr(
+        main.auth,
+        "login_with_google",
+        lambda code, redirect_uri: captured.update({"code": code, "redirect_uri": redirect_uri})
+        or {"success": True, "token": "jwt-token"},
+    )
+
+    client.cookies.set(main.GOOGLE_OAUTH_STATE_COOKIE, "state-a")
+    response = client.get("/api/auth/google/callback?code=oauth-code&state=state-a", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/?token=jwt-token"
+    assert captured == {
+        "code": "oauth-code",
+        "redirect_uri": "https://ctsafe.top/gateway/auth/google/callback",
+    }
+
+
+def test_google_oauth_callback_rejects_bad_state(client, monkeypatch):
+    monkeypatch.setattr(
+        main.auth,
+        "login_with_google",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("OAuth login should not run")),
+    )
+
+    client.cookies.set(main.GOOGLE_OAUTH_STATE_COOKIE, "good-state")
+    response = client.get("/api/auth/google/callback?code=oauth-code&state=bad-state", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert "auth_error=" in response.headers["location"]
 
 
 def test_review_generates_unique_session_ids_and_streams_events(client, monkeypatch):

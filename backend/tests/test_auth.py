@@ -6,6 +6,17 @@ from types import SimpleNamespace
 from src import auth
 
 
+class _FakeOAuthResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+
 def test_login_with_password_upgrades_legacy_hash(monkeypatch):
     legacy_salt = "legacy-salt"
     password = "Secret123"
@@ -99,3 +110,63 @@ def test_reset_password_with_email_code_rejects_user_without_email(monkeypatch):
     result = auth.reset_password_with_email_code("user-1", "123456", "newSecret123")
 
     assert result == {"success": False, "error": "当前账号未绑定邮箱，暂不支持邮箱改密"}
+
+
+def test_login_with_google_creates_user_from_verified_email(monkeypatch):
+    captured_post: dict = {}
+    captured_get: dict = {}
+    created_users: list[dict] = []
+
+    monkeypatch.setattr(
+        auth,
+        "get_settings",
+        lambda: SimpleNamespace(google_client_id="google-client", google_client_secret="google-secret"),
+    )
+
+    def fake_post(url: str, **kwargs):
+        captured_post.update({"url": url, **kwargs})
+        return _FakeOAuthResponse({"access_token": "google-access-token"})
+
+    def fake_get(url: str, **kwargs):
+        captured_get.update({"url": url, **kwargs})
+        return _FakeOAuthResponse({"email": "User@Example.com", "email_verified": True})
+
+    def fake_create_email_user(*, user_id: str, email: str, password_hash: str, salt: str):
+        user = {"id": user_id, "email": email, "password_hash": password_hash, "salt": salt}
+        created_users.append(user)
+        return user
+
+    monkeypatch.setattr(auth.httpx, "post", fake_post)
+    monkeypatch.setattr(auth.httpx, "get", fake_get)
+    monkeypatch.setattr(auth, "get_user_by_email", lambda _email: None)
+    monkeypatch.setattr(auth, "create_email_user", fake_create_email_user)
+    monkeypatch.setattr(auth, "_create_token", lambda user: f"token-for-{user['email']}")
+    monkeypatch.setattr(auth, "_build_public_user", lambda user: {"id": user["id"], "email": user["email"]})
+
+    result = auth.login_with_google("oauth-code", "https://ctsafe.top/gateway/auth/google/callback")
+
+    assert result["success"] is True
+    assert result["token"] == "token-for-user@example.com"
+    assert result["user"]["email"] == "user@example.com"
+    assert created_users[0]["password_hash"] == ""
+    assert captured_post["url"] == "https://oauth2.googleapis.com/token"
+    assert captured_post["data"]["redirect_uri"] == "https://ctsafe.top/gateway/auth/google/callback"
+    assert captured_get["headers"]["Authorization"] == "Bearer google-access-token"
+
+
+def test_login_with_google_rejects_unverified_email(monkeypatch):
+    monkeypatch.setattr(
+        auth,
+        "get_settings",
+        lambda: SimpleNamespace(google_client_id="google-client", google_client_secret="google-secret"),
+    )
+    monkeypatch.setattr(auth.httpx, "post", lambda *_args, **_kwargs: _FakeOAuthResponse({"access_token": "token"}))
+    monkeypatch.setattr(
+        auth.httpx,
+        "get",
+        lambda *_args, **_kwargs: _FakeOAuthResponse({"email": "user@example.com", "email_verified": False}),
+    )
+
+    result = auth.login_with_google("oauth-code", "https://ctsafe.top/gateway/auth/google/callback")
+
+    assert result == {"success": False, "error": "无法获取已验证的 Google 邮箱"}

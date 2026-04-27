@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     github_client_id: str | None = None
     github_client_secret: str | None = None
     github_oauth_redirect_uri: str | None = None
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_oauth_redirect_uri: str | None = None
 
     class Config:
         env_file = ".env"

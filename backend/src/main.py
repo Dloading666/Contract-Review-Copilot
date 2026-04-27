@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 import uuid
 import asyncio
 import traceback
@@ -14,7 +15,7 @@ from contextlib import asynccontextmanager
 from io import BytesIO
 from threading import Lock, Thread
 from typing import AsyncGenerator, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,6 +67,7 @@ from .schemas import (
 
 paused_sessions: dict[str, dict] = {}
 _paused_sessions_lock = Lock()
+GOOGLE_OAUTH_STATE_COOKIE = "google_oauth_state"
 
 
 def _session_cache_key(session_id: str) -> str:
@@ -483,6 +485,19 @@ async def reset_password(
     return {"success": True, "message": "密码修改成功"}
 
 
+def _oauth_redirect_uri(request: Request, configured_uri: str | None, route_name: str) -> str:
+    configured = (configured_uri or "").strip()
+    if configured:
+        return configured
+    return str(request.url_for(route_name))
+
+
+def _oauth_cookie_secure(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    forwarded_scheme = forwarded_proto.lower().split(",", 1)[0].strip()
+    return request.url.scheme == "https" or forwarded_scheme == "https"
+
+
 @app.get("/api/auth/github")
 async def github_oauth_redirect():
     settings = get_settings()
@@ -504,6 +519,70 @@ async def github_oauth_callback(code: str):
         return RedirectResponse(f"/?auth_error={error_msg}")
     token = result.get("token", "")
     return RedirectResponse(f"/?token={quote(token)}")
+
+
+@app.get("/api/auth/google")
+async def google_oauth_redirect(request: Request):
+    settings = get_settings()
+    client_id = (settings.google_client_id or "").strip()
+    if not client_id:
+        raise HTTPException(status_code=500, detail="Google OAuth 未配置")
+
+    redirect_uri = _oauth_redirect_uri(request, settings.google_oauth_redirect_uri, "google_oauth_callback")
+    state = secrets.token_urlsafe(24)
+    params = urlencode(
+        {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+            "access_type": "online",
+            "prompt": "select_account",
+        }
+    )
+    response = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
+    response.set_cookie(
+        GOOGLE_OAUTH_STATE_COOKIE,
+        state,
+        max_age=600,
+        httponly=True,
+        secure=_oauth_cookie_secure(request),
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+@app.get("/api/auth/google/callback")
+async def google_oauth_callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+):
+    if error:
+        return RedirectResponse(f"/?auth_error={quote('Google 授权已取消或失败')}")
+
+    expected_state = request.cookies.get(GOOGLE_OAUTH_STATE_COOKIE)
+    if not code or not state or not expected_state or not secrets.compare_digest(state, expected_state):
+        response = RedirectResponse(f"/?auth_error={quote('Google 登录状态校验失败，请重试')}")
+        response.delete_cookie(GOOGLE_OAUTH_STATE_COOKIE, path="/")
+        return response
+
+    settings = get_settings()
+    redirect_uri = _oauth_redirect_uri(request, settings.google_oauth_redirect_uri, "google_oauth_callback")
+    result = auth.login_with_google(code, redirect_uri)
+    if not result.get("success"):
+        error_msg = quote(result.get("error", "Google 登录失败"))
+        response = RedirectResponse(f"/?auth_error={error_msg}")
+        response.delete_cookie(GOOGLE_OAUTH_STATE_COOKIE, path="/")
+        return response
+
+    token = result.get("token", "")
+    response = RedirectResponse(f"/?token={quote(token)}")
+    response.delete_cookie(GOOGLE_OAUTH_STATE_COOKIE, path="/")
+    return response
 
 
 @app.get("/api/auth/me")
