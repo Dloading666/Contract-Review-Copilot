@@ -1,0 +1,30 @@
+[
+  {
+    "id": "high_deposit",
+    "name": "押金明显偏高",
+    "contract_text": "房屋租赁合同\n甲方：张三\n乙方：李四\n月租金为人民币3000元，押金为人民币10000元。租期为2026年5月1日至2027年4月30日。",
+    "expected_clauses": ["押金条款"],
+    "minimum_level": "high"
+  },
+  {
+    "id": "unilateral_termination",
+    "name": "甲方随时单方解约",
+    "contract_text": "房屋租赁合同\n租金每月4000元。甲方有权随时单方解除合同并收回房屋，乙方不得提出异议。",
+    "expected_clauses": ["解约权条款"],
+    "minimum_level": "high"
+  },
+  {
+    "id": "late_fee_over_limit",
+    "name": "逾期滞纳金过高",
+    "contract_text": "房屋租赁合同\n乙方逾期支付租金的，每日按未付租金万分之10承担滞纳金，直至付清为止。",
+    "expected_clauses": ["滞纳金条款"],
+    "minimum_level": "high"
+  },
+  {
+    "id": "balanced_basic_lease",
+    "name": "基础均衡租赁合同",
+    "contract_text": "房屋租赁合同\n甲方：张三\n乙方：李四\n月租金为人民币3000元，押金为人民币3000元。租赁期限为2026年5月1日至2027年4月30日。房屋主体结构维修由甲方负责，乙方提前退租应提前30日书面通知甲方，双方按实际损失协商处理。",
+    "expected_clauses": [],
+    "maximum_findings": 0
+  }
+]

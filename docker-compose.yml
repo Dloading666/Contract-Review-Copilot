@@ -2,7 +2,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     ports:
-      - '${POSTGRES_PORT:-5432}:5432'
+      - '${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432'
     environment:
       POSTGRES_DB: contract_review
       POSTGRES_USER: contract_user
@@ -30,7 +30,7 @@ services:
       --maxmemory-samples 5
       --tcp-keepalive 60'
     ports:
-      - '${REDIS_PORT:-6379}:6379'
+      - '${REDIS_HOST:-127.0.0.1}:${REDIS_PORT:-6379}:6379'
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes:
@@ -50,7 +50,7 @@ services:
       context: ./frontend
       dockerfile: ../Dockerfile.frontend
     ports:
-      - '${FRONTEND_PORT:-3001}:80'
+      - '${FRONTEND_HOST:-127.0.0.1}:${FRONTEND_PORT:-3001}:80'
     depends_on:
       backend:
         condition: service_started
@@ -63,7 +63,7 @@ services:
       context: ./backend
       dockerfile: ../Dockerfile.backend
     ports:
-      - '${BACKEND_PORT:-8000}:8000'
+      - '${BACKEND_HOST:-127.0.0.1}:${BACKEND_PORT:-8000}:8000'
     depends_on:
       postgres:
         condition: service_healthy
