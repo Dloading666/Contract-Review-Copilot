@@ -3,6 +3,8 @@ Seed legal knowledge base for contract review RAG.
 Populates the vector database with relevant laws, regulations, and case knowledge.
 """
 from typing import List
+
+from .curated_knowledge import CURATED_LEGAL_KNOWLEDGE
 from .connection import get_connection
 from .embeddings import embed_texts
 from .store import store_contract_chunks
@@ -674,6 +676,31 @@ LEGAL_KNOWLEDGE.extend([
     },
 ])
 
+LEGAL_KNOWLEDGE.extend(CURATED_LEGAL_KNOWLEDGE)
+
+
+def _entry_metadata(entry: dict, *, source_key: str | None = None) -> dict:
+    """Build per-chunk metadata from a legal knowledge entry."""
+    metadata_keys = (
+        "title",
+        "category",
+        "jurisdiction",
+        "effective_date",
+        "source_name",
+        "source_url",
+        "article_refs",
+        "risk_tags",
+        "contract_types",
+    )
+    metadata = {
+        key: entry[key]
+        for key in metadata_keys
+        if key in entry and entry[key] not in (None, "", [])
+    }
+    if source_key:
+        metadata["source_key"] = source_key
+    return metadata
+
 
 def seed_legal_knowledge() -> int:
     """
@@ -697,7 +724,7 @@ def seed_legal_knowledge() -> int:
     total_chunks = 0
     for entry in LEGAL_KNOWLEDGE:
         chunks = _chunk_legal_entry(entry["content"], chunk_size=600)
-        metadata = [{"title": entry["title"]} for _ in chunks]
+        metadata = [_entry_metadata(entry) for _ in chunks]
         chunk_ids = store_contract_chunks(contract_id, chunks, metadata)
         total_chunks += len(chunk_ids)
         print(f"  Seeded: {entry['title']} ({len(chunks)} chunks)")

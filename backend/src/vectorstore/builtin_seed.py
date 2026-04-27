@@ -1,7 +1,7 @@
 """
 Idempotent built-in legal knowledge seeding.
 """
-from .seed import LEGAL_KNOWLEDGE, _chunk_legal_entry
+from .seed import LEGAL_KNOWLEDGE, _chunk_legal_entry, _entry_metadata
 from .store import count_contract_chunks, replace_contract_chunks, upsert_contract_source
 
 
@@ -28,9 +28,8 @@ def seed_builtin_legal_knowledge() -> int:
         chunks = _chunk_legal_entry(entry["content"], chunk_size=600)
         metadata = [
             {
-                "title": entry["title"],
+                **_entry_metadata(entry, source_key=source_key),
                 "source_type": "builtin_legal_knowledge",
-                "source_key": source_key,
             }
             for _ in chunks
         ]
