@@ -32,4 +32,18 @@ describe('LoginPage', () => {
     expect(onNavigateForgotPassword).toHaveBeenCalledTimes(1)
     expect(onNavigateRegister).toHaveBeenCalledTimes(1)
   })
+
+  it('renders GitHub and Google OAuth login entries', () => {
+    render(
+      <LoginPage
+        onLogin={vi.fn()}
+        onNavigateRegister={vi.fn()}
+        onNavigateForgotPassword={vi.fn()}
+        onNavigateLanding={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'GitHub 登录' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Google 邮箱登录' })).toBeTruthy()
+  })
 })
