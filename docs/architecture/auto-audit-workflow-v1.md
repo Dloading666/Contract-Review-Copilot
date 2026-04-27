@@ -13,6 +13,8 @@
 - 数据模型：`backend/src/audit/models.py`
 - Golden eval：`backend/src/evals/golden_runner.py`
 - Golden 样本：`backend/evals/golden_contracts.json`
+- 法律知识库种子：`backend/src/vectorstore/seed.py`
+- 结构化补充知识：`backend/src/vectorstore/curated_knowledge.py`
 - 自动化测试：`backend/tests/test_project_audit.py`
 - CI 门禁：`.github/workflows/ci.yml`
 - 持久化草案：`docs/architecture/auto-audit-schema-v1.sql`
@@ -36,8 +38,26 @@
 7. 评测
    - 使用 golden 合同样本集验证核心风险识别不回退。
    - 当前 eval 默认走确定性规则审查，不依赖外部模型，适合 CI 稳定执行。
+   - Golden 样本覆盖租赁、预付式消费、自动续费、争议解决、个人信息和押金退还等核心场景。
 8. 迭代
    - 修复后重新运行审计，对比评分和 finding 数量变化。
+
+## 知识库分层
+
+### 法规依据层
+
+- 收录《民法典》合同编、租赁合同规则、消费者权益保护法实施条例、个人信息保护法、网络交易监督管理办法等权威依据。
+- 每条补充知识保留 `source_name`、`source_url`、`article_refs`、`effective_date` 和 `jurisdiction`，便于后续解释、溯源和更新。
+
+### 风险条款层
+
+- 覆盖押金不退、单方调价、自动续费、强制搭售、租金贷、断水断电、二房东、远地仲裁、提前退租高额赔偿等高频条款。
+- 每条知识携带 `risk_tags` 和 `contract_types`，用于检索召回、结果聚合和面试答辩中的覆盖面说明。
+
+### 场景评测层
+
+- Golden eval 从少量基础租赁样本扩展为多场景样本，重点验证确定性规则不回退。
+- 场景包括租赁合同、培训服务、健身/预付式消费、网络会员、消费服务和长期押金等。
 
 ## 审计维度
 

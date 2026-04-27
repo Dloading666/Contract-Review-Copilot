@@ -43,13 +43,15 @@ def retrieve_pgvector_evidence(
             similarity = float(hit.get("similarity", 0.0))
             snippet = str(hit.get("chunk_text", "")).strip()
             title = str(metadata.get("title") or metadata.get("source_key") or "Local Legal Knowledge Base")
+            source_name = str(metadata.get("source_name") or "Local Legal Knowledge Base")
+            source_url = str(metadata.get("source_url") or "").strip() or None
             current = evidence_by_key.get(dedupe_key)
             candidate = {
                 "source_type": "pgvector",
-                "category": "regulation",
+                "category": str(metadata.get("category") or "regulation"),
                 "title": title,
-                "site_name": "Local Legal Knowledge Base",
-                "url": None,
+                "site_name": source_name,
+                "url": source_url,
                 "snippet": snippet[:400],
                 "authority_score": 0.98,
                 "relevance_score": similarity + (query_priority * 0.12),

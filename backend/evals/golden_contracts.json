@@ -26,5 +26,152 @@
     "contract_text": "房屋租赁合同\n甲方：张三\n乙方：李四\n月租金为人民币3000元，押金为人民币3000元。租赁期限为2026年5月1日至2027年4月30日。房屋主体结构维修由甲方负责，乙方提前退租应提前30日书面通知甲方，双方按实际损失协商处理。",
     "expected_clauses": [],
     "maximum_findings": 0
+  },
+  {
+    "id": "single_side_rent_adjustment",
+    "name": "甲方单方调整租金",
+    "contract_text": "房屋租赁合同\n甲方有权根据市场情况随时调整租金、服务费及管理费，乙方应无条件接受。",
+    "expected_clauses": ["租金调整条款"],
+    "minimum_level": "high"
+  },
+  {
+    "id": "silent_auto_renewal",
+    "name": "沉默自动续租",
+    "contract_text": "房屋租赁合同\n租赁期满前30日内，乙方未书面通知甲方不再续租的，视为自动续租一年。",
+    "expected_clauses": ["自动续租条款"],
+    "minimum_level": "medium"
+  },
+  {
+    "id": "tenant_all_major_repairs",
+    "name": "主体结构维修全由乙方承担",
+    "contract_text": "房屋租赁合同\n房屋主体结构、管道、家电等一切维修均由乙方负责并承担全部费用，甲方不再承担维修责任。",
+    "expected_clauses": ["维修责任条款"],
+    "minimum_level": "medium"
+  },
+  {
+    "id": "sublease_penalty",
+    "name": "禁止转租绑定高额违约责任",
+    "contract_text": "房屋租赁合同\n乙方禁止擅自转租，若违反本条，甲方有权没收押金并要求乙方支付违约金50000元。",
+    "expected_clauses": ["禁止转租违约条款"],
+    "minimum_level": "medium"
+  },
+  {
+    "id": "pet_deposit_forfeiture",
+    "name": "禁止养宠直接押金不退",
+    "contract_text": "房屋租赁合同\n乙方不得饲养宠物，如有违反，甲方有权要求乙方立即搬离且押金不退。",
+    "expected_clauses": ["禁止养宠违约条款", "押金退还条款"],
+    "minimum_level": "medium"
+  },
+  {
+    "id": "landlord_unlimited_entry",
+    "name": "甲方随时入户检查",
+    "contract_text": "房屋租赁合同\n为便于管理，甲方有权随时进入房屋检查，乙方不得拒绝。",
+    "expected_clauses": ["入户检查条款"],
+    "minimum_level": "medium"
+  },
+  {
+    "id": "hidden_rent_loan",
+    "name": "租金贷和征信授权",
+    "contract_text": "房屋租赁合同\n乙方同意通过合作金融机构办理租金分期贷款，并授权平台查询征信、绑定银行卡委托扣款。",
+    "expected_clauses": ["租金贷条款"],
+    "minimum_level": "high"
+  },
+  {
+    "id": "as_is_no_repair",
+    "name": "现状出租排除维修责任",
+    "contract_text": "房屋租赁合同\n该房屋按现状出租交付，交付后甲方不负责任何维修，所有维修费用均由乙方承担。",
+    "expected_clauses": ["现状交付条款"],
+    "minimum_level": "medium"
+  },
+  {
+    "id": "early_quit_all_remaining_rent",
+    "name": "提前退租赔全部剩余租金",
+    "contract_text": "房屋租赁合同\n乙方提前退租的，应一次性向甲方支付剩余租期全部租金作为赔偿。",
+    "expected_clauses": ["提前退租赔偿条款"],
+    "minimum_level": "critical"
+  },
+  {
+    "id": "verbal_promises_void",
+    "name": "口头承诺一律无效",
+    "contract_text": "培训服务合同\n销售人员、老师或客服的口头承诺全部无效，一切以本合同为准。",
+    "expected_clauses": ["口头承诺条款"],
+    "minimum_level": "low"
+  },
+  {
+    "id": "deposit_never_returned",
+    "name": "押金不予退还",
+    "contract_text": "房屋租赁合同\n无论乙方是否违约，合同期满后押金不予退还，由甲方作为管理成本收取。",
+    "expected_clauses": ["押金退还条款"],
+    "minimum_level": "high"
+  },
+  {
+    "id": "water_power_cutoff",
+    "name": "断水断电免责",
+    "contract_text": "房屋租赁合同\n乙方逾期支付租金或物业费的，甲方可断水断电，该行为不构成违约。",
+    "expected_clauses": ["断水断电免责条款"],
+    "minimum_level": "critical"
+  },
+  {
+    "id": "unclear_original_landlord",
+    "name": "无需联系原房东",
+    "contract_text": "房屋租赁合同\n本房屋由托管公司统一管理，乙方无需联系原房东，原房东不再另行确认。",
+    "expected_clauses": ["出租权限与房东身份条款"],
+    "minimum_level": "critical"
+  },
+  {
+    "id": "distant_arbitration",
+    "name": "甲方所在地仲裁",
+    "contract_text": "消费服务合同\n双方发生争议的，应提交甲方所在地仲裁委员会仲裁，乙方不得向其他机构主张权利。",
+    "expected_clauses": ["争议解决条款"],
+    "minimum_level": "medium"
+  },
+  {
+    "id": "automatic_eviction_after_delay",
+    "name": "逾期自动退租",
+    "contract_text": "房屋租赁合同\n乙方逾期支付租金超过3日的，视为自动退租，甲方有权立即收回房屋。",
+    "expected_clauses": ["自动退租条款"],
+    "minimum_level": "high"
+  },
+  {
+    "id": "final_interpretation_by_landlord",
+    "name": "最终解释权归甲方",
+    "contract_text": "房屋租赁合同\n本合同所有条款的最终解释权归甲方，乙方签署即视为认可。",
+    "expected_clauses": ["最终解释权条款"],
+    "minimum_level": "medium"
+  },
+  {
+    "id": "mandatory_bundled_service",
+    "name": "强制购买增值服务",
+    "contract_text": "网络会员服务合同\n用户必须接受平台指定的保洁服务、网络服务和增值服务，相关费用由平台另行扣收。",
+    "expected_clauses": ["强制搭售条款"],
+    "minimum_level": "medium"
+  },
+  {
+    "id": "one_sided_notice_obligation",
+    "name": "仅乙方承担提前通知义务",
+    "contract_text": "房屋租赁合同\n乙方提前30日书面通知甲方后方可退租；甲方因管理需要收回房屋时，乙方应配合搬离。",
+    "expected_clauses": ["提前通知条款"],
+    "minimum_level": "medium"
+  },
+  {
+    "id": "two_month_early_quit_penalty",
+    "name": "提前退租两个月租金违约金",
+    "contract_text": "房屋租赁合同\n乙方提前退租的，应向甲方支付两个月租金违约金，并承担重新招租期间的全部损失。",
+    "expected_clauses": ["提前退租违约金条款"],
+    "minimum_level": "high"
+  },
+  {
+    "id": "double_penalty",
+    "name": "双倍违约金",
+    "contract_text": "消费服务合同\n任何一方违反本合同的，违约方应按照合同总价的200%向守约方支付违约金。",
+    "expected_clauses": ["违约责任条款"],
+    "minimum_level": "critical"
+  },
+  {
+    "id": "long_term_deposit_interest",
+    "name": "长期押金无息",
+    "contract_text": "房屋租赁合同\n租期为2年，月租金为人民币3000元，押金为人民币6000元，押金无息，合同期满后30个工作日内退还。",
+    "expected_clauses": ["押金利息条款"],
+    "minimum_level": "low"
   }
 ]
