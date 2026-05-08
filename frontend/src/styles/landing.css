@@ -107,6 +107,7 @@ body.landing-page-active .app-main {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   min-height: 50px;
   padding: 0 24px;
   font-family: 'Space Grotesk', sans-serif;
@@ -114,6 +115,19 @@ body.landing-page-active .app-main {
   font-weight: 800;
   letter-spacing: -0.02em;
   text-transform: uppercase;
+  text-decoration: none;
+}
+
+.landing-button--github {
+  background: #052f3a;
+  color: #24e7ff;
+  border-color: #087389;
+  box-shadow: 4px 4px 0 0 #062027;
+}
+
+.landing-button--github:hover {
+  background: #073f4c;
+  color: #7df4ff;
 }
 
 .landing-button--ghost {

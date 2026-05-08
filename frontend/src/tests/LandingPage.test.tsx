@@ -31,4 +31,13 @@ describe('LandingPage', () => {
     expect(onNavigateLogin).toHaveBeenCalledTimes(1)
     expect(onNavigateRegister).toHaveBeenCalledTimes(2)
   })
+
+  it('links the top navigation GitHub button to the repository', () => {
+    render(<LandingPage onNavigateLogin={vi.fn()} onNavigateRegister={vi.fn()} />)
+
+    const githubLink = screen.getByRole('link', { name: /GitHub/i })
+
+    expect(githubLink.getAttribute('href')).toBe('https://github.com/Dloading666/Contract-Review-Copilot')
+    expect(githubLink.getAttribute('target')).toBe('_blank')
+  })
 })
