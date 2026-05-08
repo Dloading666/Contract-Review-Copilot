@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { Github } from 'lucide-react'
 
 import dogeArchitectImage from '../assets/landing/doge-architect.jpg'
 import '../styles/landing.css'
@@ -74,6 +75,7 @@ const testimonials = [
 ] as const
 
 const footerLinks = ['隐私政策', '服务条款', '联系我们'] as const
+const GITHUB_REPOSITORY_URL = 'https://github.com/Dloading666/Contract-Review-Copilot'
 
 export function LandingPage({ onNavigateLogin, onNavigateRegister }: LandingPageProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -127,6 +129,15 @@ export function LandingPage({ onNavigateLogin, onNavigateRegister }: LandingPage
       <header className="landing-topbar">
         <div className="landing-topbar__brand">合同审查全能扫描</div>
         <div className="landing-topbar__actions">
+          <a
+            className="brutalist-button landing-button landing-button--github"
+            href={GITHUB_REPOSITORY_URL}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <Github size={18} strokeWidth={3} />
+            GitHub
+          </a>
           <button type="button" className="brutalist-button landing-button landing-button--ghost" onClick={onNavigateLogin}>
             登录
           </button>
