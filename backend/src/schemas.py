@@ -7,7 +7,7 @@ class ContractReviewRequest(BaseModel):
     contract_text: str = Field(..., max_length=100000, description="The contract text to review")
     session_id: Optional[str] = Field(None, max_length=128, description="Optional session ID for resuming")
     filename: Optional[str] = Field(None, max_length=255, description="Optional contract filename")
-    review_mode: Literal["light", "deep"] = Field("deep", description="Whether to run only the initial scan or the full deep scan")
+    review_mode: Literal["light", "deep"] = Field("deep", description="Legacy scan mode; unified review always runs the full analysis")
 
 
 class SendCodeRequest(BaseModel):

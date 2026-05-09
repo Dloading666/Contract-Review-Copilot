@@ -138,13 +138,18 @@ async def test_run_review_stream_keeps_initial_result_when_deep_stage_fails(monk
 
     event_names = [event["event"] for event in events]
     assert "initial_review_ready" in event_names
-    assert "deep_review_failed" in event_names
+    assert "deep_review_update" in event_names
+    assert "final_report" in event_names
+    assert "deep_review_failed" not in event_names
     assert event_names[-1] == "review_complete"
     assert "error" not in event_names
 
+    deep_update_payload = next(event["data"] for event in events if event["event"] == "deep_review_update")
+    assert deep_update_payload["degraded"] is True
+
 
 @pytest.mark.asyncio
-async def test_run_review_stream_stops_after_initial_stage_in_light_mode(monkeypatch):
+async def test_run_review_stream_treats_legacy_light_mode_as_full_review(monkeypatch):
     monkeypatch.setattr(review_graph, "get_settings", lambda: _build_settings())
     monkeypatch.setattr(review_graph, "extract_entities", lambda contract_text, model_key=None: _sample_entities())
     monkeypatch.setattr(
@@ -158,7 +163,7 @@ async def test_run_review_stream_stops_after_initial_stage_in_light_mode(monkeyp
         "model_review_clauses",
         lambda *args, **kwargs: [_deposit_issue(level="critical", risk_level=5)],
     )
-    monkeypatch.setattr(review_graph, "generate_report", lambda *args, **kwargs: ["should not be used"])
+    monkeypatch.setattr(review_graph, "generate_report", lambda *args, **kwargs: ["## Review Report", "Full review is complete."])
 
     events = []
     async for event in review_graph.run_review_stream(
@@ -171,9 +176,9 @@ async def test_run_review_stream_stops_after_initial_stage_in_light_mode(monkeyp
 
     event_names = [event["event"] for event in events]
     assert "initial_review_ready" in event_names
-    assert "deep_review_available" in event_names
-    assert "deep_review_started" not in event_names
-    assert "final_report" not in event_names
+    assert "deep_review_available" not in event_names
+    assert "deep_review_started" in event_names
+    assert "final_report" in event_names
     assert event_names[-1] == "review_complete"
 
 
@@ -230,6 +235,11 @@ async def test_run_deep_review_stream_allows_retry_after_failure(monkeypatch):
         raise RuntimeError("model timeout")
 
     monkeypatch.setattr(review_graph, "model_review_clauses", fail_model_review)
+    monkeypatch.setattr(
+        review_graph,
+        "generate_report",
+        lambda contract_text, issues, model_key=None: ["## Review Report", "Initial result is exported."],
+    )
 
     events = []
     async for event in review_graph.run_deep_review_stream(
@@ -242,5 +252,7 @@ async def test_run_deep_review_stream_allows_retry_after_failure(monkeypatch):
 
     event_names = [event["event"] for event in events]
     assert event_names[0] == "deep_review_started"
-    assert "deep_review_failed" in event_names
+    assert "deep_review_update" in event_names
+    assert "final_report" in event_names
+    assert "deep_review_failed" not in event_names
     assert event_names[-1] == "review_complete"

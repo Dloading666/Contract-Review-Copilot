@@ -948,7 +948,6 @@ async def create_review(
                 contract_text=body.contract_text,
                 session_id=session_id,
                 model_key=DEFAULT_MODEL_KEY,
-                review_mode=body.review_mode,
             ):
                 event_type = event.get("event", "message")
                 event_data = event.get("data", event)
@@ -1105,7 +1104,7 @@ async def queue_review(
         contract_text=body.contract_text,
         session_id=session_id,
         filename=body.filename or "",
-        review_mode=body.review_mode,
+        review_mode="deep",
         task_type="review",
         max_retries=settings.review_queue_max_retries,
     )
@@ -1119,7 +1118,7 @@ async def queue_review(
             contract_text=body.contract_text,
             session_id=session_id,
             user_id=user["id"],
-            review_mode=body.review_mode,
+            review_mode="deep",
             on_breakpoint=_on_breakpoint,
             max_retries=settings.review_queue_max_retries,
             retry_backoff_seconds=settings.queue_retry_backoff_seconds,

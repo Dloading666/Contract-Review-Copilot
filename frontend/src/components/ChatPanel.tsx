@@ -78,7 +78,11 @@ function isNoRiskPlaceholderCard(card: RiskCard) {
   )
 }
 
-function getAnalysisProgress(steps: ReviewState['thinkingSteps']) {
+function getAnalysisProgress(
+  steps: ReviewState['thinkingSteps'],
+  status: ReviewState['status'],
+  elapsedSeconds: number,
+) {
   if (steps.length === 0) return 0
 
   const completedWeight = steps.reduce((total, step) => {
@@ -87,7 +91,12 @@ function getAnalysisProgress(steps: ReviewState['thinkingSteps']) {
     return total
   }, 0)
 
-  return Math.min(100, Math.max(0, Math.round((completedWeight / steps.length) * 100)))
+  const stepProgress = Math.min(100, Math.max(0, Math.round((completedWeight / steps.length) * 100)))
+  if (status === 'complete') return 100
+  if (status !== 'reviewing') return stepProgress
+
+  const timeProgress = stepProgress + Math.floor(elapsedSeconds * 2)
+  return Math.min(96, Math.max(stepProgress, timeProgress))
 }
 
 export function ChatPanel({
@@ -255,30 +264,30 @@ export function ChatPanel({
     && onRetryDeepReview
     && !hasCompletedReport
   )
-  const analysisProgress = getAnalysisProgress(review.thinkingSteps)
+  const analysisProgress = getAnalysisProgress(review.thinkingSteps, review.status, elapsedTime)
 
   const highRiskCount = substantiveRiskCards.filter((card) => card.level === 'high').length
   const mediumRiskCount = substantiveRiskCards.filter((card) => card.level === 'medium').length
   const liveReviewingStatusText = isGeneratingGuideInProgress
     ? reviewingStatusText
     : review.reviewStage === 'deep'
-      ? '初审已就绪，正在补全深度分析...'
+      ? '阶段结果已就绪，正在补全完整分析...'
       : review.reviewStage === 'initial' && review.riskCards.length > 0
         ? '初审已就绪，正在生成完整报告...'
         : reviewingStatusText
   const liveReviewingIndicatorText = isGeneratingGuideInProgress
     ? reviewingIndicatorText
     : review.reviewStage === 'deep'
-      ? '深度审查继续中，页面会自动更新...'
+      ? '完整分析继续中，页面会自动更新...'
       : review.reviewStage === 'initial' && review.riskCards.length > 0
-        ? '初步结果已就绪，正在补全深度分析...'
+        ? '阶段结果已就绪，正在补全完整分析...'
         : reviewingIndicatorText
   const stageNotice = review.deepUpdateNotice || review.initialSummary
   const stagedReviewHint = isReviewing && (
     review.reviewStage === 'initial' || review.reviewStage === 'deep'
   )
-    ? '初步审查结果已经可以问答，深度扫描会继续在后台补全，完成后页面会自动更新。'
-    : '阶段性审查结果已经就绪，你可以先继续问答，也可以在上方继续深度扫描。'
+    ? '阶段性审查结果已经可以问答，完整分析会继续在后台补全，完成后页面会自动更新。'
+    : '阶段性审查结果已经就绪，你可以先继续问答，也可以在上方补全完整分析。'
 
   return (
     <section className="chat-panel">
@@ -390,10 +399,10 @@ export function ChatPanel({
             {showRetryDeepReview && (
               <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button className="px-btn px-btn--orange" onClick={onRetryDeepReview}>
-                  继续深度扫描
+                  补全完整分析
                 </button>
                 <span style={{ fontSize: 12, color: 'var(--color-ink-muted)', alignSelf: 'center' }}>
-                  不会重扫合同，只继续补全深度分析和完整报告
+                  不会重扫合同，只继续补全分析和完整报告
                 </span>
               </div>
             )}

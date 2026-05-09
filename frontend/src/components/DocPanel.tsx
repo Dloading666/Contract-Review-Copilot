@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { Download, Plus, Upload, ZoomIn, ZoomOut } from 'lucide-react'
-import type { ReviewMode, ReviewState, RiskCard } from '../App'
+import type { ReviewState, RiskCard } from '../App'
 import { APIError, safeFetchJSON } from '../lib/apiClient'
 import { apiPath } from '../lib/apiPaths'
 import { MAX_CONTRACT_IMAGE_BATCH, MAX_CONTRACT_UPLOAD_FILE_BYTES, formatUploadBytes } from '../lib/uploadLimits'
@@ -13,7 +13,7 @@ interface DocPanelProps {
   onFileUpload: (text: string, filename: string) => void
   onOcrReady: (text: string, filename: string, warnings?: string[]) => void
   onContractTextChange: (text: string) => void
-  onConfirmReview: (mode: ReviewMode) => void
+  onConfirmReview: () => void
   onReset: () => void
   onNewConversation?: () => void
 }
@@ -420,7 +420,7 @@ export function DocPanel({
           <div className="doc-paper doc-paper--editable" style={{ fontSize: `${zoom}%` }}>
             <div className="doc-editor__heading">合同识别结果</div>
             <p className="doc-editor__hint">
-              识别结果已经回填到右侧文档区。请先检查并修正错字、漏字或页序问题，再选择“轻度扫描”或“深度扫描”。
+              识别结果已经回填到右侧文档区。请先检查并修正错字、漏字或页序问题，再开始合同分析。
             </p>
             {ocrWarnings.length > 0 && (
               <div className="doc-editor__warnings" role="status" aria-live="polite">
@@ -441,7 +441,7 @@ export function DocPanel({
           </div>
         ) : shouldHideOcrSourceAfterDeepReview ? (
           <div className="doc-paper" style={{ fontSize: `${zoom}%` }}>
-            <div className="doc-editor__heading">深度扫描已完成</div>
+            <div className="doc-editor__heading">合同分析已完成</div>
             <p className="doc-editor__hint">
               原始照片识别内容已自动收起，当前保留完整审查报告与问答结果。
             </p>
@@ -472,7 +472,7 @@ export function DocPanel({
             ) : (
               shouldHideOcrSourceAfterDeepReview ? (
                 <>
-                  <span>深度扫描已完成</span>
+                  <span>合同分析已完成</span>
                   <span style={{ color: 'var(--color-ink-muted)' }}>原始照片识别内容已自动收起</span>
                 </>
               ) : (
@@ -496,18 +496,11 @@ export function DocPanel({
                   重新上传
                 </button>
                 <button
-                  className="px-btn px-btn--sm px-btn--ghost"
-                  onClick={() => onConfirmReview('light')}
-                  disabled={!contractText.trim()}
-                >
-                  轻度扫描
-                </button>
-                <button
                   className="px-btn px-btn--sm px-btn--green"
-                  onClick={() => onConfirmReview('deep')}
+                  onClick={onConfirmReview}
                   disabled={!contractText.trim()}
                 >
-                  深度扫描
+                  开始分析
                 </button>
               </>
             ) : (

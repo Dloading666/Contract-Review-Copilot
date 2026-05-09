@@ -12,7 +12,6 @@ import type {
 
 interface UseStreamingReviewOptions {
   enabled?: boolean
-  reviewMode?: 'light' | 'deep'
   token?: string | null
 }
 
@@ -51,7 +50,7 @@ export function useStreamingReview(
   contractText: string,
   options: UseStreamingReviewOptions = {},
 ): UseStreamingReviewReturn {
-  const { enabled = true, reviewMode = 'deep', token = null } = options
+  const { enabled = true, token = null } = options
   const [phase, setPhase] = useState<ReviewPhase>('idle')
   const [reviewStage, setReviewStage] = useState<'idle' | 'initial' | 'deep' | 'complete'>('idle')
   const [deepUpdateNotice, setDeepUpdateNotice] = useState<string | null>(null)
@@ -68,7 +67,6 @@ export function useStreamingReview(
   const tokenRef = useRef(token)
   const contractTextRef = useRef(contractText)
   const issuesRef = useRef<ClauseIssue[]>([])
-  const reviewModeRef = useRef<'light' | 'deep'>(reviewMode)
   const reviewStageRef = useRef(reviewStage)
   const startedRequestRef = useRef<string | null>(null)
   const reportFlushTimerRef = useRef<number | null>(null)
@@ -91,10 +89,6 @@ export function useStreamingReview(
   useEffect(() => {
     contractTextRef.current = contractText
   }, [contractText])
-
-  useEffect(() => {
-    reviewModeRef.current = reviewMode
-  }, [reviewMode])
 
   useEffect(() => {
     issuesRef.current = issues
@@ -178,7 +172,7 @@ export function useStreamingReview(
             setIssues(payload.issues)
           }
           setReviewStage('initial')
-          setDeepUpdateNotice(payload.summary ?? 'Initial review is ready. Deep analysis is still running.')
+          setDeepUpdateNotice(payload.summary ?? '阶段性审查结果已生成，正在继续补全完整分析。')
           setCanRetryDeepReview(false)
           setPhase('initial_ready')
           setIsStreaming(true)
@@ -190,7 +184,7 @@ export function useStreamingReview(
             setIssues(payload.issues)
           }
           setReviewStage('initial')
-          setDeepUpdateNotice(payload.message ?? payload.summary ?? 'Light scan is ready. You can continue to deep review.')
+          setDeepUpdateNotice(payload.message ?? payload.summary ?? '阶段性审查结果已生成，可继续补全完整分析。')
           setCanRetryDeepReview(true)
           setPhase('initial_ready')
           setIsStreaming(true)
@@ -199,7 +193,7 @@ export function useStreamingReview(
         case 'deep_review_started': {
           const payload = data as { message?: string }
           setReviewStage('deep')
-          setDeepUpdateNotice(payload.message ?? 'Deep analysis is running.')
+          setDeepUpdateNotice(payload.message ?? '完整分析正在继续。')
           setCanRetryDeepReview(false)
           setPhase('deep_review')
           setIsStreaming(true)
@@ -211,7 +205,7 @@ export function useStreamingReview(
             setIssues(payload.issues)
           }
           setReviewStage('deep')
-          setDeepUpdateNotice(payload.message ?? payload.summary ?? 'Deep analysis updated the review results.')
+          setDeepUpdateNotice(payload.message ?? payload.summary ?? '完整分析已更新审查结果。')
           setCanRetryDeepReview(false)
           setPhase('deep_review')
           setIsStreaming(true)
@@ -234,13 +228,13 @@ export function useStreamingReview(
             setIssues(payload.issues)
           }
           setReviewStage('complete')
-          setDeepUpdateNotice(payload.message ?? payload.summary ?? 'Deep review completed.')
+          setDeepUpdateNotice(payload.message ?? payload.summary ?? '合同分析已完成。')
           setCanRetryDeepReview(false)
           break
         }
         case 'deep_review_failed': {
           const payload = data as { message?: string }
-          setDeepUpdateNotice(payload.message ?? 'Deep analysis could not be completed. Initial results remain available.')
+          setDeepUpdateNotice(payload.message ?? '完整分析暂未补全，当前先展示阶段性审查结果。')
           setReviewStage('complete')
           setCanRetryDeepReview(true)
           break
@@ -279,7 +273,7 @@ export function useStreamingReview(
         case 'error': {
           const payload = data as { message?: string }
           if (issuesRef.current.length > 0 || reviewStageRef.current !== 'idle') {
-            setDeepUpdateNotice(payload.message ?? '深度分析暂未补全，当前先展示已生成的审查结果。')
+            setDeepUpdateNotice(payload.message ?? '完整分析暂未补全，当前先展示已生成的审查结果。')
             setReviewStage('complete')
             setCanRetryDeepReview(true)
             setPhase('complete')
@@ -308,7 +302,7 @@ export function useStreamingReview(
         onEvent: ({ event, data }) => handleSSEEvent(event, data),
         onError: (streamError) => {
           if (issuesRef.current.length > 0 || reviewStageRef.current !== 'idle') {
-            setDeepUpdateNotice('深度分析连接已结束，当前先保留已生成的初步审查结果。')
+            setDeepUpdateNotice('分析连接已结束，当前先保留已生成的阶段性审查结果。')
             setReviewStage('complete')
             setCanRetryDeepReview(true)
             setPhase('complete')
@@ -349,7 +343,7 @@ export function useStreamingReview(
     setError(null)
     setPhase('deep_review')
     setReviewStage('deep')
-    setDeepUpdateNotice('正在继续补全深度分析与完整报告...')
+    setDeepUpdateNotice('正在继续补全完整分析与报告...')
     setCanRetryDeepReview(false)
     setIsStreaming(true)
     startStream(`${API_BASE}/review/deepen`, {
@@ -370,7 +364,7 @@ export function useStreamingReview(
 
     if (!enabled) return
 
-    const requestKey = `${sessionId}:${contractText}:${reviewMode}`
+    const requestKey = `${sessionId}:${contractText}`
     if (startedRequestRef.current === requestKey) return
     startedRequestRef.current = requestKey
 
@@ -380,14 +374,13 @@ export function useStreamingReview(
     startStream(`${API_BASE}/review`, {
       contract_text: contractText,
       session_id: sessionId,
-      review_mode: reviewModeRef.current,
     })
 
     return () => {
       clientRef.current?.abort()
       clientRef.current = null
     }
-  }, [contractText, enabled, resetStreamingState, reviewMode, sessionId, startStream])
+  }, [contractText, enabled, resetStreamingState, sessionId, startStream])
 
   return {
     phase,

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../components/ChatPanel'
 import type { ReviewState } from '../App'
@@ -44,6 +44,7 @@ function buildReviewState(overrides: Partial<ReviewState> = {}): ReviewState {
 
 describe('ChatPanel', () => {
   afterEach(() => {
+    vi.useRealTimers()
     cleanup()
     vi.restoreAllMocks()
   })
@@ -184,6 +185,37 @@ describe('ChatPanel', () => {
 
     expect(progressbar.getAttribute('aria-valuenow')).toBe('63')
     expect(screen.getByText('63%')).toBeTruthy()
+  })
+
+  it('advances the contract analysis progress while the same stage is still running', () => {
+    vi.useFakeTimers()
+    render(
+      <ChatPanel
+        review={buildReviewState({
+          status: 'reviewing',
+          reviewStage: 'initial',
+          finalReport: [],
+          thinkingSteps: [
+            { id: 'parse', label: 'parse', status: 'done' },
+            { id: 'extract', label: 'extract', status: 'done' },
+            { id: 'retrieve', label: 'retrieve', status: 'active' },
+            { id: 'review', label: 'review', status: 'pending' },
+          ],
+        })}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={vi.fn()}
+      />,
+    )
+
+    const progressbar = screen.getByRole('progressbar', { name: '合同分析进度' })
+    const initialProgress = Number(progressbar.getAttribute('aria-valuenow'))
+
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+
+    expect(Number(progressbar.getAttribute('aria-valuenow'))).toBeGreaterThan(initialProgress)
   })
 
   it('requests autofix suggestions with authorization and renders the result', async () => {
@@ -350,14 +382,14 @@ describe('ChatPanel', () => {
     expect(onSendMessage).toHaveBeenCalledWith('What should I still double-check before signing?')
   })
 
-  it('opens Q&A after a light scan with intermediate findings even without a full report', async () => {
+  it('opens Q&A after a staged unified scan result even without a full report', async () => {
     const onSendMessage = vi.fn()
     const { container } = render(
       <ChatPanel
         review={buildReviewState({
           finalReport: [],
           initialSummary: '初步审查已完成。',
-          deepUpdateNotice: '轻度扫描已完成，你可以继续深度扫描。',
+          deepUpdateNotice: '阶段性审查已完成，你可以补全完整分析。',
           riskCards: [
             {
               id: 'risk-1',
@@ -382,7 +414,7 @@ describe('ChatPanel', () => {
 
     const textbox = await screen.findByRole('textbox')
     expect(textbox).toBeTruthy()
-    expect(screen.getByRole('button', { name: /继续深度扫描/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /补全完整分析/i })).toBeTruthy()
 
     fireEvent.change(textbox, { target: { value: 'What is the main deposit risk?' } })
     fireEvent.click(container.querySelector('.chat-input-send') as HTMLButtonElement)
@@ -390,7 +422,7 @@ describe('ChatPanel', () => {
     expect(onSendMessage).toHaveBeenCalledWith('What is the main deposit risk?')
   })
 
-  it('keeps Q&A available while deep scan continues in the background', async () => {
+  it('keeps Q&A available while the unified scan continues in the background', async () => {
     const onSendMessage = vi.fn()
     const { container } = render(
       <ChatPanel
@@ -399,7 +431,7 @@ describe('ChatPanel', () => {
           reviewStage: 'deep',
           finalReport: [],
           initialSummary: '初步审查已完成。',
-          deepUpdateNotice: '正在继续补全深度分析与完整报告...',
+          deepUpdateNotice: '正在继续补全完整分析与报告...',
           riskCards: [
             {
               id: 'risk-1',
@@ -421,7 +453,7 @@ describe('ChatPanel', () => {
     )
 
     expect(await screen.findByRole('textbox')).toBeTruthy()
-    expect(screen.getByText(/初步审查结果已经可以问答/)).toBeTruthy()
+    expect(screen.getByText(/阶段性审查结果已经可以问答/)).toBeTruthy()
 
     fireEvent.change(container.querySelector('.chat-input-textarea') as HTMLTextAreaElement, {
       target: { value: 'Can I keep asking while deep scan runs?' },
@@ -472,12 +504,12 @@ describe('ChatPanel', () => {
     expect(screen.queryByRole('button', { name: /导出报告/i })).toBeNull()
   })
 
-  it('hides the continue deep review action once a full report already exists', () => {
+  it('hides the retry action once a full report already exists', () => {
     render(
       <ChatPanel
         review={buildReviewState({
           finalReport: ['## Review summary', 'Complete report body'],
-          deepUpdateNotice: '深度审查已完成，页面内容已自动更新。',
+          deepUpdateNotice: '合同分析已完成，页面内容已自动更新。',
         })}
         canRetryDeepReview
         onRetryDeepReview={vi.fn()}
@@ -487,17 +519,17 @@ describe('ChatPanel', () => {
       />,
     )
 
-    expect(screen.queryByRole('button', { name: '继续深度扫描' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '补全完整分析' })).toBeNull()
   })
 
-  it('shows a continue deep review action after a degraded completion', () => {
+  it('shows a retry action after a degraded completion', () => {
     const onRetryDeepReview = vi.fn()
 
     render(
       <ChatPanel
         review={buildReviewState({
           finalReport: [],
-          deepUpdateNotice: '深度分析暂未补全，当前先展示初步审查结果。',
+          deepUpdateNotice: '完整分析暂未补全，当前先展示阶段性审查结果。',
         })}
         canRetryDeepReview
         onRetryDeepReview={onRetryDeepReview}
@@ -507,7 +539,7 @@ describe('ChatPanel', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '继续深度扫描' }))
+    fireEvent.click(screen.getByRole('button', { name: '补全完整分析' }))
     expect(onRetryDeepReview).toHaveBeenCalledTimes(1)
   })
 })
