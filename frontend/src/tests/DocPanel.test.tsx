@@ -324,7 +324,7 @@ describe('DocPanel', () => {
     )
 
     const textarea = container.querySelector('.doc-editor__textarea') as HTMLTextAreaElement
-    const confirmButton = getByText('深度扫描') as HTMLButtonElement
+    const confirmButton = getByText('开始分析') as HTMLButtonElement
     const zoomButtons = container.querySelectorAll('.doc-panel__zoom-btn')
 
     expect(textarea.value).toBe('甲方：张三\n乙方：李四')
@@ -340,13 +340,13 @@ describe('DocPanel', () => {
     fireEvent.click(confirmButton)
 
     expect(onContractTextChange).toHaveBeenCalledWith('修订后的 OCR 文本')
-    expect(onConfirmReview).toHaveBeenCalledWith('deep')
+    expect(onConfirmReview).toHaveBeenCalledTimes(1)
   })
 
-  it('lets the user choose light scan from the confirmation footer', () => {
+  it('offers one unified scan action after OCR confirmation', () => {
     const onConfirmReview = vi.fn()
 
-    const { getByRole } = renderDocPanel(
+    const { getByRole, queryByRole } = renderDocPanel(
       {
         status: 'ocr_ready',
         filename: 'lease.txt',
@@ -357,8 +357,11 @@ describe('DocPanel', () => {
       },
     )
 
-    fireEvent.click(getByRole('button', { name: /轻度扫描/i }))
-    expect(onConfirmReview).toHaveBeenCalledWith('light')
+    expect(queryByRole('button', { name: /轻度扫描/i })).toBeNull()
+    expect(queryByRole('button', { name: /深度扫描/i })).toBeNull()
+
+    fireEvent.click(getByRole('button', { name: /开始分析/i }))
+    expect(onConfirmReview).toHaveBeenCalledTimes(1)
   })
 
   it('shows a new conversation button and calls back when clicked', () => {
@@ -377,7 +380,7 @@ describe('DocPanel', () => {
     expect(onNewConversation).toHaveBeenCalledTimes(1)
   })
 
-  it('hides OCR-derived contract content after deep review completes', () => {
+  it('hides OCR-derived contract content after the unified review completes', () => {
     const { container, getAllByText, getByText, queryByText } = renderDocPanel({
       status: 'complete',
       reviewStage: 'complete',
@@ -387,7 +390,7 @@ describe('DocPanel', () => {
       finalReport: ['## Review summary', 'Complete report body'],
     })
 
-    expect(getAllByText('深度扫描已完成').length).toBeGreaterThan(0)
+    expect(getAllByText('合同分析已完成').length).toBeGreaterThan(0)
     expect(getByText('原始照片识别内容已自动收起，当前保留完整审查报告与问答结果。')).toBeTruthy()
     expect(queryByText('甲方：张三')).toBeNull()
     expect(container.querySelector('.doc-panel__zoom-group')).toBeNull()

@@ -6,7 +6,7 @@ pipeline into two stages:
 
 1. Initial review
    Emit risk cards and an initial summary inside a hard time budget.
-2. Deep completion
+2. Full completion
    Continue the heavier model/report work in the same SSE stream, while
    sending periodic heartbeat events so reverse proxies do not treat the
    request as idle.
@@ -98,16 +98,16 @@ def _build_review_summary(issues: list[dict], *, deep_complete: bool) -> str:
 
     if substantive == 0:
         return (
-            "深度审查已完成，当前未发现明显不公平条款。"
+            "合同分析已完成，当前未发现明显不公平条款。"
             if deep_complete
-            else "初步审查未发现明显不公平条款，正在补充深度分析。"
+            else "阶段性审查未发现明显不公平条款，正在补全完整分析。"
         )
 
-    prefix = "深度审查已完成" if deep_complete else "初步审查已完成"
+    prefix = "合同分析已完成" if deep_complete else "阶段性审查已完成"
     return (
         f"{prefix}，已识别 {substantive} 处风险："
         f"{critical} 处高危、{high} 处高风险、{medium} 处提示。"
-        + ("" if deep_complete else " 正在继续补充深度分析与完整报告。")
+        + ("" if deep_complete else " 正在继续补全完整分析与报告。")
     )
 
 
@@ -160,7 +160,6 @@ async def run_review_stream(
       - routing
       - logic_review (initial cards)
       - initial_review_ready
-      - deep_review_available (light mode only)
       - deep_review_started
       - deep_review_update (optional)
       - deep_review_heartbeat (0..n)
@@ -290,71 +289,62 @@ async def run_review_stream(
         )
         initial_ready = True
 
-        if review_mode == "light":
-            yield _sse_event(
-                "deep_review_available",
-                {
-                    "session_id": session_id,
-                    "review_stage": "initial",
-                    "summary": _build_review_summary(initial_issues, deep_complete=False),
-                    "message": "轻度扫描已完成，你可以按需继续深度扫描，补全更完整的风险分析和审查报告。",
-                    "issues": initial_issues,
-                },
-            )
-            yield _sse_event(
-                "review_complete",
-                {
-                    "session_id": session_id,
-                    "review_mode": "light",
-                },
-            )
-            return
-
         yield _sse_event(
             "deep_review_started",
             {
                 "session_id": session_id,
                 "review_stage": "deep",
-                "message": "初步结果已生成，正在补充深度分析与完整报告。",
+                "message": "阶段性结果已生成，正在补全完整分析与报告。",
             },
         )
 
         deep_issues = initial_issues
+        model_review_degraded = False
         if model_task is not None and not model_task.done():
-            async for heartbeat_event in _await_with_heartbeat(
-                model_task,
-                session_id=session_id,
-                stage="model_review",
-                message="深度审查仍在进行中...",
-                heartbeat_seconds=settings.review_heartbeat_interval_seconds,
-            ):
-                if heartbeat_event["event"] == "_task_result":
-                    model_issues = heartbeat_event["data"]["result"]
-                    from ..agents.logic_review import _merge_issue_lists
+            try:
+                async for heartbeat_event in _await_with_heartbeat(
+                    model_task,
+                    session_id=session_id,
+                    stage="model_review",
+                    message="合同分析仍在进行中...",
+                    heartbeat_seconds=settings.review_heartbeat_interval_seconds,
+                ):
+                    if heartbeat_event["event"] == "_task_result":
+                        model_issues = heartbeat_event["data"]["result"]
+                        from ..agents.logic_review import _merge_issue_lists
 
-                    deep_issues = _merge_issue_lists(model_issues, rule_issues)
-                    break
-                yield heartbeat_event
+                        deep_issues = _merge_issue_lists(model_issues, rule_issues)
+                        break
+                    yield heartbeat_event
+            except Exception as exc:
+                model_review_degraded = True
+                print(f"[ReviewGraph] Deep model review failed, continuing with initial issues: {exc}", flush=True)
         elif model_task is not None:
             try:
                 from ..agents.logic_review import _merge_issue_lists
 
                 deep_issues = _merge_issue_lists(model_task.result(), rule_issues)
             except Exception as exc:
+                model_review_degraded = True
                 print(f"[ReviewGraph] Deep review merge skipped: {exc}", flush=True)
 
         finding_changes = _build_finding_changes(initial_issues, deep_issues)
         deep_issues = _annotate_issue_changes(deep_issues, finding_changes)
-        if finding_changes:
+        if finding_changes or model_review_degraded:
             yield _sse_event(
                 "deep_review_update",
                 {
                     "session_id": session_id,
                     "review_stage": "deep",
                     "summary": _build_review_summary(deep_issues, deep_complete=False),
-                    "message": f"深度审查补充了 {len(finding_changes)} 处新的或升级后的分析结果。",
+                    "message": (
+                        f"合同分析补充了 {len(finding_changes)} 处新的或升级后的分析结果。"
+                        if finding_changes
+                        else "模型暂时超时，已基于当前扫描结果继续生成完整报告。"
+                    ),
                     "issues": deep_issues,
                     "changes": finding_changes,
+                    "degraded": model_review_degraded,
                 },
             )
 
@@ -388,7 +378,7 @@ async def run_review_stream(
                 "session_id": session_id,
                 "review_stage": "deep",
                 "summary": _build_review_summary(deep_issues, deep_complete=True),
-                "message": "深度审查已完成，页面内容已自动更新。",
+                "message": "合同分析已完成，页面内容已自动更新。",
                 "issues": deep_issues,
                 "changes": finding_changes,
             },
@@ -433,7 +423,7 @@ async def run_review_stream(
                 "deep_review_failed",
                 {
                     "session_id": session_id,
-                    "message": "深度分析暂未补全，当前先展示初步审查结果。",
+                    "message": "完整分析暂未补全，当前先展示阶段性审查结果。",
                 },
             )
             yield _sse_event("review_complete", {"session_id": session_id, "degraded": True})
@@ -493,7 +483,7 @@ async def run_deep_review_stream(
         {
             "session_id": session_id,
             "review_stage": "deep",
-            "message": "正在继续补充深度分析与完整报告。",
+            "message": "正在继续补全完整分析与报告。",
         },
     )
 
@@ -544,33 +534,43 @@ async def run_deep_review_stream(
         )
 
         deep_issues = initial_issues
-        async for heartbeat_event in _await_with_heartbeat(
-            model_task,
-            session_id=session_id,
-            stage="model_review",
-            message="深度审查仍在进行中...",
-            heartbeat_seconds=settings.review_heartbeat_interval_seconds,
-        ):
-            if heartbeat_event["event"] == "_task_result":
-                model_issues = heartbeat_event["data"]["result"]
-                from ..agents.logic_review import _merge_issue_lists
+        model_review_degraded = False
+        try:
+            async for heartbeat_event in _await_with_heartbeat(
+                model_task,
+                session_id=session_id,
+                stage="model_review",
+                message="合同分析仍在进行中...",
+                heartbeat_seconds=settings.review_heartbeat_interval_seconds,
+            ):
+                if heartbeat_event["event"] == "_task_result":
+                    model_issues = heartbeat_event["data"]["result"]
+                    from ..agents.logic_review import _merge_issue_lists
 
-                deep_issues = _merge_issue_lists(model_issues, initial_issues) if initial_issues else model_issues
-                break
-            yield heartbeat_event
+                    deep_issues = _merge_issue_lists(model_issues, initial_issues) if initial_issues else model_issues
+                    break
+                yield heartbeat_event
+        except Exception as exc:
+            model_review_degraded = True
+            print(f"[ReviewGraph] Deep model review resume failed, continuing with initial issues: {exc}", flush=True)
 
         finding_changes = _build_finding_changes(initial_issues, deep_issues)
         deep_issues = _annotate_issue_changes(deep_issues, finding_changes)
-        if finding_changes:
+        if finding_changes or model_review_degraded:
             yield _sse_event(
                 "deep_review_update",
                 {
                     "session_id": session_id,
                     "review_stage": "deep",
                     "summary": _build_review_summary(deep_issues, deep_complete=False),
-                    "message": f"深度审查补充了 {len(finding_changes)} 处新的或升级后的分析结果。",
+                    "message": (
+                        f"合同分析补充了 {len(finding_changes)} 处新的或升级后的分析结果。"
+                        if finding_changes
+                        else "模型暂时超时，已基于当前扫描结果继续生成完整报告。"
+                    ),
                     "issues": deep_issues,
                     "changes": finding_changes,
+                    "degraded": model_review_degraded,
                 },
             )
 
@@ -604,7 +604,7 @@ async def run_deep_review_stream(
                 "session_id": session_id,
                 "review_stage": "deep",
                 "summary": _build_review_summary(deep_issues, deep_complete=True),
-                "message": "深度审查已完成，页面内容已自动更新。",
+                "message": "合同分析已完成，页面内容已自动更新。",
                 "issues": deep_issues,
                 "changes": finding_changes,
             },
@@ -616,7 +616,7 @@ async def run_deep_review_stream(
             "deep_review_failed",
             {
                 "session_id": session_id,
-                "message": "深度分析暂未补全，你可以再次继续深度扫描。",
+                "message": "完整分析暂未补全，你可以再次补全分析。",
             },
         )
         yield _sse_event("review_complete", {"session_id": session_id, "degraded": True})

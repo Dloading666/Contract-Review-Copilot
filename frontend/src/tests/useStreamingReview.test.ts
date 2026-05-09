@@ -234,28 +234,24 @@ describe('useStreamingReview', () => {
     expect(request?.body).not.toContain('"model"')
   })
 
-  it('includes the requested review mode when starting the stream', async () => {
+  it('does not include a scan mode when starting the unified review stream', async () => {
     mockFetch.mockResolvedValue(new Response(createMockStream([])))
 
-    renderHook(() => useStreamingReview('test-session', 'contract text', { reviewMode: 'light' }))
+    renderHook(() => useStreamingReview('test-session', 'contract text'))
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalled()
     })
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      '/api/review',
-      expect.objectContaining({
-        body: JSON.stringify({
-          contract_text: 'contract text',
-          session_id: 'test-session',
-          review_mode: 'light',
-        }),
-      }),
-    )
+    const request = mockFetch.mock.calls[0]?.[1] as { body?: string } | undefined
+    expect(request?.body).toBe(JSON.stringify({
+      contract_text: 'contract text',
+      session_id: 'test-session',
+    }))
+    expect(request?.body).not.toContain('review_mode')
   })
 
-  it('keeps a continue deep review action after a light scan completes', async () => {
+  it('keeps retry disabled after the unified review completes normally', async () => {
     const initialIssues: ClauseIssue[] = [
       {
         clause: 'Deposit clause',
@@ -268,16 +264,17 @@ describe('useStreamingReview', () => {
 
     mockFetch.mockResolvedValue(new Response(createMockStream([
       `event: initial_review_ready\ndata: ${JSON.stringify({ issues: initialIssues, summary: 'Initial review is ready.' })}\n\n`,
-      `event: deep_review_available\ndata: ${JSON.stringify({ issues: initialIssues, message: 'Light scan is complete. You can continue to deep review.' })}\n\n`,
-      'event: review_complete\ndata: {"session_id":"test-session","review_mode":"light"}\n\n',
+      'event: deep_review_started\ndata: {"message":"Completing full analysis."}\n\n',
+      `event: final_report\ndata: ${JSON.stringify({ paragraph: 'Unified report paragraph' })}\n\n`,
+      'event: review_complete\ndata: {"session_id":"test-session"}\n\n',
     ])))
 
-    const { result } = renderHook(() => useStreamingReview('test-session', 'contract text', { reviewMode: 'light' }))
+    const { result } = renderHook(() => useStreamingReview('test-session', 'contract text'))
 
     await waitFor(() => {
       expect(result.current.phase).toBe('complete')
-      expect(result.current.canRetryDeepReview).toBe(true)
-      expect(result.current.deepUpdateNotice).toContain('Light scan')
+      expect(result.current.canRetryDeepReview).toBe(false)
+      expect(result.current.reportParagraphs).toContain('Unified report paragraph')
     })
   })
 

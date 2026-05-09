@@ -19,7 +19,6 @@ import { apiPath } from './lib/apiPaths'
 import { createSSEClient } from './lib/sseClient'
 
 export type ReviewStatus = 'idle' | 'uploading' | 'ocr_ready' | 'reviewing' | 'breakpoint' | 'complete' | 'error'
-export type ReviewMode = 'light' | 'deep'
 export type ReviewDocumentSource = 'direct' | 'ocr'
 
 export interface ThinkingStep {
@@ -99,7 +98,6 @@ export interface ReviewHistoryEntry {
 interface PendingReviewStart {
   text: string
   filename: string
-  reviewMode: ReviewMode
 }
 
 function createSessionId() {
@@ -264,6 +262,81 @@ function mapRiskCardsToIssuePayload(riskCards: RiskCard[]): ClauseIssue[] {
     matched_text: card.matchedText,
     change_type: card.changeType ?? 'none',
   }))
+}
+
+function isNoRiskExportCard(card: RiskCard) {
+  const summaryText = `${card.title} ${card.clause}`.toLowerCase()
+  const issueText = `${card.issue} ${card.suggestion}`
+  return (
+    (summaryText.includes('整体评估') || summaryText.includes('风险评估'))
+    && (
+      issueText.includes('未发现明显不公平条款')
+      || issueText.includes('合同条款基本公平合理')
+      || issueText.includes('未发现明显不公平')
+    )
+  )
+}
+
+function formatRiskLevelLabel(level: RiskCard['level']) {
+  return level === 'high' ? '高风险' : '提示'
+}
+
+export function buildReportExportParagraphs(review: ReviewState): string[] {
+  const finalReport = review.finalReport.filter((paragraph) => paragraph.trim())
+  if (finalReport.length > 0) return finalReport
+
+  const hasUnifiedScanResult = Boolean(
+    review.initialSummary
+    || review.deepUpdateNotice
+    || review.riskCards.length > 0
+  )
+  if (!hasUnifiedScanResult) return []
+
+  const riskCards = review.riskCards.filter((card) => !isNoRiskExportCard(card))
+  const noRiskCard = review.riskCards.find((card) => isNoRiskExportCard(card))
+  const generatedAt = new Date().toLocaleString('zh-CN')
+  const sourceName = review.filename || '未命名合同'
+  const summary = review.initialSummary || review.deepUpdateNotice || (
+    riskCards.length > 0
+      ? `合同分析已完成，识别到 ${riskCards.length} 处潜在风险。`
+      : '合同分析已完成，当前未发现明显不公平条款。'
+  )
+
+  const paragraphs = [
+    `## 合同审查报告\n\n来源文件：${sourceName}\n\n生成时间：${generatedAt}`,
+    `### 分析结论\n\n${summary}`,
+  ]
+
+  if (riskCards.length > 0) {
+    paragraphs.push(`### 风险条款摘要\n\n共识别 ${riskCards.length} 处潜在风险。`)
+    riskCards.forEach((card, index) => {
+      paragraphs.push(
+        `### 风险项目 ${index + 1}：${card.title || card.clause || '风险项'}\n\n`
+        + `风险等级：${formatRiskLevelLabel(card.level)}\n\n`
+        + `相关条款：${card.clause || '未明确'}\n\n`
+        + `问题分析：${card.issue || '未明确'}\n\n`
+        + `处置建议：${card.suggestion || '建议签约前进一步核对并协商明确。'}\n\n`
+        + `参考依据：${card.legalRef || '《民法典》合同编及相关租赁合同规则'}`,
+      )
+    })
+  } else {
+    paragraphs.push(
+      `### 风险条款摘要\n\n${noRiskCard?.issue || '当前未发现明显不公平条款。'}\n\n`
+      + `建议：${noRiskCard?.suggestion || '签约前仍建议逐条核对押金、维修、解约、违约责任和证据留存要求。'}`,
+    )
+  }
+
+  paragraphs.push(
+    '### 后续建议\n\n本报告用于快速定位主要风险。签约前建议继续核对押金、解约、维修、违约责任和证据留存要求，并按需补充人工复核。',
+  )
+
+  return paragraphs
+}
+
+export function canExportReviewReport(review: ReviewState) {
+  if (review.finalReport.some((paragraph) => paragraph.trim())) return true
+  if (review.status !== 'complete') return false
+  return buildReportExportParagraphs(review).length > 0
 }
 
 function hasMeaningfulChat(chatMessages: ChatMessage[]) {
@@ -456,7 +529,6 @@ export default function App() {
   const [mobileDocVisible, setMobileDocVisible] = useState(false)
   const [review, setReview] = useState<ReviewState>(() => createInitialState(createSessionId()))
   const [streamContractText, setStreamContractText] = useState('')
-  const [streamReviewMode, setStreamReviewMode] = useState<ReviewMode>('deep')
   const [pendingReviewStart, setPendingReviewStart] = useState<PendingReviewStart | null>(null)
   const previousHistoryOwnerKeyRef = useRef<string | null>(historyOwnerKey)
   const prevPhaseRef = useRef<ReviewStatus>(review.status)
@@ -464,7 +536,6 @@ export default function App() {
 
   const hook = useStreamingReview(review.sessionId, streamContractText, {
     enabled: hasAcceptedDisclaimer && review.status === 'reviewing',
-    reviewMode: streamReviewMode,
     token,
   })
 
@@ -484,14 +555,12 @@ export default function App() {
     setPendingReviewStart(null)
     setHasAcceptedDisclaimer(loadDisclaimerAcceptance(historyOwnerKey))
     setStreamContractText('')
-    setStreamReviewMode('deep')
     setReview(createInitialState(createSessionId()))
   }, [historyOwnerKey])
 
   useEffect(() => {
     if (!pendingReviewStart) return
     const sessionId = createSessionId()
-    setStreamReviewMode(pendingReviewStart.reviewMode)
     setStreamContractText(pendingReviewStart.text)
     setReview({
       ...createInitialState(sessionId),
@@ -592,7 +661,6 @@ export default function App() {
     const nextSessionId = createSessionId()
     setMobileDocVisible(true)
     setStreamContractText('')
-    setStreamReviewMode('deep')
     setReview({
       ...createInitialState(nextSessionId),
       status: 'ocr_ready',
@@ -607,12 +675,10 @@ export default function App() {
   const startReview = useCallback((
     text: string,
     filename: string,
-    reviewMode: ReviewMode,
     documentSource: ReviewDocumentSource = 'direct',
   ) => {
     const sessionId = createSessionId()
     setMobileDocVisible(false)
-    setStreamReviewMode(reviewMode)
     setStreamContractText(text)
     setReview({
       ...createInitialState(sessionId),
@@ -636,13 +702,13 @@ export default function App() {
     setReview((prev) => ({ ...prev, contractText: text }))
   }, [])
 
-  const handleConfirmOcrReview = useCallback((reviewMode: ReviewMode) => {
+  const handleConfirmOcrReview = useCallback(() => {
     const text = review.contractText.trim()
     if (!text) {
       alert('请先确认识别出的合同文字后再开始分析。')
       return
     }
-    startReview(text, review.filename, reviewMode, review.documentSource ?? 'ocr')
+    startReview(text, review.filename, review.documentSource ?? 'ocr')
   }, [review.contractText, review.documentSource, review.filename, startReview])
 
   const handleBreakpointConfirm = useCallback(() => {
@@ -654,7 +720,7 @@ export default function App() {
       ...prev,
       status: 'reviewing',
       reviewStage: 'deep',
-      deepUpdateNotice: '正在继续补全深度分析与完整报告...',
+      deepUpdateNotice: '正在继续补全完整分析与报告...',
       errorMessage: null,
     }))
     hook.retryDeepReview({
@@ -667,28 +733,27 @@ export default function App() {
   const handleNewConversation = useCallback(() => {
     persistCurrentReview(review)
     setStreamContractText('')
-    setStreamReviewMode('deep')
     setReview(createInitialState(createSessionId()))
   }, [persistCurrentReview, review])
 
   const handleReset = useCallback(() => {
     setPendingReviewStart(null)
     setStreamContractText('')
-    setStreamReviewMode('deep')
     setReview(createInitialState(createSessionId()))
   }, [])
 
   const handleExportReport = useCallback(() => {
-    if (review.finalReport.length === 0 || isExportingReport) return
+    const reportParagraphs = buildReportExportParagraphs(review)
+    if (reportParagraphs.length === 0 || isExportingReport) return
     setIsExportingReport(true)
     exportReportAsWord({
       filename: review.filename,
-      reportParagraphs: review.finalReport,
+      reportParagraphs,
       token,
     })
       .catch(() => alert('导出 Word 报告失败，请稍后重试。'))
       .finally(() => setIsExportingReport(false))
-  }, [isExportingReport, review.filename, review.finalReport, token])
+  }, [isExportingReport, review, token])
 
   const [isChatPending, setIsChatPending] = useState(false)
   const chatStreamRef = useRef<ReturnType<typeof createSSEClient> | null>(null)
@@ -938,7 +1003,6 @@ export default function App() {
       persistCurrentReview(review)
     }
     setStreamContractText('')
-    setStreamReviewMode('deep')
     setReview({
       ...createInitialState(entry.sessionId),
       status: entry.status,
@@ -967,7 +1031,6 @@ export default function App() {
     if (review.sessionId !== sessionId) return
     setPendingReviewStart(null)
     setStreamContractText('')
-    setStreamReviewMode('deep')
     setReview(createInitialState(createSessionId()))
   }, [review.sessionId])
 
@@ -1049,7 +1112,7 @@ export default function App() {
             <DocPanel
               review={review}
               authToken={token}
-              canExportReport={review.finalReport.length > 0}
+              canExportReport={canExportReviewReport(review)}
               onExportReport={handleExportReport}
               isExportingReport={isExportingReport}
               onFileUpload={handleFileUpload}
@@ -1070,4 +1133,3 @@ export default function App() {
     </div>
   )
 }
-

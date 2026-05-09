@@ -236,11 +236,10 @@ def test_review_generates_unique_session_ids_and_streams_events(client, monkeypa
         contract_text: str,
         session_id: str,
         model_key: str | None = None,
-        review_mode: str = "deep",
     ):
         captured_session_ids.append(session_id)
         captured_model_keys.append(model_key)
-        yield {"event": "review_started", "data": {"session_id": session_id, "review_mode": review_mode}}
+        yield {"event": "review_started", "data": {"session_id": session_id}}
         yield {"event": "review_complete", "data": {"session_id": session_id}}
 
     monkeypatch.setattr(main, "run_review_stream", fake_run_review_stream)
@@ -262,7 +261,7 @@ def test_review_generates_unique_session_ids_and_streams_events(client, monkeypa
     assert captured_model_keys == [main.DEFAULT_MODEL_KEY, main.DEFAULT_MODEL_KEY]
     assert all("event: review_started" in body for body in bodies)
     assert all("event: review_complete" in body for body in bodies)
-    assert all('"review_mode": "light"' in body for body in bodies)
+    assert all('"review_mode"' not in body for body in bodies)
 
 
 def test_review_stores_breakpoint_session_for_owner(client, monkeypatch):
