@@ -837,6 +837,58 @@ body.landing-page-active h4 {
   background: white;
 }
 
+.analysis-progress {
+  padding: 14px 16px 12px;
+  border-bottom: 3px solid black;
+  background: var(--color-paper);
+}
+
+.analysis-progress__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-family: var(--font-pixel);
+  font-size: 14px;
+  color: var(--color-ink);
+}
+
+.analysis-progress__header strong {
+  color: var(--color-orange);
+  font-size: 16px;
+}
+
+.analysis-progress__track {
+  height: 18px;
+  border: 3px solid black;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.06) 0,
+      rgba(0, 0, 0, 0.06) 8px,
+      transparent 8px,
+      transparent 16px
+    ),
+    white;
+  overflow: hidden;
+}
+
+.analysis-progress__fill {
+  display: block;
+  height: 100%;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.28) 0,
+      rgba(255, 255, 255, 0.28) 6px,
+      transparent 6px,
+      transparent 12px
+    ),
+    var(--color-orange);
+  transition: width 0.28s steps(4);
+}
+
 .thinking-step {
   display: flex;
   align-items: center;

@@ -160,6 +160,32 @@ describe('ChatPanel', () => {
     expect(screen.queryByText(/Civil Code Article 585/)).toBeNull()
   })
 
+  it('shows a contract analysis progress bar during review', () => {
+    render(
+      <ChatPanel
+        review={buildReviewState({
+          status: 'reviewing',
+          reviewStage: 'initial',
+          finalReport: [],
+          thinkingSteps: [
+            { id: 'parse', label: 'parse', status: 'done' },
+            { id: 'extract', label: 'extract', status: 'done' },
+            { id: 'retrieve', label: 'retrieve', status: 'active' },
+            { id: 'review', label: 'review', status: 'pending' },
+          ],
+        })}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={vi.fn()}
+      />,
+    )
+
+    const progressbar = screen.getByRole('progressbar', { name: '合同分析进度' })
+
+    expect(progressbar.getAttribute('aria-valuenow')).toBe('63')
+    expect(screen.getByText('63%')).toBeTruthy()
+  })
+
   it('requests autofix suggestions with authorization and renders the result', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
