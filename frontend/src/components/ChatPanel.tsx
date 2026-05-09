@@ -78,6 +78,18 @@ function isNoRiskPlaceholderCard(card: RiskCard) {
   )
 }
 
+function getAnalysisProgress(steps: ReviewState['thinkingSteps']) {
+  if (steps.length === 0) return 0
+
+  const completedWeight = steps.reduce((total, step) => {
+    if (step.status === 'done') return total + 1
+    if (step.status === 'active') return total + 0.5
+    return total
+  }, 0)
+
+  return Math.min(100, Math.max(0, Math.round((completedWeight / steps.length) * 100)))
+}
+
 export function ChatPanel({
   review,
   authToken,
@@ -243,6 +255,7 @@ export function ChatPanel({
     && onRetryDeepReview
     && !hasCompletedReport
   )
+  const analysisProgress = getAnalysisProgress(review.thinkingSteps)
 
   const highRiskCount = substantiveRiskCards.filter((card) => card.level === 'high').length
   const mediumRiskCount = substantiveRiskCards.filter((card) => card.level === 'medium').length
@@ -309,6 +322,25 @@ export function ChatPanel({
       <div className="chat-panel__messages">
         {hasContent && !isOcrReady && (
           <motion.div className="thinking-steps" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            <div className="analysis-progress">
+              <div className="analysis-progress__header">
+                <span>合同分析进度</span>
+                <strong>{analysisProgress}%</strong>
+              </div>
+              <div
+                className="analysis-progress__track"
+                role="progressbar"
+                aria-label="合同分析进度"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={analysisProgress}
+              >
+                <span
+                  className="analysis-progress__fill"
+                  style={{ width: `${analysisProgress}%` }}
+                />
+              </div>
+            </div>
             {review.thinkingSteps.map((step) => (
               <div
                 key={step.id}
