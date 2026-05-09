@@ -55,6 +55,20 @@ export function getGatewayErrorMessage(status?: number, responseText = ''): stri
   return typeof status === 'number' ? `请求失败 (${status})` : '请求失败，请稍后重试'
 }
 
+function isSessionAuthError(message: string): boolean {
+  const normalized = message.trim().toLowerCase()
+  return (
+    !normalized ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('not authenticated') ||
+    normalized.includes('invalid token') ||
+    normalized.includes('token expired') ||
+    normalized.includes('未登录') ||
+    normalized.includes('登录已过期') ||
+    normalized.includes('请重新登录')
+  )
+}
+
 /**
  * Safely parse JSON response with proper error handling.
  * Returns null if response is empty.
@@ -89,7 +103,10 @@ export async function safeFetchJSON<T>(
     }
 
     if (response.status === 401) {
-      throw new APIError(getGatewayErrorMessage(response.status, text), response.status, text)
+      const message = backendError && !isSessionAuthError(backendError)
+        ? backendError
+        : getGatewayErrorMessage(response.status, text)
+      throw new APIError(message, response.status, text)
     }
 
     if (backendError) {
