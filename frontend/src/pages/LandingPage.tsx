@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type MouseEvent } from 'react'
 import { Github } from 'lucide-react'
 
 import dogeArchitectImage from '../assets/landing/doge-architect.jpg'
@@ -7,6 +7,8 @@ import '../styles/landing.css'
 interface LandingPageProps {
   onNavigateLogin: () => void
   onNavigateRegister: () => void
+  onNavigatePrivacy?: () => void
+  onNavigateTerms?: () => void
 }
 
 const featureCards = [
@@ -74,11 +76,35 @@ const testimonials = [
   },
 ] as const
 
-const footerLinks = ['隐私政策', '服务条款', '联系我们'] as const
 const GITHUB_REPOSITORY_URL = 'https://github.com/Dloading666/Contract-Review-Copilot'
+const GITHUB_ISSUES_URL = `${GITHUB_REPOSITORY_URL}/issues`
+const footerLinks = [
+  { label: '隐私政策', href: '/privacy', type: 'privacy' },
+  { label: '服务条款', href: '/terms', type: 'terms' },
+  { label: '联系我们', href: GITHUB_ISSUES_URL, type: 'contact' },
+] as const
 
-export function LandingPage({ onNavigateLogin, onNavigateRegister }: LandingPageProps) {
+export function LandingPage({
+  onNavigateLogin,
+  onNavigateRegister,
+  onNavigatePrivacy,
+  onNavigateTerms,
+}: LandingPageProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
+
+  const handleFooterLinkClick = (
+    event: MouseEvent<HTMLAnchorElement>,
+    linkType: (typeof footerLinks)[number]['type'],
+  ) => {
+    if (linkType === 'privacy' && onNavigatePrivacy) {
+      event.preventDefault()
+      onNavigatePrivacy()
+    }
+    if (linkType === 'terms' && onNavigateTerms) {
+      event.preventDefault()
+      onNavigateTerms()
+    }
+  }
 
   useEffect(() => {
     document.body.classList.add('landing-page-active')
@@ -183,7 +209,6 @@ export function LandingPage({ onNavigateLogin, onNavigateRegister }: LandingPage
             <div className="landing-hero__note-shell">
               <div className="landing-hero__note brutalist-card">
                 <p>“审查速度太快了，而且居然是免费的！”</p>
-                <span>某科技公司法务负责人</span>
               </div>
             </div>
           </div>
@@ -319,10 +344,17 @@ export function LandingPage({ onNavigateLogin, onNavigateRegister }: LandingPage
       <footer className="landing-footer">
         <div className="landing-footer__copyright">© 2026 ANALOG ARCHITECT. 保留所有权利。</div>
         <div className="landing-footer__links">
-          {footerLinks.map((label) => (
-            <button key={label} type="button" className="landing-footer__link">
-              {label}
-            </button>
+          {footerLinks.map((link) => (
+            <a
+              key={link.label}
+              className="landing-footer__link"
+              href={link.href}
+              target={link.type === 'contact' ? '_blank' : undefined}
+              rel={link.type === 'contact' ? 'noreferrer' : undefined}
+              onClick={(event) => handleFooterLinkClick(event, link.type)}
+            >
+              {link.label}
+            </a>
           ))}
         </div>
         <div className="landing-footer__badge">为所有法律专业人士和开发者免费提供</div>

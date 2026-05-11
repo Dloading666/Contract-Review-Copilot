@@ -40,4 +40,39 @@ describe('LandingPage', () => {
     expect(githubLink.getAttribute('href')).toBe('https://github.com/Dloading666/Contract-Review-Copilot')
     expect(githubLink.getAttribute('target')).toBe('_blank')
   })
+
+  it('removes the named testimonial attribution from the hero note', () => {
+    render(<LandingPage onNavigateLogin={vi.fn()} onNavigateRegister={vi.fn()} />)
+
+    expect(screen.queryByText('某科技公司法务负责人')).toBeNull()
+  })
+
+  it('makes the footer legal and contact links navigable', () => {
+    const onNavigatePrivacy = vi.fn()
+    const onNavigateTerms = vi.fn()
+
+    render(
+      <LandingPage
+        onNavigateLogin={vi.fn()}
+        onNavigateRegister={vi.fn()}
+        onNavigatePrivacy={onNavigatePrivacy}
+        onNavigateTerms={onNavigateTerms}
+      />,
+    )
+
+    const privacyLink = screen.getByRole('link', { name: '隐私政策' })
+    const termsLink = screen.getByRole('link', { name: '服务条款' })
+    const contactLink = screen.getByRole('link', { name: '联系我们' })
+
+    expect(privacyLink.getAttribute('href')).toBe('/privacy')
+    expect(termsLink.getAttribute('href')).toBe('/terms')
+    expect(contactLink.getAttribute('href')).toBe('https://github.com/Dloading666/Contract-Review-Copilot/issues')
+    expect(contactLink.getAttribute('target')).toBe('_blank')
+
+    fireEvent.click(privacyLink)
+    fireEvent.click(termsLink)
+
+    expect(onNavigatePrivacy).toHaveBeenCalledTimes(1)
+    expect(onNavigateTerms).toHaveBeenCalledTimes(1)
+  })
 })
