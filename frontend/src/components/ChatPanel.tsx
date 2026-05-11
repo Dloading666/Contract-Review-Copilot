@@ -82,6 +82,7 @@ function getAnalysisProgress(
   steps: ReviewState['thinkingSteps'],
   status: ReviewState['status'],
   elapsedSeconds: number,
+  isScanComplete = false,
 ) {
   if (steps.length === 0) return 0
 
@@ -92,7 +93,7 @@ function getAnalysisProgress(
   }, 0)
 
   const stepProgress = Math.min(100, Math.max(0, Math.round((completedWeight / steps.length) * 100)))
-  if (status === 'complete') return 100
+  if (status === 'complete' || isScanComplete) return 100
   if (status !== 'reviewing') return stepProgress
 
   const timeProgress = stepProgress + Math.floor(elapsedSeconds * 2)
@@ -264,7 +265,12 @@ export function ChatPanel({
     && onRetryDeepReview
     && !hasCompletedReport
   )
-  const analysisProgress = getAnalysisProgress(review.thinkingSteps, review.status, elapsedTime)
+  const analysisProgress = getAnalysisProgress(
+    review.thinkingSteps,
+    review.status,
+    elapsedTime,
+    hasStagedReviewResult || hasCompletedReport,
+  )
 
   const highRiskCount = substantiveRiskCards.filter((card) => card.level === 'high').length
   const mediumRiskCount = substantiveRiskCards.filter((card) => card.level === 'medium').length

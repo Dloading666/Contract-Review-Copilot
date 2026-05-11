@@ -218,6 +218,45 @@ describe('ChatPanel', () => {
     expect(Number(progressbar.getAttribute('aria-valuenow'))).toBeGreaterThan(initialProgress)
   })
 
+  it('shows 100 percent once staged scan results are ready while the report is still generating', () => {
+    render(
+      <ChatPanel
+        review={buildReviewState({
+          status: 'reviewing',
+          reviewStage: 'initial',
+          finalReport: [],
+          riskCards: [
+            {
+              id: 'risk-1',
+              level: 'high',
+              title: '押金条款缺失',
+              clause: '押金条款',
+              issue: '押金退还规则不清晰。',
+              suggestion: '补充押金退还期限。',
+              legalRef: '民法典',
+              matchedText: '押金',
+              changeType: 'none',
+            },
+          ],
+          thinkingSteps: [
+            { id: 'parse', label: 'parse', status: 'done' },
+            { id: 'extract', label: 'extract', status: 'done' },
+            { id: 'retrieve', label: 'retrieve', status: 'done' },
+            { id: 'review', label: 'review', status: 'active' },
+          ],
+        })}
+        onBreakpointConfirm={vi.fn()}
+        onReset={vi.fn()}
+        onSendMessage={vi.fn()}
+      />,
+    )
+
+    const progressbar = screen.getByRole('progressbar', { name: '合同分析进度' })
+
+    expect(progressbar.getAttribute('aria-valuenow')).toBe('100')
+    expect(screen.getByText('100%')).toBeTruthy()
+  })
+
   it('requests autofix suggestions with authorization and renders the result', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
