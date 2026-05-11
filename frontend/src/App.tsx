@@ -10,6 +10,7 @@ import { useStreamingReview } from './hooks/useStreamingReview'
 import { loadPersistedReviewHistoryFromOwners, savePersistedReviewHistory } from './lib/reviewHistory'
 import { exportReportAsWord } from './lib/reportExport'
 import { LandingPage } from './pages/LandingPage'
+import { LandingLegalPage } from './pages/LandingLegalPage'
 import { LoginPage } from './pages/LoginPage'
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage'
 import { RegisterPage } from './pages/RegisterPage'
@@ -20,6 +21,7 @@ import { createSSEClient } from './lib/sseClient'
 
 export type ReviewStatus = 'idle' | 'uploading' | 'ocr_ready' | 'reviewing' | 'breakpoint' | 'complete' | 'error'
 export type ReviewDocumentSource = 'direct' | 'ocr'
+type AuthView = 'landing' | 'login' | 'register' | 'forgot_password' | 'privacy' | 'terms'
 
 export interface ThinkingStep {
   id: string
@@ -185,6 +187,15 @@ function createInitialState(sessionId: string): ReviewState {
     errorMessage: null,
     chatMessages: createDefaultChatMessages(),
   }
+}
+
+function getInitialAuthView(): AuthView {
+  if (typeof window === 'undefined') return 'landing'
+
+  const pathname = window.location.pathname.replace(/\/+$/, '') || '/'
+  if (pathname === '/privacy') return 'privacy'
+  if (pathname === '/terms') return 'terms'
+  return 'landing'
 }
 
 function mapPhaseToStatus(phase: string): ReviewStatus {
@@ -522,7 +533,7 @@ export default function App() {
 
   const historyOwnerKey = user?.id ?? null
   const historyOwnerCandidates = buildHistoryOwnerCandidates(user)
-  const [authView, setAuthView] = useState<'landing' | 'login' | 'register' | 'forgot_password'>('landing')
+  const [authView, setAuthView] = useState<AuthView>(() => getInitialAuthView())
   const [hasAcceptedDisclaimer, setHasAcceptedDisclaimer] = useState(() => loadDisclaimerAcceptance(historyOwnerKey))
   const [showSettings, setShowSettings] = useState(false)
   const [isExportingReport, setIsExportingReport] = useState(false)
@@ -533,6 +544,19 @@ export default function App() {
   const previousHistoryOwnerKeyRef = useRef<string | null>(historyOwnerKey)
   const prevPhaseRef = useRef<ReviewStatus>(review.status)
   const reviewRef = useRef(review)
+
+  const navigateAuthView = useCallback((nextView: AuthView, path = '/') => {
+    if (typeof window !== 'undefined' && window.location.pathname !== path) {
+      window.history.pushState({}, '', path)
+    }
+    setAuthView(nextView)
+  }, [])
+
+  useEffect(() => {
+    const handlePopState = () => setAuthView(getInitialAuthView())
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
 
   const hook = useStreamingReview(review.sessionId, streamContractText, {
     enabled: hasAcceptedDisclaimer && review.status === 'reviewing',
@@ -1038,23 +1062,35 @@ export default function App() {
     if (authView === 'landing') {
       return (
         <LandingPage
-          onNavigateLogin={() => setAuthView('login')}
-          onNavigateRegister={() => setAuthView('register')}
+          onNavigateLogin={() => navigateAuthView('login')}
+          onNavigateRegister={() => navigateAuthView('register')}
+          onNavigatePrivacy={() => navigateAuthView('privacy', '/privacy')}
+          onNavigateTerms={() => navigateAuthView('terms', '/terms')}
+        />
+      )
+    }
+    if (authView === 'privacy' || authView === 'terms') {
+      return (
+        <LandingLegalPage
+          variant={authView}
+          onNavigateLanding={() => navigateAuthView('landing')}
+          onNavigateLogin={() => navigateAuthView('login')}
+          onNavigateRegister={() => navigateAuthView('register')}
         />
       )
     }
     if (authView === 'register') {
-      return <RegisterPage onNavigateLogin={() => setAuthView('login')} />
+      return <RegisterPage onNavigateLogin={() => navigateAuthView('login')} />
     }
     if (authView === 'forgot_password') {
-      return <ForgotPasswordPage onNavigateLogin={() => setAuthView('login')} />
+      return <ForgotPasswordPage onNavigateLogin={() => navigateAuthView('login')} />
     }
     return (
       <LoginPage
         onLogin={login}
-        onNavigateRegister={() => setAuthView('register')}
-        onNavigateForgotPassword={() => setAuthView('forgot_password')}
-        onNavigateLanding={() => setAuthView('landing')}
+        onNavigateRegister={() => navigateAuthView('register')}
+        onNavigateForgotPassword={() => navigateAuthView('forgot_password')}
+        onNavigateLanding={() => navigateAuthView('landing')}
       />
     )
   }
