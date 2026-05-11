@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { Github } from 'lucide-react'
 
 import dogeArchitectImage from '../assets/landing/doge-architect.jpg'
@@ -78,6 +78,7 @@ const testimonials = [
 
 const GITHUB_REPOSITORY_URL = 'https://github.com/Dloading666/Contract-Review-Copilot'
 const GITHUB_ISSUES_URL = `${GITHUB_REPOSITORY_URL}/issues`
+const STAR_PROMPT_SESSION_KEY = 'ctsafe-star-prompt-dismissed'
 const footerLinks = [
   { label: '隐私政策', href: '/privacy', type: 'privacy' },
   { label: '服务条款', href: '/terms', type: 'terms' },
@@ -91,6 +92,17 @@ export function LandingPage({
   onNavigateTerms,
 }: LandingPageProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const [showStarPrompt, setShowStarPrompt] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.sessionStorage.getItem(STAR_PROMPT_SESSION_KEY) !== 'true'
+  })
+
+  const handleDismissStarPrompt = () => {
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem(STAR_PROMPT_SESSION_KEY, 'true')
+    }
+    setShowStarPrompt(false)
+  }
 
   const handleFooterLinkClick = (
     event: MouseEvent<HTMLAnchorElement>,
@@ -152,6 +164,49 @@ export function LandingPage({
 
   return (
     <div ref={rootRef} className="landing-page">
+      {showStarPrompt ? (
+        <div className="landing-star-modal" role="dialog" aria-modal="true" aria-labelledby="landing-star-title">
+          <div className="landing-star-modal__backdrop" onClick={handleDismissStarPrompt} aria-hidden="true" />
+          <div className="landing-star-modal__card brutalist-card">
+            <button
+              type="button"
+              className="landing-star-modal__close"
+              onClick={handleDismissStarPrompt}
+              aria-label="关闭欢迎弹窗"
+            >
+              ×
+            </button>
+            <div className="landing-star-modal__icon" aria-hidden="true">
+              <Github size={38} strokeWidth={3} />
+            </div>
+            <p className="landing-star-modal__eyebrow">Welcome to CTSafe</p>
+            <h2 id="landing-star-title">欢迎浏览和使用该产品！</h2>
+            <p>
+              如果你觉得这个合同审查助手有帮助，请帮我去 GitHub 仓库点个 Star！！
+            </p>
+            <div className="landing-star-modal__actions">
+              <a
+                className="brutalist-button landing-button landing-button--github landing-star-modal__github"
+                href={GITHUB_REPOSITORY_URL}
+                target="_blank"
+                rel="noreferrer"
+                onClick={handleDismissStarPrompt}
+              >
+                <Github size={18} strokeWidth={3} />
+                去 GitHub 点 Star
+              </a>
+              <button
+                type="button"
+                className="brutalist-button landing-button landing-button--secondary"
+                onClick={handleDismissStarPrompt}
+              >
+                先体验产品
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <header className="landing-topbar">
         <div className="landing-topbar__brand">合同审查全能扫描</div>
         <div className="landing-topbar__actions">

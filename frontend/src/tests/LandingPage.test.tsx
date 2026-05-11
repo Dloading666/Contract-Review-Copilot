@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { LandingPage } from '../pages/LandingPage'
@@ -6,6 +6,7 @@ import { LandingPage } from '../pages/LandingPage'
 describe('LandingPage', () => {
   afterEach(() => {
     cleanup()
+    window.sessionStorage.clear()
     document.body.classList.remove('landing-page-active')
   })
 
@@ -35,10 +36,26 @@ describe('LandingPage', () => {
   it('links the top navigation GitHub button to the repository', () => {
     render(<LandingPage onNavigateLogin={vi.fn()} onNavigateRegister={vi.fn()} />)
 
-    const githubLink = screen.getByRole('link', { name: /GitHub/i })
+    const topbar = screen.getByRole('banner')
+    const githubLink = within(topbar).getByRole('link', { name: /GitHub/i })
 
     expect(githubLink.getAttribute('href')).toBe('https://github.com/Dloading666/Contract-Review-Copilot')
     expect(githubLink.getAttribute('target')).toBe('_blank')
+  })
+
+  it('shows a welcome star prompt and remembers dismissal for the session', () => {
+    const { unmount } = render(<LandingPage onNavigateLogin={vi.fn()} onNavigateRegister={vi.fn()} />)
+
+    expect(screen.getByRole('dialog', { name: '欢迎浏览和使用该产品！' })).not.toBeNull()
+    const starLink = screen.getByRole('link', { name: '去 GitHub 点 Star' })
+    expect(starLink.getAttribute('href')).toBe('https://github.com/Dloading666/Contract-Review-Copilot')
+
+    fireEvent.click(screen.getByRole('button', { name: '先体验产品' }))
+    expect(screen.queryByRole('dialog', { name: '欢迎浏览和使用该产品！' })).toBeNull()
+
+    unmount()
+    render(<LandingPage onNavigateLogin={vi.fn()} onNavigateRegister={vi.fn()} />)
+    expect(screen.queryByRole('dialog', { name: '欢迎浏览和使用该产品！' })).toBeNull()
   })
 
   it('removes the named testimonial attribution from the hero note', () => {
