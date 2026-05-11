@@ -78,6 +78,7 @@ const testimonials = [
 
 const GITHUB_REPOSITORY_URL = 'https://github.com/Dloading666/Contract-Review-Copilot'
 const GITHUB_ISSUES_URL = `${GITHUB_REPOSITORY_URL}/issues`
+const CLAUDE_LEGAL_SKILL_URL = 'https://github.com/evolsb/claude-legal-skill'
 const STAR_PROMPT_SESSION_KEY = 'ctsafe-star-prompt-dismissed'
 const footerLinks = [
   { label: '隐私政策', href: '/privacy', type: 'privacy' },
@@ -312,7 +313,9 @@ export function LandingPage({
                   </svg>
                 </div>
                 <div className="landing-tech__brand-copy">
-                  <span>claude-legal-skill</span>
+                  <a href={CLAUDE_LEGAL_SKILL_URL} target="_blank" rel="noreferrer">
+                    claude-legal-skill
+                  </a>
                   <small>(Community Version)</small>
                 </div>
               </div>
