@@ -656,10 +656,14 @@ body.landing-page-active .app-main {
   text-align: center;
 }
 
-.landing-tech__brand-copy span {
+.landing-tech__brand-copy a {
   color: var(--landing-green-deep);
   font-weight: 800;
   text-decoration: underline;
+}
+
+.landing-tech__brand-copy a:hover {
+  color: var(--landing-ink);
 }
 
 .landing-tech__brand-copy small {

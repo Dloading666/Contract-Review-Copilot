@@ -43,6 +43,15 @@ describe('LandingPage', () => {
     expect(githubLink.getAttribute('target')).toBe('_blank')
   })
 
+  it('links the claude legal skill source card to the upstream repository', () => {
+    render(<LandingPage onNavigateLogin={vi.fn()} onNavigateRegister={vi.fn()} />)
+
+    const sourceLink = screen.getByRole('link', { name: 'claude-legal-skill' })
+
+    expect(sourceLink.getAttribute('href')).toBe('https://github.com/evolsb/claude-legal-skill')
+    expect(sourceLink.getAttribute('target')).toBe('_blank')
+  })
+
   it('shows a welcome star prompt and remembers dismissal for the session', () => {
     const { unmount } = render(<LandingPage onNavigateLogin={vi.fn()} onNavigateRegister={vi.fn()} />)
 
