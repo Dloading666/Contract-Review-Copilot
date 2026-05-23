@@ -137,6 +137,9 @@ def _count_pdf_pages(file: UploadedContractFile) -> int:
 
 
 def _validate_file_size(file: UploadedContractFile) -> None:
+    if file.extension in SUPPORTED_IMAGE_EXTENSIONS:
+        return
+
     limit_bytes = get_settings().ocr_max_upload_file_bytes
     if len(file.content) > limit_bytes:
         raise ValueError(
@@ -146,6 +149,9 @@ def _validate_file_size(file: UploadedContractFile) -> None:
 
 def _validate_image_pixels(file: UploadedContractFile) -> None:
     max_pixels = get_settings().ocr_max_image_pixels
+    if max_pixels <= 0:
+        return
+
     image_size = _read_image_size(file)
     if image_size is None:
         return

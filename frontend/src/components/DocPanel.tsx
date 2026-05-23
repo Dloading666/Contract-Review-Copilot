@@ -88,7 +88,9 @@ function isImageFilename(filename: string) {
 }
 
 function buildUploadValidationMessage(files: File[]) {
-  const oversizedFile = files.find((file) => file.size > MAX_CONTRACT_UPLOAD_FILE_BYTES)
+  const oversizedFile = files.find((file) => (
+    !isImageFilename(file.name) && file.size > MAX_CONTRACT_UPLOAD_FILE_BYTES
+  ))
   if (oversizedFile) {
     return `${oversizedFile.name} \u8d85\u8fc7\u5355\u6587\u4ef6\u4e0a\u4f20\u9650\u5236\uff0c\u8bf7\u538b\u7f29\u5230 ${formatUploadBytes(MAX_CONTRACT_UPLOAD_FILE_BYTES)} \u4ee5\u5185\u540e\u91cd\u8bd5\u3002`
   }

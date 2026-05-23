@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ReviewState } from '../App'
 import { DocPanel } from '../components/DocPanel'
-import { MAX_CONTRACT_IMAGE_BATCH } from '../lib/uploadLimits'
+import { MAX_CONTRACT_IMAGE_BATCH, MAX_CONTRACT_UPLOAD_FILE_BYTES } from '../lib/uploadLimits'
 
 function jsonResponse(payload: unknown, status = 200) {
   return {
@@ -238,6 +238,57 @@ describe('DocPanel', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     expect(alertMock).toHaveBeenCalledTimes(1)
     expect(alertMock.mock.calls[0]?.[0]).toContain(String(MAX_CONTRACT_IMAGE_BATCH))
+  })
+
+  it('allows a large image file to reach the OCR queue', async () => {
+    const onOcrReady = vi.fn()
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url === '/api/ocr/queue' && init?.method === 'POST') {
+        return jsonResponse({
+          task_id: 'ocr-task-large-image',
+          status: 'pending',
+          queue_position: 1,
+          estimated_wait: '即将开始',
+        })
+      }
+
+      if (url === '/api/ocr/queue/ocr-task-large-image') {
+        return jsonResponse({
+          status: 'completed',
+          result: {
+            source_type: 'image_batch',
+            display_name: 'large-contract.png',
+            merged_text: '大图合同文字',
+            warnings: [],
+          },
+        })
+      }
+
+      return jsonResponse({ error: 'unexpected request' }, 500)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { container } = renderDocPanel({}, { onOcrReady })
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    const largeImage = new File(
+      [new Uint8Array(MAX_CONTRACT_UPLOAD_FILE_BYTES + 1)],
+      'large-contract.png',
+      { type: 'image/png' },
+    )
+
+    fireEvent.change(fileInput, { target: { files: [largeImage] } })
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/ocr/queue',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.any(FormData),
+        }),
+      )
+      expect(onOcrReady).toHaveBeenCalledWith('大图合同文字', 'large-contract.png', [])
+    })
   })
 
   it('supports dragging files into the upload area', async () => {

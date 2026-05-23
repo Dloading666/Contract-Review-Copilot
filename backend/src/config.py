@@ -30,7 +30,9 @@ class Settings(BaseSettings):
     ocr_max_upload_file_bytes: int = 20 * 1024 * 1024
     ocr_max_batch_images: int = 12
     ocr_max_pdf_pages: int = 20
-    ocr_max_image_pixels: int = 20_000_000
+    # 0 disables the app-level image resolution guard; large photos are
+    # accepted and delegated to the OCR provider.
+    ocr_max_image_pixels: int = 0
     review_queue_max_retries: int = 2
     ocr_queue_max_retries: int = 2
     queue_retry_backoff_seconds: float = 1.5

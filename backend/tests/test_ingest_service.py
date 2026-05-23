@@ -137,6 +137,24 @@ def test_ingest_contract_files_rejects_oversized_upload(monkeypatch):
         )
 
 
+def test_ingest_contract_files_allows_oversized_images(monkeypatch):
+    monkeypatch.setattr(
+        'src.ocr.ingest_service.get_settings',
+        lambda: build_ingest_settings(ocr_max_upload_file_bytes=4, ocr_max_image_pixels=0),
+    )
+    monkeypatch.setattr(
+        "src.ocr.ingest_service._extract_text_from_uploaded_image",
+        lambda _file: ("large image contract text", "PaddlePaddle/PaddleOCR-VL-1.5"),
+    )
+
+    result = ingest_contract_files(
+        [UploadedContractFile(filename='large-contract.png', content=b'12345', content_type='image/png')]
+    )
+
+    assert result.source_type == "image_batch"
+    assert result.merged_text == "large image contract text"
+
+
 
 def test_ingest_contract_files_rejects_pdf_over_page_limit(monkeypatch):
     monkeypatch.setattr(
