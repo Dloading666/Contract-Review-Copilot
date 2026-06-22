@@ -62,6 +62,7 @@ export function useStreamingReview(
   const [reportParagraphs, setReportParagraphs] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
+  const [agentProgress, setAgentProgress] = useState<AgentProgress[]>([])
   const clientRef = useRef<{ abort: () => void } | null>(null)
   const sessionIdRef = useRef(sessionId)
   const tokenRef = useRef(token)
@@ -128,6 +129,7 @@ export function useStreamingReview(
     setReportParagraphs([])
     setError(null)
     setIsStreaming(false)
+    setAgentProgress([])
   }, [])
 
   const handleSSEEvent = useCallback((eventType: string, data: unknown) => {
@@ -396,5 +398,6 @@ export function useStreamingReview(
     confirm,
     retryDeepReview,
     isStreaming,
+    agentProgress,
   }
 }

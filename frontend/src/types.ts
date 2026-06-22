@@ -56,3 +56,11 @@ export type ReviewPhase =
   | 'aggregation'
   | 'complete'
   | 'error'
+
+export interface AgentProgress {
+  agent_id: string
+  role: string
+  status: 'started' | 'completed' | 'degraded'
+  completed: number
+  total: number
+}
