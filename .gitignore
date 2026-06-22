@@ -61,3 +61,5 @@ backend/db/
 # Claude memory/plans (local only)
 .claude/
 .deploy-backups/
+backend/src/services/sync_store.py
+docker-compose.yml.bak
