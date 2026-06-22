@@ -1,15 +1,14 @@
-@import url('https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Press+Start+2P&display=swap');
 @import "tailwindcss";
 
 /* ============================================================
    PIXEL ART DESIGN SYSTEM — 合规智审 Copilot
    Theme: Retro Game Console × Legal SaaS
-   Fonts: Press Start 2P (headers) + Silkscreen (body)
+   Fonts: Space Grotesk (headers) + Space Grotesk (body)
    ============================================================ */
 
 @theme {
-  --font-pixel: "Silkscreen", cursive;
-  --font-header: "Press Start 2P", cursive;
+  --font-pixel: "Space Grotesk", sans-serif;
+  --font-header: "Space Grotesk", sans-serif;
   --font-ui: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
   --font-headline: "Space Grotesk", sans-serif;
   --font-label: "Space Grotesk", sans-serif;
@@ -93,7 +92,7 @@
 
 html {
   font-size: 16px;
-  image-rendering: pixelated;
+  image-rendering: auto;
 }
 
 body {
@@ -2291,7 +2290,7 @@ body.landing-page-active h4 {
   border: 4px solid black;
   background: white;
   padding: 6px;
-  image-rendering: pixelated;
+  image-rendering: auto;
 }
 
 .auth-card__visual-badge {
