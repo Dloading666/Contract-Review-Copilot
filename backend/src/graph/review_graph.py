@@ -13,6 +13,7 @@ pipeline into two stages:
 """
 from __future__ import annotations
 
+import os
 import atexit
 import asyncio
 import json
@@ -25,6 +26,43 @@ from ..agents.entity_extraction import _regex_fallback, extract_entities
 from ..agents.logic_review import model_review_clauses, rule_review_clauses
 from ..agents.routing import _default_routing, decide_routing
 from ..config import get_settings
+
+
+def _get_orchestrator() -> str:
+    return os.getenv("REVIEW_ORCHESTRATOR", "legacy").lower()
+
+
+async def _run_langgraph_review_stream(
+    contract_text: str,
+    session_id: str,
+    model_key: str | None = None,
+):
+    from .langgraph_builder import build_review_graph
+    from .sse_adapter import graph_to_sse_events
+
+    graph = build_review_graph()
+    initial_state = {
+        "session_id": session_id,
+        "contract_text": contract_text,
+        "model_key": model_key,
+    }
+
+    try:
+        async for event in graph_to_sse_events(
+            graph.astream(initial_state, stream_mode="updates"),
+            session_id,
+        ):
+            yield event
+    except Exception as exc:
+        print(f"[LangGraph] Review stream failed: {exc}", flush=True)
+        import json as _json
+        _err_data = _json.dumps({"message": str(exc)}, ensure_ascii=False)
+        yield {
+            "event": "error",
+            "data": {"message": str(exc)},
+            "_raw": f"event: error\ndata: {_err_data}\n\n",
+        }
+
 
 _GRAPH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="review-graph")
 atexit.register(_GRAPH_EXECUTOR.shutdown, wait=False, cancel_futures=True)
@@ -145,7 +183,7 @@ async def _await_with_heartbeat(
             )
 
 
-async def run_review_stream(
+async def _run_legacy_review_stream(
     contract_text: str,
     session_id: str,
     model_key: str | None = None,
@@ -430,6 +468,22 @@ async def run_review_stream(
             return
 
         yield _sse_event("error", {"message": str(exc)})
+
+
+
+
+async def run_review_stream(
+    contract_text: str,
+    session_id: str,
+    model_key: str | None = None,
+    review_mode: str = "deep",
+):
+    if _get_orchestrator() == "langgraph":
+        async for event in _run_langgraph_review_stream(contract_text, session_id, model_key):
+            yield event
+    else:
+        async for event in _run_legacy_review_stream(contract_text, session_id, model_key, review_mode):
+            yield event
 
 
 async def run_aggregation_stream(
