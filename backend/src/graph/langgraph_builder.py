@@ -16,17 +16,28 @@ from ..agents.general_review import run_general_agent
 from ..agents.critic import run_critic_agent
 from ..agents.supervisor import run_supervisor_agent
 from ..agents.aggregation import generate_report
-from .state import ReviewState
+from .state import ReviewState, compute_finding_id, validate_finding
+
+VALID_MODES = ("single", "auto", "multi")
+
+
+def _validate_mode(mode: str) -> str:
+    if mode not in VALID_MODES:
+        raise ValueError(
+            f"Invalid REVIEW_COLLABORATION_MODE={mode!r}. Must be one of {VALID_MODES}"
+        )
+    return mode
 
 
 def decide_collaboration_mode(
     rule_issues: list[dict],
     contract_text: str,
+    entities: dict,
     routing: dict,
     mode_override: str | None = None,
 ) -> Literal["single", "multi"]:
     settings = get_settings()
-    mode = mode_override or settings.review_collaboration_mode
+    mode = _validate_mode(mode_override or settings.review_collaboration_mode)
 
     if mode == "single":
         return "single"
@@ -36,7 +47,7 @@ def decide_collaboration_mode(
     min_chars = settings.review_multi_agent_min_chars
     confidence_threshold = settings.review_multi_agent_confidence_threshold
 
-    if len(contract_text) > min_chars:
+    if len(contract_text) >= min_chars:
         return "multi"
 
     has_significant_risk = any(
@@ -49,7 +60,7 @@ def decide_collaboration_mode(
     if confidence < confidence_threshold:
         return "multi"
 
-    contract_type = routing.get("contract_type", "")
+    contract_type = entities.get("contract_type", "")
     if contract_type not in ("租赁合同", "住宅租赁", "商业租赁", ""):
         return "multi"
 
@@ -104,6 +115,7 @@ def node_collaboration_router(state: ReviewState) -> dict:
     mode = decide_collaboration_mode(
         rule_issues=state.get("rule_issues", []),
         contract_text=state["contract_text"],
+        entities=state.get("entities", {}),
         routing=state.get("routing", {}),
         mode_override=settings.review_collaboration_mode,
     )
@@ -174,6 +186,64 @@ def node_general_review(state: ReviewState) -> dict:
         return {"candidate_findings": [], "degraded_agents": ["general_review"]}
 
 
+def node_prepare_candidates(state: ReviewState) -> dict:
+    """Merge rule findings with agent findings, deduplicate by stable ID."""
+    rule_issues = state.get("rule_issues", [])
+    agent_findings = state.get("candidate_findings", [])
+
+    # Convert rule issues to FindingCandidate dicts
+    rule_findings = []
+    for issue in rule_issues:
+        if not isinstance(issue, dict):
+            continue
+        severity = issue.get("level") or issue.get("severity") or "medium"
+        risk_level = int(issue.get("risk_level", 3))
+        matched_text = issue.get("matched_text", "")
+        clause = issue.get("clause", "未知条款")
+        issue_text = issue.get("issue", "")
+        finding_id = compute_finding_id("deposit", clause, matched_text, issue_text)
+        rule_findings.append({
+            "finding_id": finding_id,
+            "agent_id": "rule_engine",
+            "dimension": "general",
+            "clause": clause,
+            "matched_text": matched_text,
+            "issue": issue_text,
+            "severity": severity,
+            "risk_level": risk_level,
+            "confidence": 0.9,
+            "legal_references": [issue.get("legal_reference", "")],
+            "evidence_ids": [],
+            "suggestion": issue.get("suggestion", ""),
+        })
+
+    # Merge and deduplicate by finding_id
+    all_candidates = rule_findings + agent_findings
+    seen_ids: dict[str, dict] = {}
+    for f in all_candidates:
+        if not validate_finding(f):
+            continue
+        fid = f.get("finding_id", "")
+        if not fid:
+            fid = compute_finding_id(
+                f.get("dimension", "general"),
+                f.get("clause", ""),
+                f.get("matched_text", ""),
+                f.get("issue", ""),
+            )
+            f["finding_id"] = fid
+        if fid not in seen_ids:
+            seen_ids[fid] = f
+
+    deduplicated = list(seen_ids.values())
+
+    has_rule_fallback = bool(rule_findings) and not agent_findings
+    return {
+        "candidate_findings": deduplicated,
+        "used_rule_fallback": has_rule_fallback,
+    }
+
+
 def node_critic(state: ReviewState) -> dict:
     candidates = state.get("candidate_findings", [])
     if not candidates:
@@ -190,8 +260,29 @@ def node_critic(state: ReviewState) -> dict:
             "rejected_findings": result["rejected"],
         }
     except Exception as exc:
-        print(f"[Graph] Critic failed, passing all findings through: {exc}", flush=True)
-        return {"verified_findings": candidates, "rejected_findings": []}
+        print(f"[Graph] Critic failed: {exc}", flush=True)
+        # Safe degradation: keep rule findings, cap model findings
+        verified = []
+        for f in candidates:
+            if f.get("agent_id") == "rule_engine":
+                verified.append(f)
+            elif validate_finding(f) and _text_in_contract(f.get("matched_text", ""), state.get("contract_text", "")):
+                capped = dict(f)
+                if capped.get("risk_level", 3) > 3:
+                    capped["risk_level"] = 3
+                    capped["severity"] = "medium"
+                capped["unverified"] = True
+                verified.append(capped)
+        return {"verified_findings": verified, "rejected_findings": []}
+
+
+def _text_in_contract(matched_text: str, contract_text: str) -> bool:
+    if not matched_text or not contract_text:
+        return False
+    import re
+    norm_mt = re.sub(r"\s+", "", matched_text)
+    norm_ct = re.sub(r"\s+", "", contract_text)
+    return norm_mt in norm_ct
 
 
 def node_supervisor(state: ReviewState) -> dict:
@@ -202,17 +293,54 @@ def node_supervisor(state: ReviewState) -> dict:
             verified,
             state.get("model_key"),
         )
+        # Map final_severity -> severity, final_risk_level -> risk_level
+        final = []
+        finding_map = {f["finding_id"]: f for f in verified if "finding_id" in f}
+        for ff in result.get("final_findings", []):
+            fid = ff.get("finding_id", "")
+            original = finding_map.get(fid)
+            if not original:
+                continue
+            merged = dict(original)
+            if "final_severity" in ff:
+                merged["severity"] = ff["final_severity"]
+            if "final_risk_level" in ff:
+                merged["risk_level"] = ff["final_risk_level"]
+            if "summary" in ff:
+                merged["supervisor_summary"] = ff["summary"]
+            final.append(merged)
+
         return {
-            "final_findings": result["final_findings"],
+            "final_findings": final if final else verified,
+            "overall_risk": result.get("overall_risk", "medium"),
+            "supervisor_summary": result.get("summary", "审查完成"),
             "current_stage": "supervisor_complete",
         }
     except Exception as exc:
         print(f"[Graph] Supervisor failed: {exc}", flush=True)
-        return {"final_findings": verified, "current_stage": "supervisor_complete"}
+        return _fallback_supervisor(verified)
+
+
+def _fallback_supervisor(findings: list[dict]) -> dict:
+    max_risk = max((f.get("risk_level", 0) for f in findings), default=0)
+    if max_risk >= 5:
+        overall = "critical"
+    elif max_risk >= 4:
+        overall = "high"
+    elif max_risk >= 3:
+        overall = "medium"
+    else:
+        overall = "low"
+    return {
+        "final_findings": findings,
+        "overall_risk": overall,
+        "supervisor_summary": f"审查完成，共发现 {len(findings)} 条风险。",
+        "current_stage": "supervisor_complete",
+    }
 
 
 def node_report_generation(state: ReviewState) -> dict:
-    final_findings = state.get("final_findings", []) or state.get("verified_findings", [])
+    final_findings = state.get("final_findings", [])
     try:
         paragraphs = generate_report(
             state["contract_text"],
@@ -226,7 +354,7 @@ def node_report_generation(state: ReviewState) -> dict:
 
 
 def node_persist_result(state: ReviewState) -> dict:
-    return {"completed": True, "current_stage": "complete"}
+    return {"completed": True, "persisted": True, "current_stage": "complete"}
 
 
 # --- Conditional edges ---
@@ -235,18 +363,6 @@ def route_after_collaboration_router(state: ReviewState) -> str:
     if state.get("collaboration_mode") == "multi":
         return "financial_specialist"
     return "general_review"
-
-
-def route_after_financial(state: ReviewState) -> str:
-    if state.get("collaboration_mode") == "multi":
-        return "rights_specialist"
-    return "critic"
-
-
-def route_after_rights(state: ReviewState) -> str:
-    if state.get("collaboration_mode") == "multi":
-        return "compliance_specialist"
-    return "critic"
 
 
 # --- Graph builder ---
@@ -262,6 +378,7 @@ def build_review_graph(checkpointer=None):
     graph.add_node("rights_specialist", node_rights_specialist)
     graph.add_node("compliance_specialist", node_compliance_specialist)
     graph.add_node("general_review", node_general_review)
+    graph.add_node("prepare_candidates", node_prepare_candidates)
     graph.add_node("critic", node_critic)
     graph.add_node("supervisor", node_supervisor)
     graph.add_node("report_generation", node_report_generation)
@@ -278,7 +395,7 @@ def build_review_graph(checkpointer=None):
     graph.add_edge("rule_scan", "collaboration_router")
     graph.add_edge("retrieval", "collaboration_router")
 
-    # Router decides: multi-agent (sequential specialist chain) or single (general_review)
+    # Router decides: multi-agent (parallel specialists) or single (general_review)
     graph.add_conditional_edges(
         "collaboration_router",
         route_after_collaboration_router,
@@ -288,32 +405,17 @@ def build_review_graph(checkpointer=None):
         },
     )
 
-    # Multi-agent chain: financial -> rights -> compliance -> critic
-    graph.add_conditional_edges(
-        "financial_specialist",
-        route_after_financial,
-        {
-            "rights_specialist": "rights_specialist",
-            "critic": "critic",
-        },
+    # True parallel: all three specialists fan-out to prepare_candidates
+    graph.add_edge(
+        ["financial_specialist", "rights_specialist", "compliance_specialist"],
+        "prepare_candidates",
     )
 
-    graph.add_conditional_edges(
-        "rights_specialist",
-        route_after_rights,
-        {
-            "compliance_specialist": "compliance_specialist",
-            "critic": "critic",
-        },
-    )
-
-    # compliance always goes to critic
-    graph.add_edge("compliance_specialist", "critic")
-
-    # general_review also goes to critic
-    graph.add_edge("general_review", "critic")
+    # general_review also goes to prepare_candidates
+    graph.add_edge("general_review", "prepare_candidates")
 
     # Linear tail
+    graph.add_edge("prepare_candidates", "critic")
     graph.add_edge("critic", "supervisor")
     graph.add_edge("supervisor", "report_generation")
     graph.add_edge("report_generation", "persist_result")

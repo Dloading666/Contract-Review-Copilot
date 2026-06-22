@@ -477,9 +477,15 @@ async def run_review_stream(
     session_id: str,
     model_key: str | None = None,
     review_mode: str = "deep",
+    user_id: str | None = None,
+    filename: str = "",
+    resume: bool = False,
 ):
     if _get_orchestrator() == "langgraph":
-        async for event in _run_langgraph_review_stream(contract_text, session_id, model_key):
+        async for event in _run_langgraph_review_stream(
+            contract_text, session_id, model_key,
+            user_id=user_id, filename=filename, resume=resume,
+        ):
             yield event
     else:
         async for event in _run_legacy_review_stream(contract_text, session_id, model_key, review_mode):

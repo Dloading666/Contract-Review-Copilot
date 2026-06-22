@@ -98,15 +98,32 @@ def _parse_supervisor_result(raw: str, verified_findings: list[dict]) -> dict:
     except json.JSONDecodeError:
         return _fallback_merge(verified_findings)
 
-    final_findings = data.get("final_findings", [])
-    if not isinstance(final_findings, list):
-        final_findings = []
+    final_findings_raw = data.get("final_findings", [])
+    if not isinstance(final_findings_raw, list):
+        final_findings_raw = []
 
-    finding_map = {f["finding_id"]: f for f in verified_findings}
+    # Only keep findings that exist in verified_findings
+    finding_map = {f["finding_id"]: f for f in verified_findings if "finding_id" in f}
     enriched = []
-    for ff in final_findings:
-        original = finding_map.get(ff.get("finding_id", ""), {})
-        enriched.append({**original, **ff})
+    for ff in final_findings_raw:
+        fid = ff.get("finding_id", "")
+        original = finding_map.get(fid)
+        if not original:
+            continue
+        merged = dict(original)
+        # Map final_severity -> severity
+        if "final_severity" in ff:
+            sv = ff["final_severity"]
+            if sv in ("critical", "high", "medium", "low"):
+                merged["severity"] = sv
+        # Map final_risk_level -> risk_level
+        if "final_risk_level" in ff:
+            rl = ff["final_risk_level"]
+            if isinstance(rl, int) and 1 <= rl <= 5:
+                merged["risk_level"] = rl
+        if "summary" in ff:
+            merged["supervisor_summary"] = ff["summary"]
+        enriched.append(merged)
 
     overall_risk = data.get("overall_risk", "medium")
     if overall_risk not in ("critical", "high", "medium", "low"):
