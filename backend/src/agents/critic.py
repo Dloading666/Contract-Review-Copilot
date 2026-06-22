@@ -51,10 +51,16 @@ def _deterministic_validate(
         return False, f"非法risk_level: {risk_level}"
 
     matched_text = finding.get("matched_text", "")
-    if matched_text and not _text_in_contract(matched_text, contract_text):
+    if not matched_text:
+        return False, "空matched_text"
+    if not _text_in_contract(matched_text, contract_text):
         return False, f"matched_text未在合同原文中找到"
 
-    for eid in finding.get("evidence_ids", []):
+    ev_ids = finding.get("evidence_ids", [])
+    agent_id = finding.get("agent_id", "")
+    if agent_id != "rule_engine" and not ev_ids:
+        return False, "模型Agent未提供evidence_ids"
+    for eid in ev_ids:
         if eid and eid not in evidence_ids:
             return False, f"evidence_id不存在: {eid}"
 

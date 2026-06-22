@@ -3,6 +3,7 @@ import type { ClauseIssue, RoutingDecision } from './types'
 import { ChatPanel } from './components/ChatPanel'
 import { DisclaimerModal } from './components/DisclaimerModal'
 import { DocPanel } from './components/DocPanel'
+import { AgentProgressPanel } from './components/AgentProgressPanel'
 import { SideNav } from './components/SideNav'
 import { useAuth } from './contexts/AuthContext'
 import { loadDisclaimerAcceptance, persistDisclaimerAcceptance } from './lib/disclaimer'
@@ -562,6 +563,7 @@ export default function App() {
     enabled: hasAcceptedDisclaimer && review.status === 'reviewing',
     token,
   })
+  const agentProgress = hook.agentProgress
 
   const persistCurrentReview = useCallback((currentReview: ReviewState) => {
     if (!historyOwnerKey || !shouldSaveReviewToHistory(currentReview)) return
@@ -1131,6 +1133,9 @@ export default function App() {
         </div>
         <main className="workspace" ref={workspaceRef} style={{ gridTemplateColumns: `${leftWidth}px 6px 1fr` }}>
           <div className={mobileDocVisible ? 'workspace__panel--hidden' : undefined}>
+            {agentProgress.length > 0 && (
+              <AgentProgressPanel agents={agentProgress} />
+            )}
             <ChatPanel
               review={review}
               authToken={token}

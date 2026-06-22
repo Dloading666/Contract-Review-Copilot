@@ -50,6 +50,7 @@ async def graph_to_sse_events(
     final_findings = []
     report_paragraphs = []
     used_rule_fallback = False
+    persisted = False
     last_event_time = time.monotonic()
 
     try:
@@ -133,18 +134,17 @@ async def graph_to_sse_events(
 
             elif node_name == "prepare_candidates":
                 used_rule_fallback = node_output.get("used_rule_fallback", False)
-
-            elif node_name == "critic":
-                verified = node_output.get("verified_findings", [])
+                candidates = node_output.get("candidate_findings", [])
                 yield _sse_event("initial_review_ready", {
                     "session_id": session_id,
                     "review_stage": "initial",
-                    "summary": f"复核完成，{len(verified)} 条结论通过验证。",
-                    "issues": verified,
+                    "summary": f"初审完成，{len(candidates)} 条发现待复核。",
+                    "issues": candidates,
                     "used_rule_fallback": used_rule_fallback,
                 })
                 emitted_initial_ready = True
 
+            elif node_name == "critic":
                 yield _sse_event("deep_review_started", {
                     "session_id": session_id,
                     "review_stage": "deep",
@@ -178,6 +178,7 @@ async def graph_to_sse_events(
                 last_event_time = time.monotonic()
 
             elif node_name == "persist_result":
+                persisted = node_output.get("persisted", False)
                 yield _sse_event("deep_review_complete", {
                     "session_id": session_id,
                     "review_stage": "deep",
