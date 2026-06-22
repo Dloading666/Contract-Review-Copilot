@@ -925,18 +925,25 @@ export default function App() {
           }
 
           if (event.event === 'chat_complete') {
-            setReview((prev) => ({
-              ...prev,
-              chatMessages: prev.chatMessages.map((chatMessage) => (
-                chatMessage.id === assistantMsgId
-                  ? {
-                    ...chatMessage,
-                    status: chatMessage.content.trim() ? 'complete' : 'error',
-                    content: chatMessage.content.trim() || '未获得可用回答，请稍后重试。',
-                  }
-                  : chatMessage
-              )),
-            }))
+            setReview((prev) => {
+              const next = {
+                ...prev,
+                chatMessages: prev.chatMessages.map((chatMessage) => (
+                  chatMessage.id === assistantMsgId
+                    ? {
+                      ...chatMessage,
+                      status: chatMessage.content.trim() ? 'complete' as const : 'error' as const,
+                      content: chatMessage.content.trim() || '未获得可用回答，请稍后重试。',
+                    }
+                    : chatMessage
+                )),
+              }
+              // Save chat history immediately after message completes
+              try {
+                saveHistoryEntry(createHistoryEntry(next), historyOwnerKey)
+              } catch {}
+              return next
+            })
             finishStream()
           }
         },
