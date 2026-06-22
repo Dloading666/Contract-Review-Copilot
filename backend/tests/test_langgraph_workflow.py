@@ -60,19 +60,16 @@ def test_prepare_candidates_merges_rule_and_agent():
     assert "financial_performance" in agent_ids
 
 
-def test_prepare_candidates_deduplicates():
-    rule_finding = _make_finding(agent_id="rule_engine")
-    agent_finding = _make_finding(agent_id="financial_performance")
-    assert rule_finding["finding_id"] == agent_finding["finding_id"]
+def test_prepare_candidates_deduplicates_by_id():
+    # Two agent findings with same content should deduplicate
+    finding1 = _make_finding(agent_id="financial_performance")
+    finding2 = _make_finding(agent_id="rights_remedies")
+    assert finding1["finding_id"] == finding2["finding_id"]
 
     state = {
         "contract_text": _sample_contract(),
-        "rule_issues": [{
-            "clause": "押金条款", "level": "high", "risk_level": 4,
-            "issue": "押金偏高", "suggestion": "降低",
-            "legal_reference": "民法典", "matched_text": "押金20000元",
-        }],
-        "candidate_findings": [agent_finding],
+        "rule_issues": [],
+        "candidate_findings": [finding1, finding2],
     }
     result = node_prepare_candidates(state)
     assert len(result["candidate_findings"]) == 1

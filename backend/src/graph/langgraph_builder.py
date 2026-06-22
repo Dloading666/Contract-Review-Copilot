@@ -44,6 +44,7 @@ def decide_collaboration_mode(
     if mode == "multi":
         return "multi"
 
+    # auto mode
     min_chars = settings.review_multi_agent_min_chars
     confidence_threshold = settings.review_multi_agent_confidence_threshold
 
@@ -131,6 +132,8 @@ def node_collaboration_router(state: ReviewState) -> dict:
 
 
 def node_financial_specialist(state: ReviewState) -> dict:
+    if state.get("collaboration_mode") != "multi":
+        return {"candidate_findings": []}
     try:
         findings = run_financial_agent(
             state["contract_text"],
@@ -145,6 +148,8 @@ def node_financial_specialist(state: ReviewState) -> dict:
 
 
 def node_rights_specialist(state: ReviewState) -> dict:
+    if state.get("collaboration_mode") != "multi":
+        return {"candidate_findings": []}
     try:
         findings = run_rights_agent(
             state["contract_text"],
@@ -159,6 +164,8 @@ def node_rights_specialist(state: ReviewState) -> dict:
 
 
 def node_compliance_specialist(state: ReviewState) -> dict:
+    if state.get("collaboration_mode") != "multi":
+        return {"candidate_findings": []}
     try:
         findings = run_compliance_agent(
             state["contract_text"],
@@ -173,6 +180,8 @@ def node_compliance_specialist(state: ReviewState) -> dict:
 
 
 def node_general_review(state: ReviewState) -> dict:
+    if state.get("collaboration_mode") == "multi":
+        return {"candidate_findings": []}
     try:
         findings = run_general_agent(
             state["contract_text"],
@@ -201,7 +210,7 @@ def node_prepare_candidates(state: ReviewState) -> dict:
         matched_text = issue.get("matched_text", "")
         clause = issue.get("clause", "未知条款")
         issue_text = issue.get("issue", "")
-        finding_id = compute_finding_id("deposit", clause, matched_text, issue_text)
+        finding_id = compute_finding_id("general", clause, matched_text, issue_text)
         rule_findings.append({
             "finding_id": finding_id,
             "agent_id": "rule_engine",
@@ -261,7 +270,6 @@ def node_critic(state: ReviewState) -> dict:
         }
     except Exception as exc:
         print(f"[Graph] Critic failed: {exc}", flush=True)
-        # Safe degradation: keep rule findings, cap model findings
         verified = []
         for f in candidates:
             if f.get("agent_id") == "rule_engine":
@@ -293,7 +301,6 @@ def node_supervisor(state: ReviewState) -> dict:
             verified,
             state.get("model_key"),
         )
-        # Map final_severity -> severity, final_risk_level -> risk_level
         final = []
         finding_map = {f["finding_id"]: f for f in verified if "finding_id" in f}
         for ff in result.get("final_findings", []):
@@ -303,9 +310,13 @@ def node_supervisor(state: ReviewState) -> dict:
                 continue
             merged = dict(original)
             if "final_severity" in ff:
-                merged["severity"] = ff["final_severity"]
+                sv = ff["final_severity"]
+                if sv in ("critical", "high", "medium", "low"):
+                    merged["severity"] = sv
             if "final_risk_level" in ff:
-                merged["risk_level"] = ff["final_risk_level"]
+                rl = ff["final_risk_level"]
+                if isinstance(rl, int) and 1 <= rl <= 5:
+                    merged["risk_level"] = rl
             if "summary" in ff:
                 merged["supervisor_summary"] = ff["summary"]
             final.append(merged)
@@ -357,14 +368,6 @@ def node_persist_result(state: ReviewState) -> dict:
     return {"completed": True, "persisted": True, "current_stage": "complete"}
 
 
-# --- Conditional edges ---
-
-def route_after_collaboration_router(state: ReviewState) -> str:
-    if state.get("collaboration_mode") == "multi":
-        return "financial_specialist"
-    return "general_review"
-
-
 # --- Graph builder ---
 
 def build_review_graph(checkpointer=None):
@@ -384,33 +387,27 @@ def build_review_graph(checkpointer=None):
     graph.add_node("report_generation", node_report_generation)
     graph.add_node("persist_result", node_persist_result)
 
-    # START edges: entity_extraction and rule_scan run in parallel
+    # START: entity_extraction and rule_scan in parallel
     graph.add_edge(START, "entity_extraction")
     graph.add_edge(START, "rule_scan")
 
-    # entity_extraction feeds retrieval
+    # entity_extraction -> retrieval
     graph.add_edge("entity_extraction", "retrieval")
 
-    # Both rule_scan and retrieval must complete before routing
+    # rule_scan and retrieval -> collaboration_router
     graph.add_edge("rule_scan", "collaboration_router")
     graph.add_edge("retrieval", "collaboration_router")
 
-    # Router decides: multi-agent (parallel specialists) or single (general_review)
-    graph.add_conditional_edges(
-        "collaboration_router",
-        route_after_collaboration_router,
-        {
-            "financial_specialist": "financial_specialist",
-            "general_review": "general_review",
-        },
-    )
+    # All 4 review nodes always connected; each checks mode and skips if not needed
+    graph.add_edge("collaboration_router", "financial_specialist")
+    graph.add_edge("collaboration_router", "rights_specialist")
+    graph.add_edge("collaboration_router", "compliance_specialist")
+    graph.add_edge("collaboration_router", "general_review")
 
-    # True parallel: all three specialists fan-out to prepare_candidates
+    # All converge to prepare_candidates (fan-in)
     graph.add_edge("financial_specialist", "prepare_candidates")
     graph.add_edge("rights_specialist", "prepare_candidates")
     graph.add_edge("compliance_specialist", "prepare_candidates")
-
-    # general_review also goes to prepare_candidates
     graph.add_edge("general_review", "prepare_candidates")
 
     # Linear tail

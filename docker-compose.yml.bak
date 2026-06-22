@@ -1,0 +1,102 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    expose:
+      - '5432'
+    environment:
+      POSTGRES_DB: contract_review
+      POSTGRES_USER: contract_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U contract_user -d contract_review']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    command: >
+      sh -c 'redis-server
+      --requirepass "$$REDIS_PASSWORD"
+      --maxmemory ${REDIS_MAXMEMORY:-256mb}
+      --maxmemory-policy allkeys-lru
+      --maxmemory-samples 5
+      --tcp-keepalive 60'
+    expose:
+      - '6379'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" ping']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../Dockerfile.frontend
+    ports:
+      - '${FRONTEND_HOST:-127.0.0.1}:${FRONTEND_PORT:-3001}:80'
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../Dockerfile.backend
+    expose:
+      - '8000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DATABASE_URL=postgresql://contract_user:${POSTGRES_PASSWORD}@postgres:5432/contract_review
+      - AUTO_SEED_LEGAL_KNOWLEDGE=1
+      - PADDLE_PDX_MODEL_SOURCE=BOS
+      - REDIS_ENABLED=true
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_SECRET_FILE=/app/data/jwt_secret
+      - ALLOW_DEV_CODE_RESPONSE=${ALLOW_DEV_CODE_RESPONSE:-false}
+      - HTTP_PROXY=${BACKEND_HTTP_PROXY:-}
+      - HTTPS_PROXY=${BACKEND_HTTPS_PROXY:-}
+      - ALL_PROXY=${BACKEND_ALL_PROXY:-}
+      - NO_PROXY=${BACKEND_NO_PROXY:-localhost,127.0.0.1,postgres,redis}
+      - PORT=8000
+    volumes:
+      - backend_data:/app/data
+    restart: unless-stopped
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_data:
+
+networks:
+  app-network:
+    driver: bridge
