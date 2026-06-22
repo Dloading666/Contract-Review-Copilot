@@ -799,7 +799,11 @@ async def chat_stream(body: ChatRequest, authorization: Optional[str] = Header(N
                 if event_type == "error":
                     print(f"[ChatStream] Model stream failed: {payload}", flush=True)
                     if not saw_token:
-                        fallback_reply = build_empty_chat_fallback_reply(body.risk_summary)
+                        fallback_reply = (
+                            "你好！我是合同审查助手Doge，可以帮你审查合同、识别风险条款。请上传合同或直接粘贴合同文本。"
+                            if is_simple or not has_contract
+                            else build_empty_chat_fallback_reply(body.risk_summary)
+                        )
                         yield format_sse("chat_token", {"text": fallback_reply})
                         yield format_sse("chat_complete", {"model": None, "degraded": True})
                     else:
@@ -811,7 +815,11 @@ async def chat_stream(body: ChatRequest, authorization: Optional[str] = Header(N
                     return
         except Exception as exc:
             print(f"[ChatStream] Retrieval failed: {exc}", flush=True)
-            fallback_reply = build_empty_chat_fallback_reply(body.risk_summary)
+            fallback_reply = (
+                "你好！我是合同审查助手Doge，可以帮你审查合同、识别风险条款。请上传合同或直接粘贴合同文本。"
+                if is_simple or not has_contract
+                else build_empty_chat_fallback_reply(body.risk_summary)
+            )
             yield format_sse("chat_token", {"text": fallback_reply})
             yield format_sse("chat_complete", {"model": None, "degraded": True})
 
