@@ -667,9 +667,18 @@ async def chat_stream(body: ChatRequest, authorization: Optional[str] = Header(N
 
     async def event_generator() -> AsyncGenerator[bytes, None]:
         try:
-            yield format_sse("chat_retrieval_started", {"message": "正在检索合同依据与法律资料..."})
+            # Skip retrieval for simple greetings and short non-contract messages
+            _simple_pattern = re.compile(r"^[一-龥a-zA-Z\s?？!！。.]{1,15}$")
+            _contract_keywords = re.compile(r"合同|条款|违约|押金|租金|解约|赔偿|甲方|乙方|签字|盖章")
+            is_simple = bool(_simple_pattern.match(message)) and not _contract_keywords.search(message)
 
-            queries = build_chat_search_queries(
+            if is_simple:
+                yield format_sse("chat_retrieval_started", {"message": "正在思考..."})
+                evidence_context = ""
+            else:
+                yield format_sse("chat_retrieval_started", {"message": "正在检索合同依据与法律资料..."})
+
+                queries = build_chat_search_queries(
                 question=message,
                 contract_text=body.contract_text,
                 risk_summary=body.risk_summary,
@@ -685,7 +694,7 @@ async def chat_stream(body: ChatRequest, authorization: Optional[str] = Header(N
             )
 
             targeted_items: list[dict[str, object]] = []
-            if settings.chat_enable_targeted_search and should_search_targeted_legal(
+            if not is_simple and settings.chat_enable_targeted_search and should_search_targeted_legal(
                 question=message,
                 pgvector_items=pgvector_items,
                 minimum_hits=settings.chat_pgvector_min_hits_for_skip_search,
@@ -699,7 +708,7 @@ async def chat_stream(body: ChatRequest, authorization: Optional[str] = Header(N
                 )
 
             web_items: list[dict[str, object]] = []
-            if settings.chat_enable_web_search and should_search_general_web(
+            if not is_simple and settings.chat_enable_web_search and should_search_general_web(
                 question=message,
                 targeted_items=targeted_items,
                 minimum_hits=settings.chat_targeted_search_min_hits_for_skip_web,
@@ -711,23 +720,27 @@ async def chat_stream(body: ChatRequest, authorization: Optional[str] = Header(N
                     max_results=settings.chat_web_search_top_k,
                 )
 
-            evidence_items = rerank_evidence_items(
-                [*pgvector_items, *targeted_items, *web_items],
-                max_items=settings.chat_max_evidence_items,
-            )
-            evidence_context = build_answer_evidence_context(evidence_items)
-
-            yield format_sse(
-                "chat_retrieval_complete",
-                {
-                    "message": "依据检索完成，开始生成回答...",
-                    "source_counts": {
-                        "pgvector": len(pgvector_items),
-                        "legal_search": len(targeted_items),
-                        "web_search": len(web_items),
+            if not is_simple:
+                evidence_items = rerank_evidence_items(
+                    [*pgvector_items, *targeted_items, *web_items],
+                    max_items=settings.chat_max_evidence_items,
+                )
+                evidence_context = build_answer_evidence_context(evidence_items)
+                yield format_sse(
+                    "chat_retrieval_complete",
+                    {
+                        "message": "依据检索完成，开始生成回答...",
+                        "source_counts": {
+                            "pgvector": len(pgvector_items),
+                            "legal_search": len(targeted_items),
+                            "web_search": len(web_items),
+                        },
                     },
-                },
-            )
+                )
+            else:
+                evidence_items = []
+                evidence_context = ""
+                yield format_sse("chat_retrieval_complete", {"message": "正在生成回答..."})
 
             system_prompt = build_chat_system_prompt(
                 contract_text=body.contract_text,
