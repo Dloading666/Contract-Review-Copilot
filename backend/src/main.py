@@ -742,11 +742,19 @@ async def chat_stream(body: ChatRequest, authorization: Optional[str] = Header(N
                 evidence_context = ""
                 yield format_sse("chat_retrieval_complete", {"message": "正在生成回答..."})
 
-            system_prompt = build_chat_system_prompt(
-                contract_text=body.contract_text,
-                risk_summary=body.risk_summary,
-                evidence_context=evidence_context,
-            )
+            has_contract = bool(body.contract_text and body.contract_text.strip())
+            if has_contract:
+                system_prompt = build_chat_system_prompt(
+                    contract_text=body.contract_text,
+                    risk_summary=body.risk_summary,
+                    evidence_context=evidence_context,
+                )
+            else:
+                system_prompt = (
+                    "你是合同审查助手Doge。用户可能想了解你能做什么，或进行简单对话。"
+                    "请简洁友好地回应。如果用户想审查合同，请引导他们上传合同文件。"
+                    "不要输出HTML标签。"
+                )
 
             loop = asyncio.get_running_loop()
             queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()

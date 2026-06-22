@@ -847,12 +847,14 @@ export default function App() {
       setIsChatPending(false)
     }
 
+    // Only send contract context when review has meaningful results
+    const hasReviewContext = review.riskCards.length > 0 || review.reviewStage !== 'idle'
     chatStreamRef.current = createSSEClient(
       apiPath('/chat/stream'),
       {
         message: normalizedMessage,
-        contract_text: review.contractText,
-        risk_summary: riskSummaryForStream,
+        contract_text: hasReviewContext ? review.contractText : '',
+        risk_summary: hasReviewContext ? riskSummaryForStream : '',
         review_session_id: review.sessionId,
       },
       {
