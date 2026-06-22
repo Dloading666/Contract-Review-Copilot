@@ -406,10 +406,9 @@ def build_review_graph(checkpointer=None):
     )
 
     # True parallel: all three specialists fan-out to prepare_candidates
-    graph.add_edge(
-        ["financial_specialist", "rights_specialist", "compliance_specialist"],
-        "prepare_candidates",
-    )
+    graph.add_edge("financial_specialist", "prepare_candidates")
+    graph.add_edge("rights_specialist", "prepare_candidates")
+    graph.add_edge("compliance_specialist", "prepare_candidates")
 
     # general_review also goes to prepare_candidates
     graph.add_edge("general_review", "prepare_candidates")
