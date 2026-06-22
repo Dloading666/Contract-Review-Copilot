@@ -65,7 +65,7 @@ async def graph_to_sse_events(
                 continue
 
             node_name = chunk.get("node")
-            node_output = chunk.get("output", {})
+            node_output = chunk.get("output") or {}
 
             if node_name == "entity_extraction":
                 cached_entity = node_output.get("entities", {})

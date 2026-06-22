@@ -137,13 +137,13 @@ def extract_entities(contract_text: str, model_key: str | None = None) -> dict:
                 "area": str(data.get("property_area", "未明确")),
             },
             "rent": {
-                "monthly": float(data.get("monthly_rent", 0)),
-                "total": float(data.get("total_rent", 0)),
+                "monthly": float(data.get("monthly_rent") or 0),
+                "total": float(data.get("total_rent") or 0),
                 "currency": "人民币",
                 "payment_cycle": "月付",
             },
             "deposit": {
-                "amount": float(data.get("deposit", 0)),
+                "amount": float(data.get("deposit") or 0),
                 "conditions": data.get("deposit_conditions", "未明确"),
             },
             "lease_term": {
