@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 import json
 from .entity_extraction import create_chat_completion
 from ..config import get_settings
@@ -78,7 +82,7 @@ def run_supervisor_agent(
         )
         raw = response.choices[0].message.content.strip()
     except Exception as exc:
-        print(f"[{AGENT_ID}] LLM call failed: {exc}, using fallback merge", flush=True)
+        logger.exception("[%s] LLM call failed: %s, using fallback merge", AGENT_ID, exc)
         return _fallback_merge(verified_findings)
 
     return _parse_supervisor_result(raw, verified_findings)

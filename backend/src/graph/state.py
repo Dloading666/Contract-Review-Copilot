@@ -76,7 +76,12 @@ class ReviewState(TypedDict, total=False):
     specialist_tasks: NotRequired[list[str]]
     used_rule_fallback: NotRequired[bool]
 
+    # Annotated reducers for fields written by multiple parallel nodes
     candidate_findings: Annotated[list[dict], operator.add]
+    degraded_agents: Annotated[list[str], operator.add]
+    errors: Annotated[list[str], operator.add]
+
+    # Single-value fields (only written by one node per step)
     verified_findings: NotRequired[list[dict]]
     rejected_findings: NotRequired[list[dict]]
     final_findings: NotRequired[list[dict]]
@@ -87,7 +92,5 @@ class ReviewState(TypedDict, total=False):
     report_paragraphs: NotRequired[list[str]]
 
     current_stage: NotRequired[str]
-    degraded_agents: Annotated[list[str], operator.add]
-    errors: Annotated[list[str], operator.add]
     completed: NotRequired[bool]
     persisted: NotRequired[bool]

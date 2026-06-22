@@ -94,7 +94,6 @@ class Settings(BaseSettings):
     google_oauth_redirect_uri: str | None = None
 
     # LangGraph multi-agent settings
-    review_orchestrator: str = "legacy"
     review_collaboration_mode: str = "auto"
     review_specialist_model: str = ""
     review_critic_model: str = ""

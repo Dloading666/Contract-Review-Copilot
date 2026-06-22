@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 import os
 from typing import Literal
 
@@ -80,16 +84,14 @@ def node_entity_extraction(state: ReviewState) -> dict:
     return {"entities": entities}
 
 
-def node_rule_scan(state: ReviewState) -> dict:
-    contract_text = state["contract_text"]
-    rule_issues = rule_review_clauses(contract_text)
-    return {"rule_issues": rule_issues}
-
-
-def node_retrieval(state: ReviewState) -> dict:
+def node_prepare_inputs(state: ReviewState) -> dict:
+    """Run rule scan and retrieval together (single node = natural barrier)."""
     contract_text = state["contract_text"]
     entities = state.get("entities", {})
     model_key = state.get("model_key")
+
+    rule_issues = rule_review_clauses(contract_text)
+
     try:
         routing = decide_routing(contract_text, entities, model_key)
     except Exception:
@@ -108,7 +110,7 @@ def node_retrieval(state: ReviewState) -> dict:
             for i, chunk in enumerate(pgvector_results)
         ]
 
-    return {"routing": routing, "evidence": evidence}
+    return {"rule_issues": rule_issues, "routing": routing, "evidence": evidence}
 
 
 def node_collaboration_router(state: ReviewState) -> dict:
@@ -133,7 +135,7 @@ def node_collaboration_router(state: ReviewState) -> dict:
 
 def node_financial_specialist(state: ReviewState) -> dict:
     if state.get("collaboration_mode") != "multi":
-        return {"candidate_findings": []}
+        return {}
     try:
         findings = run_financial_agent(
             state["contract_text"],
@@ -143,13 +145,13 @@ def node_financial_specialist(state: ReviewState) -> dict:
         )
         return {"candidate_findings": findings}
     except Exception as exc:
-        print(f"[Graph] Financial agent failed: {exc}", flush=True)
+        logger.exception("[Graph] Financial agent failed: %s", exc)
         return {"candidate_findings": [], "degraded_agents": ["financial_performance"]}
 
 
 def node_rights_specialist(state: ReviewState) -> dict:
     if state.get("collaboration_mode") != "multi":
-        return {"candidate_findings": []}
+        return {}
     try:
         findings = run_rights_agent(
             state["contract_text"],
@@ -159,13 +161,13 @@ def node_rights_specialist(state: ReviewState) -> dict:
         )
         return {"candidate_findings": findings}
     except Exception as exc:
-        print(f"[Graph] Rights agent failed: {exc}", flush=True)
+        logger.exception("[Graph] Rights agent failed: %s", exc)
         return {"candidate_findings": [], "degraded_agents": ["rights_remedies"]}
 
 
 def node_compliance_specialist(state: ReviewState) -> dict:
     if state.get("collaboration_mode") != "multi":
-        return {"candidate_findings": []}
+        return {}
     try:
         findings = run_compliance_agent(
             state["contract_text"],
@@ -175,13 +177,13 @@ def node_compliance_specialist(state: ReviewState) -> dict:
         )
         return {"candidate_findings": findings}
     except Exception as exc:
-        print(f"[Graph] Compliance agent failed: {exc}", flush=True)
+        logger.exception("[Graph] Compliance agent failed: %s", exc)
         return {"candidate_findings": [], "degraded_agents": ["compliance_evidence"]}
 
 
 def node_general_review(state: ReviewState) -> dict:
     if state.get("collaboration_mode") == "multi":
-        return {"candidate_findings": []}
+        return {}
     try:
         findings = run_general_agent(
             state["contract_text"],
@@ -191,7 +193,7 @@ def node_general_review(state: ReviewState) -> dict:
         )
         return {"candidate_findings": findings}
     except Exception as exc:
-        print(f"[Graph] General agent failed: {exc}", flush=True)
+        logger.exception("[Graph] General agent failed: %s", exc)
         return {"candidate_findings": [], "degraded_agents": ["general_review"]}
 
 
@@ -269,7 +271,7 @@ def node_critic(state: ReviewState) -> dict:
             "rejected_findings": result["rejected"],
         }
     except Exception as exc:
-        print(f"[Graph] Critic failed: {exc}", flush=True)
+        logger.exception("[Graph] Critic failed: %s", exc)
         verified = []
         for f in candidates:
             if f.get("agent_id") == "rule_engine":
@@ -328,7 +330,7 @@ def node_supervisor(state: ReviewState) -> dict:
             "current_stage": "supervisor_complete",
         }
     except Exception as exc:
-        print(f"[Graph] Supervisor failed: {exc}", flush=True)
+        logger.exception("[Graph] Supervisor failed: %s", exc)
         return _fallback_supervisor(verified)
 
 
@@ -360,7 +362,7 @@ def node_report_generation(state: ReviewState) -> dict:
         )
         return {"report_paragraphs": paragraphs, "current_stage": "report_complete"}
     except Exception as exc:
-        print(f"[Graph] Report generation failed: {exc}", flush=True)
+        logger.exception("[Graph] Report generation failed: %s", exc)
         return {"report_paragraphs": ["报告生成失败，请重试。"], "current_stage": "report_complete"}
 
 
@@ -372,7 +374,7 @@ def node_persist_result(state: ReviewState) -> dict:
     report_paragraphs = state.get("report_paragraphs", [])
 
     if not user_id:
-        print("[Persist] No user_id, skipping persistence", flush=True)
+        logger.warning("[Persist] No user_id, skipping persistence")
         return {"completed": True, "persisted": False, "current_stage": "complete"}
 
     try:
@@ -389,7 +391,7 @@ def node_persist_result(state: ReviewState) -> dict:
         )
         return {"completed": True, "persisted": True, "current_stage": "complete"}
     except Exception as exc:
-        print(f"[Persist] Failed to save: {exc}", flush=True)
+        logger.exception("[Persist] Failed to save: %s", exc)
         raise
 
 
@@ -399,8 +401,7 @@ def build_review_graph(checkpointer=None):
     graph = StateGraph(ReviewState)
 
     graph.add_node("entity_extraction", node_entity_extraction)
-    graph.add_node("rule_scan", node_rule_scan)
-    graph.add_node("retrieval", node_retrieval)
+    graph.add_node("prepare_inputs", node_prepare_inputs)
     graph.add_node("collaboration_router", node_collaboration_router)
     graph.add_node("financial_specialist", node_financial_specialist)
     graph.add_node("rights_specialist", node_rights_specialist)
@@ -412,18 +413,13 @@ def build_review_graph(checkpointer=None):
     graph.add_node("report_generation", node_report_generation)
     graph.add_node("persist_result", node_persist_result)
 
-    # START: entity_extraction and rule_scan in parallel
+    # START: entity_extraction and prepare_inputs in parallel
     graph.add_edge(START, "entity_extraction")
-    graph.add_edge(START, "rule_scan")
+    graph.add_edge(START, "prepare_inputs")
 
-    # entity_extraction -> retrieval
-    graph.add_edge("entity_extraction", "retrieval")
-
-    # rule_scan and retrieval -> collaboration_router
-    graph.add_edge("rule_scan", "collaboration_router")
-    graph.add_edge("retrieval", "collaboration_router")
-
-    # All 4 review nodes always connected; each checks mode and skips if not needed
+    # Both feed into collaboration_router
+    graph.add_edge("entity_extraction", "collaboration_router")
+    graph.add_edge("prepare_inputs", "collaboration_router")
     graph.add_edge("collaboration_router", "financial_specialist")
     graph.add_edge("collaboration_router", "rights_specialist")
     graph.add_edge("collaboration_router", "compliance_specialist")

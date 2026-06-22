@@ -1,6 +1,10 @@
 """PostgreSQL checkpoint management for LangGraph."""
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 import os
 from ..config import get_settings
 
@@ -32,7 +36,7 @@ async def init_checkpointer():
         _checkpointer_cm = AsyncPostgresSaver.from_conn_string(database_url)
         _checkpointer = await _checkpointer_cm.__aenter__()
         await _checkpointer.setup()
-        print("LangGraph AsyncPostgresSaver initialized", flush=True)
+        logger.info("LangGraph AsyncPostgresSaver initialized")
     except Exception as exc:
         _checkpointer = None
         _checkpointer_cm = None
@@ -48,7 +52,7 @@ async def close_checkpointer():
         try:
             await _checkpointer_cm.__aexit__(None, None, None)
         except Exception as exc:
-            print(f"Checkpoint cleanup error: {exc}", flush=True)
+            logger.exception("Checkpoint cleanup error: %s", exc)
     _checkpointer = None
     _checkpointer_cm = None
 

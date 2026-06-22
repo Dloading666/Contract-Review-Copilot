@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 import json
 from .entity_extraction import create_chat_completion
 from ..config import get_settings
@@ -93,7 +97,7 @@ def run_rights_agent(
         )
         raw = response.choices[0].message.content.strip()
     except Exception as exc:
-        print(f"[{AGENT_ID}] LLM call failed: {exc}", flush=True)
+        logger.exception("[%s] LLM call failed: %s", AGENT_ID, exc)
         return []
 
     parsed = _parse_findings(raw)
@@ -120,5 +124,5 @@ def run_rights_agent(
             )
             results.append(fc.model_dump())
         except Exception as exc:
-            print(f"[{AGENT_ID}] Skipping invalid finding: {exc}", flush=True)
+            logger.warning("[%s] Skipping invalid finding: %s", AGENT_ID, exc)
     return results

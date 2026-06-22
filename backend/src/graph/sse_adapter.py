@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 import asyncio
 import json
 import time
@@ -193,7 +197,7 @@ async def graph_to_sse_events(
                 })
 
     except Exception as exc:
-        print(f"[SSE Adapter] Graph failed: {exc}", flush=True)
+        logger.exception("[SSE Adapter] Graph failed: %s", exc)
         if emitted_initial_ready:
             yield _sse_event("deep_review_failed", {
                 "session_id": session_id,
@@ -257,5 +261,5 @@ async def _heartbeat_aware_iter(
         except StopAsyncIteration:
             break
         except Exception as exc:
-            print(f"[SSE Adapter] Iterator error: {exc}", flush=True)
+            logger.exception("[SSE Adapter] Iterator error: %s", exc)
             raise

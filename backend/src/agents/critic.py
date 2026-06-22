@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 import json
 import re
 from .entity_extraction import create_chat_completion
@@ -165,12 +169,12 @@ severity_adjustment(null or "up"/"down"), conflict_group(null or string)"""
         )
         raw = response.choices[0].message.content.strip()
     except Exception as exc:
-        print(f"[{AGENT_ID}] LLM call failed: {exc}", flush=True)
+        logger.exception("[%s] LLM call failed: %s", AGENT_ID, exc)
         return _safe_degradation(deduplicated, failed_validation)
 
     parsed = _parse_verdicts(raw)
     if not parsed:
-        print(f"[{AGENT_ID}] LLM returned no verdicts", flush=True)
+        logger.info("[%s] LLM returned no verdicts", AGENT_ID)
         return _safe_degradation(deduplicated, failed_validation)
 
     # Step 4: Apply LLM verdicts
