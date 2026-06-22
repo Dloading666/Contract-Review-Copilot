@@ -60,3 +60,4 @@ backend/db/
 
 # Claude memory/plans (local only)
 .claude/
+.deploy-backups/
