@@ -397,6 +397,7 @@ def create_chat_completion(
     for model_id, provider, client_fn in attempt_list:
         client = client_fn()
         request_kwargs = _apply_chat_extra_body_defaults(model_id, kwargs)
+        _llm_t0 = time.monotonic()
         print(f"[LLM] Calling {resolved_lane} model ({provider}): {model_id}", flush=True)
 
         try:
@@ -408,7 +409,8 @@ def create_chat_completion(
                 timeout=timeout,
                 **request_kwargs,
             )
-            print(f"[LLM] Success ({resolved_lane}): {model_id}", flush=True)
+            _llm_elapsed = time.monotonic() - _llm_t0
+            print(f"[LLM] Success ({resolved_lane}): {model_id} ({_llm_elapsed:.1f}s)", flush=True)
             return response
 
         except Exception as exc:

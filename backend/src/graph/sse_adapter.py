@@ -66,6 +66,7 @@ async def graph_to_sse_events(
 
             node_name = chunk.get("node")
             node_output = chunk.get("output") or {}
+            logger.info("[Timing] %s completed", node_name)
 
             if node_name == "entity_extraction":
                 cached_entity = node_output.get("entities", {})

@@ -5,6 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 import os
+import time
 from typing import Literal
 
 from langgraph.graph import END, START, StateGraph
@@ -75,6 +76,7 @@ def decide_collaboration_mode(
 # --- Node functions ---
 
 def node_entity_extraction(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     contract_text = state["contract_text"]
     model_key = state.get("model_key")
     try:
@@ -85,6 +87,7 @@ def node_entity_extraction(state: ReviewState) -> dict:
 
 
 def node_prepare_inputs(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     """Run rule scan and retrieval together (single node = natural barrier)."""
     contract_text = state["contract_text"]
     entities = state.get("entities", {})
@@ -114,6 +117,7 @@ def node_prepare_inputs(state: ReviewState) -> dict:
 
 
 def node_collaboration_router(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     settings = get_settings()
     mode = decide_collaboration_mode(
         rule_issues=state.get("rule_issues", []),
@@ -134,6 +138,7 @@ def node_collaboration_router(state: ReviewState) -> dict:
 
 
 def node_financial_specialist(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     if state.get("collaboration_mode") != "multi":
         return {}
     try:
@@ -150,6 +155,7 @@ def node_financial_specialist(state: ReviewState) -> dict:
 
 
 def node_rights_specialist(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     if state.get("collaboration_mode") != "multi":
         return {}
     try:
@@ -166,6 +172,7 @@ def node_rights_specialist(state: ReviewState) -> dict:
 
 
 def node_compliance_specialist(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     if state.get("collaboration_mode") != "multi":
         return {}
     try:
@@ -182,6 +189,7 @@ def node_compliance_specialist(state: ReviewState) -> dict:
 
 
 def node_general_review(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     if state.get("collaboration_mode") == "multi":
         return {}
     try:
@@ -198,6 +206,7 @@ def node_general_review(state: ReviewState) -> dict:
 
 
 def node_prepare_candidates(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     """Merge rule findings with agent findings, deduplicate by stable ID."""
     rule_issues = state.get("rule_issues", [])
     agent_findings = state.get("candidate_findings", [])
@@ -256,6 +265,7 @@ def node_prepare_candidates(state: ReviewState) -> dict:
 
 
 def node_critic(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     candidates = state.get("candidate_findings", [])
     if not candidates:
         return {"verified_findings": [], "rejected_findings": []}
@@ -296,6 +306,7 @@ def _text_in_contract(matched_text: str, contract_text: str) -> bool:
 
 
 def node_supervisor(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     verified = state.get("verified_findings", [])
     try:
         result = run_supervisor_agent(
@@ -353,6 +364,7 @@ def _fallback_supervisor(findings: list[dict]) -> dict:
 
 
 def node_report_generation(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     final_findings = state.get("final_findings", [])
     try:
         paragraphs = generate_report(
@@ -367,6 +379,7 @@ def node_report_generation(state: ReviewState) -> dict:
 
 
 def node_persist_result(state: ReviewState) -> dict:
+    _t0 = time.monotonic()
     """Section 3: Real business persistence."""
     user_id = state.get("user_id")
     session_id = state.get("session_id", "")
