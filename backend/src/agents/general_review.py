@@ -25,9 +25,10 @@ def _build_prompt(contract_text: str, entities: dict, evidence: list[dict]) -> s
     deposit = entities.get("deposit", {}).get("amount", 0)
     evidence_lines = []
     for e in evidence[:5]:
+        eid = e.get("id", "")
         title = e.get("title", "")
-        content = e.get("content", "")[:200]
-        evidence_lines.append(f"- {title}: {content}")
+        econtent = e.get("content", "")[:200]
+        evidence_lines.append(f"[{eid}] {title}: {econtent}")
     evidence_text = "\n".join(evidence_lines) or "无额外检索依据"
     lessor = entities.get("parties", {}).get("lessor", "未知")
     lessee = entities.get("parties", {}).get("lessee", "未知")

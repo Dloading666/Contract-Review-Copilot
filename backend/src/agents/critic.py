@@ -58,8 +58,8 @@ def _deterministic_validate(
 
     ev_ids = finding.get("evidence_ids", [])
     agent_id = finding.get("agent_id", "")
-    if agent_id != "rule_engine" and not ev_ids:
-        return False, "模型Agent未提供evidence_ids"
+    # Section 4: Only reject if evidence_ids provided but don't exist
+    # Agents without RAG results may have empty evidence_ids
     for eid in ev_ids:
         if eid and eid not in evidence_ids:
             return False, f"evidence_id不存在: {eid}"
@@ -227,7 +227,12 @@ def _safe_degradation(
         if f.get("agent_id") == "rule_engine":
             verified.append(f)
         elif validate_finding(f):
-            verified.append(_cap_unverified(f))
+            capped = _cap_unverified(f)
+            # Section 4: Cap confidence for findings without evidence
+            if not f.get("evidence_ids") and f.get("agent_id") != "rule_engine":
+                capped["confidence"] = min(capped.get("confidence", 0.5), 0.6)
+                capped["evidence_verified"] = False
+            verified.append(capped)
     return {
         "verified": verified,
         "rejected": failed_validation,

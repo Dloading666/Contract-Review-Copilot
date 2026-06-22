@@ -100,8 +100,11 @@ async def graph_to_sse_events(
             elif node_name == "collaboration_router":
                 tasks = node_output.get("specialist_tasks", [])
                 specialist_count = len(tasks)
+                active_agent_ids = set()
+                # Section 6: Only emit progress for agents that will actually run
                 for task_id in tasks:
                     agent_id = AGENT_ID_MAP.get(task_id, task_id)
+                    active_agent_ids.add(agent_id)
                     yield _sse_event("agent_progress", {
                         "session_id": session_id,
                         "agent_id": agent_id,
@@ -114,12 +117,8 @@ async def graph_to_sse_events(
 
             elif node_name in AGENT_ID_MAP:
                 agent_id = AGENT_ID_MAP[node_name]
-                findings = node_output.get("candidate_findings", [])
-                for finding in findings:
-                    yield _sse_event("logic_review", {
-                        "session_id": session_id,
-                        "issue": finding,
-                    })
+                # Section 5: Don't emit agent findings as logic_review
+                # They go through critic first; only rule findings shown early
                 degraded = node_output.get("degraded_agents", [])
                 status = "degraded" if agent_id in degraded else "completed"
                 yield _sse_event("agent_progress", {
@@ -127,7 +126,7 @@ async def graph_to_sse_events(
                     "agent_id": agent_id,
                     "role": ROLE_NAME_MAP.get(agent_id, agent_id),
                     "status": status,
-                    "completed": len(findings),
+                    "completed": len(node_output.get("candidate_findings", [])),
                     "total": specialist_count,
                 })
                 last_event_time = time.monotonic()
@@ -186,11 +185,11 @@ async def graph_to_sse_events(
                     "message": "合同分析已完成，页面内容已自动更新。",
                     "issues": final_findings,
                     "changes": [],
-                    "persisted": True,
+                    "persisted": persisted,
                 })
                 yield _sse_event("review_complete", {
                     "session_id": session_id,
-                    "persisted": True,
+                    "persisted": persisted,
                 })
 
     except Exception as exc:
@@ -259,4 +258,4 @@ async def _heartbeat_aware_iter(
             break
         except Exception as exc:
             print(f"[SSE Adapter] Iterator error: {exc}", flush=True)
-            break
+            raise

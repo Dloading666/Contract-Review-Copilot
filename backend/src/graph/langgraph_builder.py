@@ -365,7 +365,32 @@ def node_report_generation(state: ReviewState) -> dict:
 
 
 def node_persist_result(state: ReviewState) -> dict:
-    return {"completed": True, "persisted": True, "current_stage": "complete"}
+    """Section 3: Real business persistence."""
+    user_id = state.get("user_id")
+    session_id = state.get("session_id", "")
+    final_findings = state.get("final_findings", [])
+    report_paragraphs = state.get("report_paragraphs", [])
+
+    if not user_id:
+        print("[Persist] No user_id, skipping persistence", flush=True)
+        return {"completed": True, "persisted": False, "current_stage": "complete"}
+
+    try:
+        from ..services import sync_store
+        sync_store.save_review_result(
+            user_id=user_id,
+            session_id=session_id,
+            filename=state.get("filename", ""),
+            contract_text=state.get("contract_text", ""),
+            issues=final_findings,
+            report_paragraphs=report_paragraphs,
+            status="complete",
+            review_stage="complete",
+        )
+        return {"completed": True, "persisted": True, "current_stage": "complete"}
+    except Exception as exc:
+        print(f"[Persist] Failed to save: {exc}", flush=True)
+        raise
 
 
 # --- Graph builder ---

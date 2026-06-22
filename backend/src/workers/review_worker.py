@@ -23,6 +23,7 @@ async def run_queued_review(
     user_id: str,
     review_mode: str,
     on_breakpoint: Callable[[str, dict], None],
+    filename: str = "",
     *,
     max_retries: int = 0,
     retry_backoff_seconds: float = 1.5,
@@ -49,6 +50,9 @@ async def run_queued_review(
                 contract_text=contract_text,
                 session_id=session_id,
                 review_mode=review_mode,
+                user_id=user_id,
+                filename=filename if attempt == 1 else "",
+                resume=attempt > 1,
             ):
                 event_type = event.get("event", "message")
                 event_data = event.get("data", event)

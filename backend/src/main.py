@@ -948,6 +948,8 @@ async def create_review(
                 contract_text=body.contract_text,
                 session_id=session_id,
                 model_key=DEFAULT_MODEL_KEY,
+                user_id=user.get("id"),
+                filename=body.filename or "",
             ):
                 event_type = event.get("event", "message")
                 event_data = event.get("data", event)

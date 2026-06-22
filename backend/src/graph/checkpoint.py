@@ -2,18 +2,18 @@
 from __future__ import annotations
 
 import os
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
-
 from ..config import get_settings
 
-# Global reference to the checkpointer
 _checkpointer = None
 _checkpointer_cm = None
 
 
 async def init_checkpointer():
-    """Initialize AsyncPostgresSaver at app startup."""
+    """Initialize AsyncPostgresSaver at app startup.
+
+    Raises RuntimeError if checkpoint is enabled but initialization fails.
+    Does nothing if checkpoint is disabled.
+    """
     global _checkpointer, _checkpointer_cm
     settings = get_settings()
 
@@ -34,13 +34,15 @@ async def init_checkpointer():
         await _checkpointer.setup()
         print("LangGraph AsyncPostgresSaver initialized", flush=True)
     except Exception as exc:
+        _checkpointer = None
+        _checkpointer_cm = None
         raise RuntimeError(
             f"Checkpoint enabled but initialization failed: {exc}"
         ) from exc
 
 
 async def close_checkpointer():
-    """Clean up checkpointer at shutdown."""
+    """Clean up checkpointer at shutdown. No-op if not initialized."""
     global _checkpointer, _checkpointer_cm
     if _checkpointer_cm is not None:
         try:
