@@ -3,6 +3,7 @@ import { API_BASE_PATH } from '../lib/apiPaths'
 import { createSSEClient } from '../lib/sseClient'
 import { writeSessionReportSnapshot } from '../lib/browserStorage'
 import type {
+  AgentProgress,
   BreakpointQuestion,
   ClauseIssue,
   ExtractedEntity,
@@ -33,6 +34,7 @@ interface UseStreamingReviewReturn {
     issues?: ClauseIssue[]
   }) => void
   isStreaming: boolean
+  agentProgress: AgentProgress[]
 }
 
 const API_BASE = API_BASE_PATH
