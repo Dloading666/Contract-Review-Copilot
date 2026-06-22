@@ -118,7 +118,12 @@ def run_critic_agent(
     # Step 2: Deduplicate by stable ID
     deduplicated = _deduplicate_by_id(passed_validation)
 
-    # Step 3: LLM critic
+    # Step 3: Skip LLM if all findings pass deterministic checks and count is small
+    if len(deduplicated) <= 5 and all(f.get("agent_id") == "rule_engine" for f in deduplicated):
+        logger.info("[critic] All rule findings, skipping LLM critic")
+        return {"verified": deduplicated, "rejected": failed_validation, "degraded": False}
+
+    # LLM critic
     evidence_lines = []
     for e in evidence[:10]:
         eid = e.get("id", "")

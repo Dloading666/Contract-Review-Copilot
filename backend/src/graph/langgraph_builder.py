@@ -83,7 +83,24 @@ def node_entity_extraction(state: ReviewState) -> dict:
         entities = extract_entities(contract_text, model_key)
     except Exception:
         entities = _regex_fallback(contract_text)
-    return {"entities": entities}
+    # Also run routing here to avoid sequential dependency
+    try:
+        routing = decide_routing(contract_text, entities, model_key)
+    except Exception:
+        routing = _default_routing(contract_text, entities)
+    evidence = []
+    pgvector_results = routing.get("pgvector_results", [])
+    if pgvector_results:
+        evidence = [
+            {
+                "id": f"ev_{i}",
+                "title": chunk.get("metadata", {}).get("title", "法律条款"),
+                "content": chunk.get("chunk_text", ""),
+                "score": float(chunk.get("similarity", 0)),
+            }
+            for i, chunk in enumerate(pgvector_results)
+        ]
+    return {"entities": entities, "routing": routing, "evidence": evidence}
 
 
 def node_prepare_inputs(state: ReviewState) -> dict:

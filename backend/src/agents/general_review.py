@@ -93,7 +93,7 @@ def run_general_agent(
                 {"role": "user", "content": _build_prompt(contract_text, entities, evidence)},
             ],
             temperature=settings.review_temperature,
-            max_tokens=2048,
+            max_tokens=4096,
             timeout=settings.review_model_timeout_seconds,
             allow_fallback=False,
         )
