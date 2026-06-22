@@ -533,7 +533,7 @@ export function ChatPanel({
           >
             <div className="risk-card__header">
               <span className="risk-card__badge risk-card__badge--success">通过</span>
-              <span style={{ fontFamily: 'var(--font-pixel)', fontSize: 14, color: 'var(--color-green)' }}>
+              <span style={{ fontFamily: 'var(--font-ui)', fontSize: 14, color: 'var(--color-green)' }}>
                 未发现明显不公平条款
               </span>
             </div>
@@ -562,7 +562,7 @@ export function ChatPanel({
               border: '4px solid var(--color-orange)',
               background: 'var(--color-orange-light)',
               padding: '14px 18px',
-              fontFamily: 'var(--font-pixel)',
+              fontFamily: 'var(--font-ui)',
               fontSize: 13,
               lineHeight: 1.8,
               color: 'var(--color-ink)',
@@ -778,7 +778,7 @@ export function ChatPanel({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 10,
-                fontFamily: 'var(--font-pixel)',
+                fontFamily: 'var(--font-ui)',
                 fontSize: 13,
                 fontWeight: 700,
                 color: 'var(--color-orange)',

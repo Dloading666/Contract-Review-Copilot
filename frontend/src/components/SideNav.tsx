@@ -124,7 +124,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onDeleteHistor
             border: 'none',
             background: 'transparent',
             cursor: 'pointer',
-            fontFamily: 'var(--font-pixel)',
+            fontFamily: 'var(--font-ui)',
             fontSize: 8,
             color: 'var(--color-ink)',
           }}
@@ -211,7 +211,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onDeleteHistor
             border: 'none',
             background: 'var(--color-paper)',
             color: 'var(--color-red)',
-            fontFamily: 'var(--font-pixel)',
+            fontFamily: 'var(--font-ui)',
             fontSize: 9,
             lineHeight: 1.2,
             fontWeight: 700,
@@ -240,11 +240,11 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onDeleteHistor
               flexDirection: 'column',
             }}
           >
-            <div style={{ padding: '10px 14px', background: 'var(--color-orange)', color: 'white', fontFamily: 'var(--font-pixel)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', borderBottom: '4px solid black', flexShrink: 0 }}>
+            <div style={{ padding: '10px 14px', background: 'var(--color-orange)', color: 'white', fontFamily: 'var(--font-ui)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', borderBottom: '4px solid black', flexShrink: 0 }}>
               审查历史
             </div>
             {historyItems.length === 0 ? (
-              <div style={{ padding: '24px 14px', textAlign: 'center', fontFamily: 'var(--font-pixel)', fontSize: 8, color: 'var(--color-ink-muted)' }}>暂无历史记录</div>
+              <div style={{ padding: '24px 14px', textAlign: 'center', fontFamily: 'var(--font-ui)', fontSize: 8, color: 'var(--color-ink-muted)' }}>暂无历史记录</div>
             ) : (
               <div style={{ overflowY: 'auto', flex: 1 }}>
                 {historyItems.map(historyItem => renderHistoryItem(historyItem, 'mobile'))}
@@ -307,7 +307,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onDeleteHistor
             background: 'var(--color-green)',
             border: '2px solid black',
             padding: '1px 4px',
-            fontFamily: 'var(--font-pixel)',
+            fontFamily: 'var(--font-ui)',
             fontSize: 6,
             fontWeight: 700,
             color: 'white',
@@ -363,7 +363,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onDeleteHistor
                     padding: '10px 14px',
                     background: 'var(--color-orange)',
                     color: 'white',
-                    fontFamily: 'var(--font-pixel)',
+                    fontFamily: 'var(--font-ui)',
                     fontSize: 9,
                     fontWeight: 700,
                     textTransform: 'uppercase',
@@ -373,7 +373,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onDeleteHistor
                     审查历史
                   </div>
                   {historyItems.length === 0 ? (
-                    <div style={{ padding: '24px 14px', textAlign: 'center', fontFamily: 'var(--font-pixel)', fontSize: 8, color: 'var(--color-ink-muted)' }}>
+                    <div style={{ padding: '24px 14px', textAlign: 'center', fontFamily: 'var(--font-ui)', fontSize: 8, color: 'var(--color-ink-muted)' }}>
                       暂无历史记录
                     </div>
                   ) : (
@@ -393,7 +393,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onDeleteHistor
         {user?.email && (
           <div style={{
             padding: '8px 8px',
-            fontFamily: 'var(--font-pixel)',
+            fontFamily: 'var(--font-ui)',
             fontSize: 9,
             wordBreak: 'break-all',
             textAlign: 'center',
@@ -428,7 +428,7 @@ export function SideNav({ user, onLogout, onSelectHistorySession, onDeleteHistor
             borderTop: '4px solid black',
             background: 'var(--color-paper)',
             color: 'var(--color-red)',
-            fontFamily: 'var(--font-pixel)',
+            fontFamily: 'var(--font-ui)',
             fontSize: 10,
             fontWeight: 700,
             textTransform: 'uppercase',

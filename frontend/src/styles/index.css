@@ -7,8 +7,8 @@
    ============================================================ */
 
 @theme {
-  --font-pixel: "Space Grotesk", sans-serif;
-  --font-header: "Space Grotesk", sans-serif;
+  --font-pixel: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-header: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
   --font-ui: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
   --font-headline: "Space Grotesk", sans-serif;
   --font-label: "Space Grotesk", sans-serif;
