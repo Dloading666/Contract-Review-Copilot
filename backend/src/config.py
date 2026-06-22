@@ -93,6 +93,17 @@ class Settings(BaseSettings):
     google_client_secret: str | None = None
     google_oauth_redirect_uri: str | None = None
 
+    # LangGraph multi-agent settings
+    review_orchestrator: str = "legacy"
+    review_collaboration_mode: str = "auto"
+    review_specialist_model: str = ""
+    review_critic_model: str = ""
+    review_supervisor_model: str = ""
+    review_checkpoint_enabled: bool = False
+    review_checkpoint_durability: str = "async"
+    review_multi_agent_min_chars: int = 6000
+    review_multi_agent_confidence_threshold: float = 0.75
+
     class Config:
         env_file = ".env"
         extra = "ignore"
